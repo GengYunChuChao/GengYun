@@ -147,13 +147,13 @@ PASS 11: /complete 迁移：真 JPEG 种字节 → complete ⇒ 202 + ETag "2" +
 | ⑥ | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 输出第一行是一个树对象，其后**没有任何冲突路径名** ⇒ 与 `origin/main` 干净可合（树对象哈希随提交内容变化，故本页不抄它） |
 | ⑦ | `node --test "tests/unit/*.test.mjs"`（`GY_BASH=D:\Git\bin\bash.exe`） | 0 | 见下方「单元闸门读数」 |
 
-单元闸门读数：`ℹ tests 6735 / pass 6732 / fail 0 / skipped 3`（本机实测；带 `GY_BASH` 是因为 `tests/unit` 里有真 bash 用例，PATH 上的 `bash` 是 WSL 存根）。这一道必须跑，因为 `tests/unit/doc-anchors-guard.test.mjs:338` 会把本页的行号锚点也过一遍：**只跑** `node tools/verify-doc-anchors.mjs --symbol=strict` 会假绿（`--symbol=strict` 单独跑不动 `--strict` 那一层的基线比较），所以第 ② 道给的是四档全开。
+单元闸门读数：`ℹ tests 6735 / pass 6732 / fail 0 / skipped 3`（本机实测；带 `GY_BASH` 是因为 `tests/unit` 里有真 bash 用例，PATH 上的 `bash` 是 WSL 存根）。这一道必须跑，因为 `tests/unit/doc-anchors-guard.test.mjs:353` 会把本页的行号锚点也过一遍：**只跑** `node tools/verify-doc-anchors.mjs --symbol=strict` 会假绿（`--symbol=strict` 单独跑不动 `--strict` 那一层的基线比较），所以第 ② 道给的是四档全开。
 
 ## 7. 零位移：既有证据页的行号锚点怎么办
 
 `tests/integration/post-media-attach-http-pg.mjs` 从 672 行变成 930 行，`docs/verification/gy-r87-i30-http-e2e-20261107.md` 里有 5 处指向它的行号锚点会整体后移。处理方式与本版实测：
 
-- 第 ② 道闸门第一次跑是**红的**：`tests/unit/doc-anchors-guard.test.mjs:338` 报 `FAIL: 文档行号闸门未通过（基线之外新增 1 条）`，逐条只有一条 SUSPECT——R87 页那张表里，本来指着 PASS 5 `assert.deepEqual(` 的那处锚点（当时写作该脚本的第 538 行）在 `+258` 行之后落到了一段空行上，审计语是「区间内没有任何实质内容行（全空行／全右括号）」。
+- 第 ② 道闸门第一次跑是**红的**：`tests/unit/doc-anchors-guard.test.mjs:353`（本页写作时写作该文件的第 338 行；围栏片给该文件净加 15 行后按内容重锚）报 `FAIL: 文档行号闸门未通过（基线之外新增 1 条）`，逐条只有一条 SUSPECT——R87 页那张表里，本来指着 PASS 5 `assert.deepEqual(` 的那处锚点（当时写作该脚本的第 538 行）在 `+258` 行之后落到了一段空行上，审计语是「区间内没有任何实质内容行（全空行／全右括号）」。
 - 重锚按「同一行内容在新树里的位置」逐个定位，不用算术平移：`509→603`（PASS 4 的 `a4` 上传行）、`588→682`（PASS 6 的 `a7` 上传行）、`540→634`（PASS 5 的期望对象）、`538→632`（PASS 5 的 `assert.deepEqual(`）、`267→286`（必需迁移版本清单 `['0001','0008','0022','0056']`）。
 - 重锚后该页补了一句「行号重锚（2026-11-08，GY-R88 增补之后）」，说明「被指内容未变、第 6 节闸门①仍是本版 8 组的历史读数，不以 GY-R88 的 11 组顶替」——历史读数不许被后来的运行覆盖。
 - 本页自身不拿那条脚本的**易漂**行号当「判据」的替代——第 3 节引的三个位置（它现在的第 751、804、861 行）在新树里由本版自己钉住；将来再有插入，重锚清单在本节可直接复算。
