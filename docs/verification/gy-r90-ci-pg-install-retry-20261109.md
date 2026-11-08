@@ -69,8 +69,8 @@
 
 ## 三、改法：三行就地替换（逐字前后对照）
 
-四个 job 各有一份，共 12 行改动（每 job 3 行 + 各自 1 处 `update` 行，其中 `install` 与 `update` 各 4 处=8 行、
-`curl` 4 行 ⇒ 12 行）。下表的「行」是按 job 分的实际行号，全部在 `.github/workflows/real-pg-integration.yml`：
+四个 job 各有一份**同样的三行**（`curl` / `apt-get update` / `apt-get install`），4 个 job × 3 行 = 12 行改动，
+`git diff --numstat` 于是正好 12 / 12。下表的行号全部在 `.github/workflows/real-pg-integration.yml`：
 
 | 行 | job | 位置 |
 | --- | --- | --- |
