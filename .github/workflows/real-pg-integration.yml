@@ -1530,3 +1530,128 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+
+  # HTTP 端到端真库臂（R87 · `#1030` 图片上限的「真 SQL → 路由 → 信封」链路）：
+  # `tests/integration/post-media-attach-http-pg.mjs`。接线前它**不在任何 workflow 的 `run:` 里**
+  # （白名单原文「未接线（真缺口）：缺 CI 接线——脚本自起临时 PG 17 簇（`GY_PG_BIN` 闸门，缺则 SKIP + 77）」），
+  # 所以「本机 8 组 PASS」不等于「CI 覆盖了它」——这个 job 是它的第一个 CI 读数口。
+  #
+  # 它钉的是 8 组 PASS：每帖 ≤3 张的上限计数（owner 隔离、「挂载即释放」、状态过滤）、挂载侧
+  # `preValidation` 首拒的领域信封（`field: /media_ids` + `code: post_image_limit` + 领域文案）、
+  # 未接线时的 `503 PROVIDER_UNAVAILABLE` 逐字文案 —— 全是「真 SQL → 路由 → 响应信封」的裁决，
+  # stub 钉不住（`tests/unit/media-attachment-limit.test.mjs` 只能钉纯函数那一层）。
+  #
+  # 为什么吃 `services.postgres`、⛔ 不自己 `initdb`：`tests/unit/ci-real-pg-wiring.test.mjs` 判据③ 的
+  # 作用域是「`run:` 里出现任一 `MANAGED_SCRIPTS` 脚本的 job」，**没有自起簇豁免** —— 每个这样的 job
+  # 都必须有 `services.postgres` 且镜像主版本 17。同一文件的判据⑦⑧ 又要求「同一 step 里先
+  # `CREATE DATABASE` 再 `node`，且建出来的库名与传给脚本的库名逐字一致」；而自起簇形态（
+  # `SELF_CLUSTERED_SCRIPTS`，该表必须 ⊆ `MANAGED_SCRIPTS`）里 step 一旦出现 `CREATE DATABASE` 就判红。
+  # 两条合起来只有一个解：service 建库 → 连接串经 `argv[2]` 传进去。本脚本的 `GY_PG_BIN` 自起簇
+  # 路径仍然保留给本机（判据⑧ 的「三种入参形态」里它不算自起簇，因为 CI 不用那条路）。
+  #
+  # 脚本侧的起库入口（本片改的，只加入口、没动任何断言）：`argv[2]` 或 `POST_MEDIA_HTTP_PG_TEST_URL`
+  # 给一条到空库的连接串 ⇒ 不起簇、不建库；都没有才回落到 `GY_PG_BIN` 自起一次性簇；两种都没有 ⇒
+  # 打 SKIP 并 **exit 77**，下面那道 step 把 77 显式升级成 `exit 1`（77 = 未取得，不是通过）。
+  #
+  # ⛔ 连接串**只经 `argv[2]`**：判据⑧ 从 `node <脚本>` 之后的文本里抽 `postgres://…/<库名>`，与
+  # `CREATE DATABASE` 的库名比对。写进一个不叫 `*_PG_TEST_URL` 的 env，等于「库名无从核对」，判红。
+  #
+  # 退出码语义（与上面四个 job 同款）：77 ⇒ `exit 1`；其它非 0 ⇒ 原样透出 rc；退 0 还要过两道读数闸
+  # （末行 `[ALL PASS] … 共 N 组 PASS` + `N ≥ 8`）—— 只 grep 一道时，删掉整组 PASS 断言仍会 exit 0
+  # 并打 pass，那是「job 绿、覆盖为零」。
+  #
+  # `timeout-minutes: 45`：**封顶之和 35 + 前置余量 10 = job 级 45**。
+  #   · 35 = 三条前置 25（`actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15）
+  #         + service 自证 5 + 真库臂 5（本机 13s；臂的纪律常量就是 5 分钟，
+  #         `tests/unit/ci-real-pg-step-timeouts.test.mjs` 判据① 对每条臂只认 5）；
+  #   · 10 = job 级的显式常量余量（`PREFIX_RESERVE_MINUTES`，全文件同值）。
+  real-pg-http-17-11:
+    name: real-pg-http-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_DB: gengyun_ci_bootstrap
+          POSTGRES_USER: gengyun_ci_owner
+          POSTGRES_PASSWORD: synthetic-ci-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
+      # service 自证：把「真 17」与「这条臂要的超管连接」变成读数，而不是靠镜像名相信。
+      # 本臂下面要 `CREATE DATABASE`（判据⑦ 的前置），非超管会在半路 42501，
+      # 那时红的是「授权面」而不是「service 装错了」—— 两种红必须分得开。
+      - name: service 自证（服务端主版本 = 17、当前用户是超管、回环可达）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          server_version=$(psql -v ON_ERROR_STOP=1 -tAc 'show server_version')
+          echo "service server_version = $server_version"
+          server_major=$(printf '%s\n' "$server_version" | sed -e 's/^\([0-9][0-9]*\).*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::service 的服务端不是 17（实测 $server_version）⇒ HTTP 臂会拿到错的大版本，等于没验证。"
+            exit 1
+          fi
+          is_super=$(psql -v ON_ERROR_STOP=1 -tAc 'select rolsuper from pg_roles where rolname = current_user')
+          echo "service current_user rolsuper = $is_super"
+          if [ "$is_super" != "t" ]; then
+            echo "::error::service 的当前用户不是超管（rolsuper = $is_super）⇒ 建库会 42501，红的原因会被读成产品缺陷。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+      # 臂本体：先建专用空库（判据⑦⑧ 要求「先 CREATE DATABASE 再 node」且库名一致），再把连接串
+      # **经 `argv[2]`** 传进去。库由 job 建、脚本不再自己 DROP/CREATE（它只在 `GY_PG_BIN` 形态下建库）。
+      # 不用 `&&`：脚本失败要拿到它自己的 rc（77 与非 0 是两种红），所以 `|| rc=$?` 接住再判。
+      - name: HTTP 端到端真库臂（R87：上传上限/挂载释放/状态过滤/preValidation 信封/503 逐字文案）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/post-media-attach-http.log
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_post_media_http_test'
+          rc=0
+          node tests/integration/post-media-attach-http-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_post_media_http_test 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::HTTP 真库臂被跳过（exit 77）：外部连接串没传到 / 库没建起来。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::HTTP 真库臂失败（exit $rc）。"
+            exit "$rc"
+          fi
+          if ! grep -Fq '[ALL PASS] 真库 HTTP 端到端' "$log"; then
+            echo "::error::HTTP 真库臂退 0，但日志里没有「[ALL PASS] 真库 HTTP 端到端」这一行 ⇒ 读数不可信，按未取得处理。"
+            exit 1
+          fi
+          pass_groups=$(sed -n 's/.*共 \([0-9][0-9]*\) 组 PASS.*/\1/p' "$log" | tail -n 1)
+          echo "HTTP 真库臂分组读数：共 ${pass_groups:-0} 组 PASS"
+          if [ -z "$pass_groups" ] || [ "$pass_groups" -lt 11 ]; then
+            echo "::error::HTTP 真库臂退 0，但只数到 ${pass_groups:-0} 组 PASS（应当 ≥ 11）⇒ 有整组断言被删/被跳过，按未取得处理。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
