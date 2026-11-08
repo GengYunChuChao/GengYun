@@ -374,6 +374,12 @@
       "accept": 0,
       "orphans": 3478,
       "outsideRed": 117
+    },
+    {
+      "why": "docs/verification/gy-r31-i16-pg-arm-20261022.md 的 :197 三处裸锚（:41 指 job key、:109-118 指 favorites 历史臂两步、:118 指 env 末行）改回带完整路径的 .github/workflows/real-pg-integration.yml:94/95/228-238/238，:153 的短名 real-pg-integration.yml:102 一并改成完整路径 :201；旧孤儿键 :41/:109-118/:118 随之陈旧 3 条，无新增裸锚点",
+      "accept": 0,
+      "orphans": 3475,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -2854,14 +2860,11 @@
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|:505-510|no-explicit-in-block",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|:7|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:102|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:109-118|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:118|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:121|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:1589|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:166|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:1|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:202|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:41|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:63|no-explicit-in-block",
     "docs/verification/gy-r31-i17-g5-20261022.md|:107-115|no-explicit-in-block",
     "docs/verification/gy-r31-i17-g5-20261022.md|:110-126|no-explicit-in-block",
