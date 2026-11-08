@@ -8,6 +8,8 @@
 - 仓库内**没有**对端：`gy-recognition-live-v1` 只是我们自己的形状，任何厂商都不原生说这个协议。
 - 2026-11-06 的真机走查里，这一层由**仓库外**的本地适配器承担：它把 `gy-recognition-live-v1` 翻成某供应商的 OpenAI 兼容 `chat/completions` 视觉调用。链路通了，但**这一段不在仓库里**，生产环境无法据此上线。
 - 口径边界：基线仍「没有已审识别供应商、零真实调用、零准确率证据」（`docs/architecture/ai-ops-spec-status.md`）。演示环境的真实调用不改变这条基线。
+- 2026-11-08 按实现复核（`#1003` 的「怎么切供应商」照这两条配）：仓内是**两个并列剖面**——`gy-recognition-live-v1`（`services/api/src/recognitions/live-adapter.ts`）与 `openai-vision-v1`（`services/api/src/recognitions/openai-vision-adapter.ts`，选项 A 的骨架：零真实供应商、零真实调用、零准确率证据），互不替换；由 `RECOGNITION_PROVIDER_PROFILE` 选路（`services/api/src/recognitions/provider.ts:230-231`），只有显式写 `openai-vision-v1` 才切到新剖面，缺省／留空／写错值（不报错）**仍走 live 剖面，live 仍是默认**（`services/api/src/recognitions/provider.ts:248`）。
+- `RECOGNITION_PROVIDER_MODEL` 只在新剖面下必填且**无默认模型名**：缺它 ⇒ 新剖面装配失败、受理前 503 `PROVIDER_UNAVAILABLE`，不回落 live（`services/api/src/recognitions/openai-vision-adapter.ts:203-204`）。注：下方「选项 A」第三条的「未配置即 fail-closed」是选项描述里的期望形态，与今天的实现不同（未配置走的是既有剖面，不是 fail-closed）；本页不改该条措辞，只在此记实。
 
 ## 选项
 
