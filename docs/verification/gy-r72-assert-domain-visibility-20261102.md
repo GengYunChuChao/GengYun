@@ -61,7 +61,7 @@
 
 | # | 表 | 建表 | 运行时不接线的理由 | 出处 |
 | --- | --- | --- | --- | --- |
-| 1 | `sources` | `services/api/db/migrations/0001_initial_schema.sql:131` | 读面是 0005 的 `catalog_read` 视图；写面只授 `gengyun_source_executor`（不在运行时链上） | `services/api/db/migrations/0005_catalog_read_views.sql:9`、`services/api/db/roles/source_operator.sql:25` |
+| 1 | `sources` | `services/api/db/migrations/0001_initial_schema.sql:131` | 读面是 0005 的 `catalog_read` 视图；写面只授 `gengyun_source_executor`（不在运行时链上） | `services/api/db/migrations/0005_catalog_read_views.sql:9` 的 `current_verified_sources` 视图、`services/api/db/roles/source_operator.sql:25` |
 | 2 | `source_versions` | `services/api/db/migrations/0001_initial_schema.sql:143` | 同上，CLI 侧只授 `UPDATE(validity)` | `services/api/db/migrations/0005_catalog_read_views.sql:9`、`services/api/db/roles/source_operator.sql:27` |
 | 3 | `formulations` | `services/api/db/migrations/0002_knowledge_catalog.sql:42` | 读面 = 0005 `registration_evidence` 视图（JOIN 本表） | `services/api/db/migrations/0005_catalog_read_views.sql:44` |
 | 4 | `registrations` | `services/api/db/migrations/0002_knowledge_catalog.sql:53` | 同 3 | `services/api/db/migrations/0005_catalog_read_views.sql:43` |
@@ -72,11 +72,11 @@
 | 9 | `knowledge_dataset_config` | `services/api/db/migrations/0002_knowledge_catalog.sql:156` | 只经 0005 视图取 `active_mode` / `database_connected` | `services/api/db/migrations/0005_catalog_read_views.sql:12` |
 | 10 | `catalog_import_runs` | `services/api/db/migrations/0002_knowledge_catalog.sql:163` | 批次由种子/CLI 侧落库（`tools/knowledge/build_seeds.py`），API 侧无写入点 | `services/api/db/migrations/0012_knowledge_created_at.sql:52` |
 | 11 | `catalog_import_conflicts` | `services/api/db/migrations/0002_knowledge_catalog.sql:179` | 读面 = 0005 视图；写入同 10 | `services/api/db/migrations/0005_catalog_read_views.sql:55` |
-| 12 | `catalog_source_update_events` | `services/api/db/migrations/0002_knowledge_catalog.sql:193` | 写入只经 0006 的 SECURITY DEFINER 函数；表级位只授 `gengyun_source_executor` | `services/api/db/migrations/0006_source_lifecycle.sql:96`、`services/api/db/roles/source_operator.sql:28` |
+| 12 | `catalog_source_update_events` | `services/api/db/migrations/0002_knowledge_catalog.sql:193` | 写入只经 0006 的 SECURITY DEFINER 函数；表级位只授 `gengyun_source_executor` | `services/api/db/migrations/0006_source_lifecycle.sql:96`（`catalog_source_update_events` 的 INSERT）、`services/api/db/roles/source_operator.sql:28` |
 | 13 | `public_authors` | `services/api/db/migrations/0001_initial_schema.sql:233` | 作者域推迟到阶段 2（GY-I04/GY-I05），授权面从未开 | `services/api/db/migrations/0030_community_author_ref.sql:15`、`services/api/src/community/authors.ts:7` |
 | 14 | `posts` | `services/api/db/migrations/0001_initial_schema.sql:259` | 0001 的公开作者投影表；社区域实际落 0022 的 `community_*` | `services/api/db/migrations/0022_community_persistence.sql:12` |
 | 15 | `post_versions` | `services/api/db/migrations/0001_initial_schema.sql:270` | 同 14 | `services/api/db/migrations/0022_community_persistence.sql:12` |
-| 16 | `content_media_refs` | `services/api/db/migrations/0001_initial_schema.sql:294` | 媒体仓储当前无写入方；社区取图另走 `community_media_grants` | `services/api/src/media/content-source.ts:114` |
+| 16 | `content_media_refs` | `services/api/db/migrations/0001_initial_schema.sql:294` | 媒体仓储当前无写入方；社区取图另走 `community_media_grants` | `services/api/src/media/content-source.ts:114`（`content_media_refs` 至今无写入方的注释） |
 | 17 | `user_training_consents` | `services/api/db/migrations/0003_privacy_consent.sql:221` | 首版训练开关关闭（`training_enabled` 默认 false） | `services/api/db/migrations/0003_privacy_consent.sql:18` |
 | 18 | `admin_audit_events` | `services/api/db/migrations/0017_account_suspend_authority.sql:72` | 写面只经 SECURITY DEFINER 函数；运行时连 SELECT 都没有（`20-login-roles.sql` 对该表只有 `REVOKE ALL … FROM PUBLIC`） | `services/api/db/migrations/0020_feature_flags.sql:11`、`services/api/src/admin/audit/pg.ts:5` |
 | 19 | `export_writebacks` | `services/api/db/migrations/0011_export_ledger.sql:50` | 外发账本随 `egress_ledger` 组冻结：该组两种部署形态都不执行，运行时对账本恒未就绪（**冻结，不是缺陷**） | `docs/architecture/contract-implementation-status.md:67`、`services/api/db/roles/egress_ledger.sql:48` |

@@ -59,6 +59,13 @@
  *   PASS 8 fail-closed：注入「去掉 `countPendingCommunityImages` 的 PG 媒体库」⇒
  *          `503 PROVIDER_UNAVAILABLE` + `retryable: false` + `details[0]={field:'/purpose',code:'post_image_limit_unwired'}`，
  *          文案逐字等于 `ATTACHMENT_LIMIT_UNWIRED_MESSAGE`
+ *   PASS 9 24h 自衰减（时间穿越，bypass HTTP，只动 SQL 行）：C 连传 3 张 ⇒ 待用池读数 3、第 4 张 400；
+ *          把 3 行 `created_at` 改成 `now() - interval '25 hours'` ⇒ 读数 **0**、第 4 张 **201**；
+ *          再把 3 行改回 `now()` ⇒ 读数 **4**、第 5 张 400（反向：不是「过期一次就永久放过」）
+ *   PASS 10 `state` 四值矩阵：`initiated`/`uploaded`/`processing`/`ready` 各 1 张 ⇒ 待用池读数 **4**；
+ *          再造 `deleted` + `rejected` 各 1 张 ⇒ 读数**仍 4**（这两种状态不占位）、第 5 张上传 400
+ *   PASS 11 `/complete` 迁移：真字节 → `POST /media/uploads/:id/complete` ⇒ 202 + `ETag: "2"` ⇒ 库内
+ *          该行 `state=ready`、`revision=2` ⇒ `POST /posts` 挂它 201 ⇒ 待用池 **1 → 0**（挂载即释放）
  *
  * ## 合成声明（必须如实引用，不得当作真实能力证据）
  *   - 对象存储是 `createS3CompatibleObjectStore(...)` 的**合成端点**：只做本地预签名，不发一次网络请求，
@@ -71,6 +78,16 @@
  *     「私有 / 待审」——这与产品现状一致，不影响本脚本要证的计数语义；
  *   - 授权闸（`public_posting` / `media_processing` / `external_inference`）用仓库既有的
  *     `createPublicPostingConsent()` 夹具，`grant()` 走真实授权账本实现。
+ *   - PASS 11 用的是一个 `kind === 's3_compatible'` 的**进程内包装**（spread 上面那个合成端点，只把
+ *     `putObject` / `getObject` / `hasObject` / `deleteObject` / `objectCount` 换成内存 Map，预签名与
+ *     「零外呼」计数照旧）：`/complete` 必须真把字节**取回来**（`services/api/src/media/service.ts:1051`
+ *     的 `getObject`），而合成端点不发网络请求 ⇒ 永远取不到字节、只会落 `rejected`；换
+ *     `createSubstituteObjectStore()` 也不行（`kind='substitute'` ⇒ 媒体域整域 fail-closed，
+ *     `services/api/src/media/service.ts:611`）。⛔ 真实 COS 的 put/get/删对象能力**未被**本脚本验证。
+ *   - PASS 9 / PASS 10 用 SQL 直接改 `public.media.created_at` 与 `state`：HTTP 面没有回写
+ *     `uploaded`/`processing` 的端点（`services/api/src/media/service.ts:1514` 写明这两个状态只在内存里
+ *     过渡、库内实际只会落 `initiated`/`ready`/`rejected`/`deleted`），造这两种状态**只能**走 SQL ——
+ *     这本身就是本组要证的事：谓词读的是**行**，不是某条已知写入路径的形状。
  *
  * ## 运行（自己起一次性的 PG 17 簇，仅回环、跑完即删）
  *   $env:GY_PG_BIN = 'E:\GengYunCommander\.pg17\pgsql\bin'   # 必填：含 initdb/pg_ctl 的目录
@@ -80,8 +97,9 @@
  * 本机 `%TEMP%` 下 initdb 会 Permission denied，所以默认不落 `os.tmpdir()`）。
  *
  * ## 变异自证（负控制，本脚本不自己改生产代码）
- * 见证据页「变异自证」一节：手工把 `services/api/src/media/store-pg.ts` 的三处过滤条件依次改宽，
- * 本脚本必须在对应的 PASS 行变红，`git checkout --` 还原后重新全绿。
+ * 见证据页「变异自证」一节：手工把 `services/api/src/media/store-pg.ts` 的三处过滤条件依次改宽
+ * （`24 hours` → `48 hours`、`state IN (...)` 摘掉 `processing`、`state IN (...)` 加进 `deleted`），
+ * 外加「跳过 `/complete` 那一步」一处；每条都必须让**对应**的 PASS 行变红，`git checkout --` 还原后重新全绿。
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -115,6 +133,7 @@ import {
   makeSyntheticPassPort,
 } from '../unit/community-fixtures.mjs';
 import { createPublicPostingConsent } from '../unit/community-posting-consent-fixtures.mjs';
+import { jpegWithExif } from '../media/_fixtures.mjs';
 import { pickFreePort } from './lib/free-port.mjs';
 
 const API = '/api/v1';
@@ -323,6 +342,17 @@ try {
     }
   }
 
+  // 新增的三组用例各用一个**干净 owner**：PASS 7 结束时 A 名下仍有 a5/a7 两行在待用池里，
+  // 复用 A 会把新用例的读数与既有账本缠在一起（也就说不清「+1 张」到底是谁的 +1）。
+  const authorC = await createUser('c');
+  const authorD = await createUser('d');
+  const authorE = await createUser('e');
+  for (const subject of [authorC, authorD, authorE]) {
+    for (const purpose of ['media_processing', 'public_posting', 'external_inference']) {
+      await consent.grant(subject.user.id, purpose);
+    }
+  }
+
   /**
    * 审核域：**注入整个服务实例**（不是 `ports`）。
    *
@@ -352,6 +382,46 @@ try {
     forcePathStyle: false,
   });
 
+  /**
+   * `/complete`（PASS 11）必须真把字节**取回来**（`services/api/src/media/service.ts:1051` 的
+   * `objectStore.getObject(record.rawRef)`，取不到就 `reject(...,'upload_missing')`）。上面那个合成端点
+   * 只做本地预签名、`putObject`/`getObject` 一次都不联网 ⇒ 取不到字节；而换
+   * `createSubstituteObjectStore()`（`kind='substitute'`）会让**整个媒体域** fail-closed
+   * （`services/api/src/media/service.ts:611`）。
+   *
+   * 所以这里保留 `kind === 's3_compatible'` 与全部预签名行为（spread 合成端点），**只**把对象读写换成
+   * 进程内 Map：零外呼、零凭据、跑完即弃。
+   * ⛔ 它仍是**合成**端口：真实 COS 的 put/get/删对象能力**未被**本脚本验证（见文件头「合成声明」）。
+   */
+  const memoryObjects = new Map();
+  const realObjectStore = {
+    ...syntheticRealStore,
+    note: `${syntheticRealStore.note}｜本脚本再包一层进程内 Map：putObject/getObject/has/delete 不联网，预签名照旧`,
+    async putObject(key, bytes, contentType) {
+      memoryObjects.set(key, { bytes: Uint8Array.from(bytes), contentType });
+    },
+    async getObject(key) {
+      const hit = memoryObjects.get(key);
+      return hit === undefined ? null : { bytes: Uint8Array.from(hit.bytes), contentType: hit.contentType };
+    },
+    async hasObject(key) {
+      return memoryObjects.has(key);
+    },
+    async deleteObject(key) {
+      // 端口语义：`true` = 已确认删除（含幂等删除本就不存在的对象）。
+      memoryObjects.delete(key);
+      return true;
+    },
+    async objectCount() {
+      return memoryObjects.size;
+    },
+  };
+  assert.equal(
+    realObjectStore.kind,
+    's3_compatible',
+    'real 闸门判的是注入端口的 kind：必须自述 s3_compatible，否则整个媒体域 fail-closed',
+  );
+
   const realOptions = (overrides = {}) => ({
     config: {
       ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
@@ -362,7 +432,7 @@ try {
     store: auth,
     pool,
     now: () => new Date(),
-    mediaObjectStore: syntheticRealStore,
+    mediaObjectStore: realObjectStore,
     realMediaApproval: approveRealMediaWiring({ reason: 'GY-R87 真库 HTTP 端到端：合成端点，零外呼' }),
     privacyInjection: { consent: consent.gate },
     communityInjection: { store: communityStore, authors, gate: makeGate() },
@@ -431,6 +501,30 @@ try {
       WHERE post_id = $1::uuid ORDER BY ordinal`,
     [postId],
   )).rows;
+
+  /**
+   * 待用池的**端口读数**（`kind='postgres'` ⇒ 真 SQL 打到 `public.media`；`substitute`/`injected`
+   * 分支才看 `liveCommunityImages`，所以这里传 0 不影响 postgres 口径）。
+   */
+  const pendingPool = (who) => app.mediaService.attachmentCounter.countFor({
+    ownerId: who.user.id,
+    liveCommunityImages: 0,
+  });
+
+  /** 直接改一行的 `state`：HTTP 面没有把 `uploaded`/`processing` 写回去的端点（见文件头「合成声明」）。 */
+  const setMediaState = (id, state) => owner.query(
+    'UPDATE public.media SET state = $2::media_state, updated_at = now() WHERE id = $1::uuid',
+    [id, state],
+  );
+
+  /** 克隆一行同 owner 的 `community_image`：复用真种子行的 `object_ref_cipher`，不造伪密文。 */
+  const cloneMedia = async (seedId, state) => (await owner.query(
+    `INSERT INTO public.media (owner_id, purpose, mime, bytes, sha256, object_ref_cipher, state)
+     SELECT owner_id, purpose, mime, bytes, sha256, object_ref_cipher, $2::media_state
+       FROM public.media WHERE id = $1::uuid
+     RETURNING id::text AS id`,
+    [seedId, state],
+  )).rows[0].id;
 
   // =========================================================================
   // PASS 1 · 正控制：real 装配、连传 3 张
@@ -653,7 +747,171 @@ try {
   say('fail-closed：real 模式注入「摘掉 countPendingCommunityImages 的 PG 媒体库」⇒ HTTP 503 '
     + 'PROVIDER_UNAVAILABLE + retryable=false + details[0]={field:/purpose,code:post_image_limit_unwired}（文案逐字）');
 
-  console.log(`[ALL PASS] 真库 HTTP 端到端：#1030 图片上限的「真 SQL → 路由 → 信封」链路共 ${passed} 组 PASS`);
+  // =========================================================================
+  // PASS 9 · 24h 自衰减（时间穿越，只动 SQL 行）
+  //   负控制：`services/api/src/media/store-pg.ts:371` 的 `24 hours` 改成 `48 hours` ⇒ 本组先红
+  //   （「25h 前的不该占位」那条读数会回到 3）。
+  // =========================================================================
+  assert.equal(await pendingPool(authorC), 0, 'PASS 9 起点：C 是干净 owner，待用池读数必须是 0');
+  const c1 = acceptedUpload(await uploadImage(authorC, 'c1'), 'C 第 1 张');
+  const c2 = acceptedUpload(await uploadImage(authorC, 'c2'), 'C 第 2 张');
+  const c3 = acceptedUpload(await uploadImage(authorC, 'c3'), 'C 第 3 张');
+  assert.equal(await pendingPool(authorC), 3, 'C 连传 3 张后待用池读数必须是 3');
+  const c4Denied = await uploadImage(authorC, 'c4-denied');
+  assert.equal(c4Denied.status, 400, `池满 3 时第 4 张必须 400，实际 ${c4Denied.status} ${c4Denied.text.slice(0, 400)}`);
+  assert.deepEqual(
+    c4Denied.body.error.details[0],
+    { field: '/purpose', code: 'post_image_limit' },
+    '第 4 张的信封必须仍是上传侧机器码（与 PASS 2 同款）',
+  );
+
+  // 时间穿越：只改 `created_at`，不删行、不挂载、不碰 `state`。
+  const backdated = await owner.query(
+    `UPDATE public.media SET created_at = now() - interval '25 hours'
+      WHERE id = ANY($1::uuid[]) RETURNING id::text AS id`,
+    [[c1, c2, c3]],
+  );
+  assert.equal(backdated.rowCount, 3, `必须有 3 行被拨回 25 小时前，实际 ${backdated.rowCount}`);
+  const afterBackdate = await pendingPool(authorC);
+  assert.equal(
+    afterBackdate,
+    0,
+    `3 行都拨到 25h 前 ⇒ 25h 前的不该占位（待用池读数必须 0，实际 ${afterBackdate}）`,
+  );
+  const c4 = acceptedUpload(await uploadImage(authorC, 'c4'), 'C 第 4 张（前 3 张已 25h）');
+  assert.equal(await pendingPool(authorC), 1, '拨回后只有新传的那张在 24h 窗口内 ⇒ 读数必须 1');
+
+  // 反向：把 3 行改回 `now()`，占位必须**重新**加上去（不是「过期一次就永久放过」）。
+  const restored = await owner.query(
+    'UPDATE public.media SET created_at = now() WHERE id = ANY($1::uuid[]) RETURNING id::text AS id',
+    [[c1, c2, c3]],
+  );
+  assert.equal(restored.rowCount, 3, `必须有 3 行被改回 now()，实际 ${restored.rowCount}`);
+  const afterRestore = await pendingPool(authorC);
+  assert.equal(afterRestore, 4, `改回 now() ⇒ 4 行重新占位（3 旧 + 1 新），实际 ${afterRestore}`);
+  const c5Denied = await uploadImage(authorC, 'c5-denied');
+  assert.equal(
+    c5Denied.status,
+    400,
+    `改回 now() 后第 5 张必须 400（反向控制），实际 ${c5Denied.status} ${c5Denied.text.slice(0, 400)}`,
+  );
+  assert.deepEqual(c5Denied.body.error.details[0], { field: '/purpose', code: 'post_image_limit' });
+  assert.equal((await mediaRows(authorC.user.id)).length, 4, 'C 名下必须恰好 4 行（两次 400 都没落行）');
+  say('24h 自衰减（时间穿越）：C 连传 3 张 ⇒ 池=3、第 4 张 400；把 3 行 created_at 拨到 25h 前 ⇒ 池读数 0、'
+    + '第 4 张 201；再改回 now() ⇒ 池读数 4、第 5 张 400（24h 只是「暂时」放过，不是永久释放）');
+
+  // =========================================================================
+  // PASS 10 · `state` 四值矩阵 + `deleted`/`rejected` 不占位
+  //   负控制：`services/api/src/media/store-pg.ts:370` 的 `state IN (...)` 摘掉 `'processing'` ⇒ 读数少 1；
+  //   加进 `'deleted'` ⇒ 读数多 1。四种状态各 1 张，读数必须恰好 4。
+  // =========================================================================
+  assert.equal(await pendingPool(authorD), 0, 'PASS 10 起点：D 是干净 owner，待用池读数必须是 0');
+  const dSeed = acceptedUpload(await uploadImage(authorD, 'd-seed'), 'D 种子（initiated）');
+  await cloneMedia(dSeed, 'uploaded');
+  await cloneMedia(dSeed, 'processing');
+  await cloneMedia(dSeed, 'ready');
+  const matrixRows = (await owner.query(
+    `SELECT state::text AS state, count(*)::int AS count FROM public.media
+      WHERE owner_id = $1::uuid GROUP BY state ORDER BY state`,
+    [authorD.user.id],
+  )).rows;
+  assert.deepEqual(
+    matrixRows,
+    [
+      { state: 'initiated', count: 1 },
+      { state: 'processing', count: 1 },
+      { state: 'ready', count: 1 },
+      { state: 'uploaded', count: 1 },
+    ],
+    `矩阵必须真的是「四种状态各 1 行」，实际 ${JSON.stringify(matrixRows)}`,
+  );
+  const matrixCount = await pendingPool(authorD);
+  assert.equal(
+    matrixCount,
+    4,
+    `initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4，实际 ${matrixCount}`,
+  );
+
+  // `deleted` / `rejected` 不占位：再加这两行，读数必须**纹丝不动**。
+  await cloneMedia(dSeed, 'deleted');
+  await cloneMedia(dSeed, 'rejected');
+  const sixStates = (await owner.query(
+    'SELECT state::text AS state FROM public.media WHERE owner_id = $1::uuid ORDER BY state',
+    [authorD.user.id],
+  )).rows.map((row) => row.state);
+  assert.deepEqual(
+    sixStates,
+    ['deleted', 'initiated', 'processing', 'ready', 'rejected', 'uploaded'],
+    `库内必须真的是六种状态各 1 行，实际 ${JSON.stringify(sixStates)}`,
+  );
+  const afterDeadStates = await pendingPool(authorD);
+  assert.equal(
+    afterDeadStates,
+    4,
+    `deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4，实际 ${afterDeadStates}`,
+  );
+  // 把端口读数钉到 HTTP 面：库里已有 6 行、待用池 4 张 ⇒ 第 5 张上传必须 400。
+  const dOver = await uploadImage(authorD, 'd-over');
+  assert.equal(dOver.status, 400, `SQL 造出来的占位行也必须真拦上传，实际 ${dOver.status} ${dOver.text.slice(0, 400)}`);
+  assert.deepEqual(dOver.body.error.details[0], { field: '/purpose', code: 'post_image_limit' });
+  say('state 四值矩阵：initiated/uploaded/processing/ready 各 1 张 ⇒ 池读数 4；再造 deleted + rejected 各 1 张 ⇒ '
+    + '读数仍 4（不占位）；库里 6 行 ⇒ 第 5 张上传仍 400');
+
+  // =========================================================================
+  // PASS 11 · `/complete` 迁移：真字节 → `ready` → 挂帖释放
+  //   负控制：跳过 `/complete` 这一步 ⇒ 该行停在 `initiated` ⇒ 本组 202/ready 断言必红。
+  // =========================================================================
+  const jpegBytes = jpegWithExif();
+  const jpegSha = sha256Hex(jpegBytes);
+  assert.equal(await pendingPool(authorE), 0, 'PASS 11 起点：E 是干净 owner，待用池读数必须是 0');
+  const e1Reply = await call(authorE.token, 'POST', `${API}/media/uploads`, {
+    payload: { purpose: 'community_image', mime: 'image/jpeg', bytes: jpegBytes.length, sha256: jpegSha },
+    headers: { 'idempotency-key': `r87-i30-e1-${randomUUID()}` },
+  });
+  const e1 = acceptedUpload(e1Reply, 'E 第 1 张（真 JPEG 字节）');
+  const e1Keys = await app.mediaService.serverObjectKeys(e1);
+  assert.equal(typeof e1Keys?.rawRef, 'string', `必须先拿到 rawRef 才能种字节，实际 ${JSON.stringify(e1Keys)}`);
+  await app.mediaObjectStore.putObject(e1Keys.rawRef, jpegBytes, 'image/jpeg');
+  assert.equal(await pendingPool(authorE), 1, 'initiated 也占位 ⇒ 种完字节后读数仍是 1');
+
+  const completed = await call(authorE.token, 'POST', `${API}/media/uploads/${e1}/complete`, {
+    payload: { sha256: jpegSha, bytes: jpegBytes.length },
+    headers: { 'idempotency-key': `r87-i30-e1-complete-${randomUUID()}`, 'if-match': '"1"' },
+  });
+  assert.equal(completed.status, 202, `complete 必须 202，实际 ${completed.status} ${completed.text.slice(0, 500)}`);
+  assert.equal(completed.body.data.state, 'ready', `complete 信封必须自述 state=ready，实际 ${completed.body.data.state}`);
+  assert.equal(completed.body.data.revision, 2, 'complete 后 revision 必须 +1 ⇒ 2');
+  assert.equal(completed.body.data.failure_code, null, 'complete 成功时 failure_code 必须是 null');
+  assert.equal(completed.headers.etag, '"2"', `complete 后 ETag 必须是 "2"，实际 ${String(completed.headers.etag)}`);
+  const e1Row = (await owner.query(
+    'SELECT state::text AS state, revision::int AS revision FROM public.media WHERE id = $1::uuid',
+    [e1],
+  )).rows[0];
+  assert.equal(e1Row.state, 'ready', `complete 之后该行必须真的落成 ready，实际 ${e1Row.state}`);
+  assert.equal(e1Row.revision, 2, `complete 之后该行 revision 必须落成 2，实际 ${e1Row.revision}`);
+  assert.equal(await pendingPool(authorE), 1, 'ready 仍占待用池（四态都算）⇒ 读数仍是 1');
+
+  // 衍生件真的去过元数据（`/complete` 不只是改状态位）。
+  const e1After = await app.mediaService.serverObjectKeys(e1);
+  assert.equal(typeof e1After?.derivativeRef, 'string', 'complete 后必须有去元数据衍生件');
+  const derivative = await app.mediaObjectStore.getObject(e1After.derivativeRef);
+  assert.ok(derivative !== null, '衍生件必须能从对象存储取回');
+  assert.ok(Buffer.from(jpegBytes).includes(Buffer.from('GPSDATA')), '夹具本身必须带 GPS（否则下一条是空断言）');
+  assert.ok(!Buffer.from(derivative.bytes).includes(Buffer.from('GPSDATA')), '衍生件不得含 GPS 信息');
+
+  const postE = await call(authorE.token, 'POST', `${API}/posts`, {
+    payload: postBody([e1]),
+    headers: { 'idempotency-key': `r87-i30-post-e-${randomUUID()}` },
+  });
+  assert.equal(postE.status, 201, `挂 /complete 过的媒体必须 201，实际 ${postE.status} ${postE.text.slice(0, 500)}`);
+  assert.deepEqual(postE.body.data.media_ids, [e1], '挂上的必须正是那张 ready 媒体');
+  assert.equal(await pendingPool(authorE), 0, '挂载即释放：待用池必须从 1 减到 0');
+  assert.equal(syntheticRealStore.externalRequestCount, 0, '本脚本必须零外呼（合成端点的网络路径一次都没被调到）');
+  say('/complete 迁移：真 JPEG 种字节 → complete ⇒ 202 + ETag "2" + 库内 state=ready、revision=2（衍生件已去 GPS）'
+    + ' ⇒ 挂帖 201、待用池 1 → 0');
+
+  console.log(`[ALL PASS] 真库 HTTP 端到端：#1030 图片上限的「真 SQL → 路由 → 信封」链路`
+    + `＋待用池的 24h 自衰减 / state 四值矩阵 / complete 迁移，共 ${passed} 组 PASS`);
 } catch (error) {
   console.error(`FAIL: ${error?.stack ?? error}`);
   console.error(`工具日志：${serverLog}`);
