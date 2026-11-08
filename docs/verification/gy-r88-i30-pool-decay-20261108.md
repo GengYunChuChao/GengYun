@@ -49,26 +49,26 @@ SELECT count(*) AS count FROM public.media m
 
 ### 3.1 PASS 9 · 24h 自衰减（时间穿越，只动 SQL 行）
 
-夹具：新用户 C（`tests/integration/post-media-attach-http-pg.mjs:347` 一带的 `createUser('c')`），一个干净的待用池。判据是 4 个读数连成一条闭链，任一环断掉整组就红：
+夹具：新用户 C（`tests/integration/post-media-attach-http-pg.mjs:363` 一带的 `createUser('c')`），一个干净的待用池。判据是 4 个读数连成一条闭链，任一环断掉整组就红：
 
 | # | 动作 | 断言 | 为什么这条断言只可能被真实现满足 |
 | --- | --- | --- | --- |
-| 1 | C 连传 c1／c2／c3 | 3× 201，待用池读数 **3** | 建立「满」状态；读数取 `attachmentCounter.countFor`（`kind=postgres`，`tests/integration/post-media-attach-http-pg.mjs:509`） |
+| 1 | C 连传 c1／c2／c3 | 3× 201，待用池读数 **3** | 建立「满」状态；读数取 `attachmentCounter.countFor`（`kind=postgres`，`tests/integration/post-media-attach-http-pg.mjs:525`） |
 | 2 | 第 4 张 | **400** + `details[0]={field:/purpose,code:post_image_limit}` | 与既有 PASS 2 同信封 ⇒ 上限确实由计数端口裁决 |
-| 3 | `UPDATE public.media SET created_at = now() - interval '25 hours' WHERE id = ANY($1::uuid[])`（`tests/integration/post-media-attach-http-pg.mjs:770`，`rowCount` 断言 3） | 读数 **0**；第 4 张 **201** | 这就是「25h 前的不该占位」。把 `24 hours` 改成 `48 hours`（变异 M1）读数会变 3、上传会变 400 ⇒ 断言对时间窗敏感 |
-| 4 | `UPDATE … SET created_at = now() …`（`tests/integration/post-media-attach-http-pg.mjs:786`，`rowCount` 3） | 读数 **4**（3 张旧 + 刚传的第 4 张）；第 5 张 **400** | 反向读数：证明第 3 步是「滑出窗口」而不是「行被清掉／被标记」，否则读数回不到 4 |
+| 3 | `UPDATE public.media SET created_at = now() - interval '25 hours' WHERE id = ANY($1::uuid[])`（`tests/integration/post-media-attach-http-pg.mjs:786`，`rowCount` 断言 3） | 读数 **0**；第 4 张 **201** | 这就是「25h 前的不该占位」。把 `24 hours` 改成 `48 hours`（变异 M1）读数会变 3、上传会变 400 ⇒ 断言对时间窗敏感 |
+| 4 | `UPDATE … SET created_at = now() …`（`tests/integration/post-media-attach-http-pg.mjs:802`，`rowCount` 3） | 读数 **4**（3 张旧 + 刚传的第 4 张）；第 5 张 **400** | 反向读数：证明第 3 步是「滑出窗口」而不是「行被清掉／被标记」，否则读数回不到 4 |
 
 第 3、4 步都在同一条断言里同时取「端口读数」与「HTTP 状态码」：端口读数说明 SQL 数的行数变了，HTTP 状态码说明**路由层真的按这个读数裁决**（不是只把数字读出来好看）。
 
 ### 3.2 PASS 10 · `state` 四值矩阵 + `deleted`／`rejected` 不占位
 
-造行方式：先 HTTP 传 1 张真行作种子（拿到真 `object_ref_cipher`，避免造伪密文），再用 `INSERT … SELECT … FROM public.media WHERE id = $1`（`tests/integration/post-media-attach-http-pg.mjs:521` 的 `cloneMedia(seedId, state)`）克隆出 `uploaded`／`processing`／`ready` 各 1 行。判据：
+造行方式：先 HTTP 传 1 张真行作种子（拿到真 `object_ref_cipher`，避免造伪密文），再用 `INSERT … SELECT … FROM public.media WHERE id = $1`（`tests/integration/post-media-attach-http-pg.mjs:537` 的 `cloneMedia(seedId, state)`）克隆出 `uploaded`／`processing`／`ready` 各 1 行。判据：
 
 | # | 动作 | 断言 |
 | --- | --- | --- |
 | 1 | 四态各 1 行（`initiated` 是种子本身） | 聚合查询（`tests/integration/post-media-attach-http-pg.mjs:829`）逐字等于四态各 1 行 |
 | 2 | 读待用池 | **必须 4**（断言文案：`initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4`） |
-| 3 | 再克隆 `deleted` + `rejected` 各 1 行 | 六态清单（`tests/integration/post-media-attach-http-pg.mjs:838`）逐字等于 `['deleted','initiated','processing','ready','rejected','uploaded']` |
+| 3 | 再克隆 `deleted` + `rejected` 各 1 行 | 六态清单（`tests/integration/post-media-attach-http-pg.mjs:854`）逐字等于 `['deleted','initiated','processing','ready','rejected','uploaded']` |
 | 4 | 再读待用池 | **仍 4**（断言文案：`deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4`）；第 5 张上传 **400** |
 
 第 4 步的「第 5 张 400」是把端口读数钉到 HTTP 面的同一条证据：如果 `deleted` 混进谓词，读数会变成 5、而 5 > 3 ⇒ 第 5 张就不是 400 而是「随便传都行」；反过来若谓词把 `processing` 漏了，第 2 步读数就会是 3 而不是 4。两个方向都由断言钉住，不靠人看日志。
@@ -80,11 +80,11 @@ SELECT count(*) AS count FROM public.media m
 | # | 动作 | 断言 | 说明 |
 | --- | --- | --- | --- |
 | 1 | 用 `jpegWithExif()`（`tests/media/_fixtures.mjs:46`）走真上传端点 | 201，`state='initiated'` | 真 JPEG 字节（含 `GPSDATA-1.2345,103.9876` 的 APP1 段） |
-| 2 | `serverObjectKeys(e1)`（`tests/integration/post-media-attach-http-pg.mjs:872`）→ `putObject(rawRef, jpegBytes, 'image/jpeg')`（`tests/integration/post-media-attach-http-pg.mjs:874`） | 步骤本身无断言，只为让 `completeUpload` 的 `getObject(record.rawRef)` 有字节 | 合成 S3 端点不发网络请求，故本脚本给它包了一层进程内 `Map`（`tests/integration/post-media-attach-http-pg.mjs:396` 起，`kind` 仍是 `'s3_compatible'`——`services/api/src/media/service.ts:611` 的 real 模式硬闸只认这个 `kind`） |
-| 3 | `POST ${API}/media/uploads/${e1}/complete`（`tests/integration/post-media-attach-http-pg.mjs:877`），headers 带 `idempotency-key` 与 `if-match: "1"` | **202**、`body.data.state==='ready'`、`revision===2`、`failure_code===null`、`headers.etag==='"2"'` | 信封是 `body.data.*`，不是上传的 `body.data.media.*` |
+| 2 | `serverObjectKeys(e1)`（`tests/integration/post-media-attach-http-pg.mjs:888`）→ `putObject(rawRef, jpegBytes, 'image/jpeg')`（`tests/integration/post-media-attach-http-pg.mjs:890`） | 步骤本身无断言，只为让 `completeUpload` 的 `getObject(record.rawRef)` 有字节 | 合成 S3 端点不发网络请求，故本脚本给它包了一层进程内 `Map`（`tests/integration/post-media-attach-http-pg.mjs:412` 起，`kind` 仍是 `'s3_compatible'`——`services/api/src/media/service.ts:611` 的 real 模式硬闸只认这个 `kind`） |
+| 3 | `POST ${API}/media/uploads/${e1}/complete`（`tests/integration/post-media-attach-http-pg.mjs:893`），headers 带 `idempotency-key` 与 `if-match: "1"` | **202**、`body.data.state==='ready'`、`revision===2`、`failure_code===null`、`headers.etag==='"2"'` | 信封是 `body.data.*`，不是上传的 `body.data.media.*` |
 | 4 | 回查 `public.media`（`tests/integration/post-media-attach-http-pg.mjs:902`） | 库内 `state='ready'`、`revision=2` | 证明迁移**落库**，不只是响应好看 |
-| 5 | 取回衍生件（`tests/integration/post-media-attach-http-pg.mjs:897`） | 字节里**不含** `GPSDATA` | 迁移真的走了 `stripImageMetadata` |
-| 6 | `POST /posts` 带 `media_ids:[e1]`（`tests/integration/post-media-attach-http-pg.mjs:902`） | 201 且 `media_ids` 逐字等于 `[e1]`；待用池 **1 → 0** | `ready` 的行照样占位（第 3 步后读数仍是 1），挂上帖子才释放 |
+| 5 | 取回衍生件（`tests/integration/post-media-attach-http-pg.mjs:913`） | 字节里**不含** `GPSDATA` | 迁移真的走了 `stripImageMetadata` |
+| 6 | `POST /posts` 带 `media_ids:[e1]`（`tests/integration/post-media-attach-http-pg.mjs:918`） | 201 且 `media_ids` 逐字等于 `[e1]`；待用池 **1 → 0** | `ready` 的行照样占位（第 3 步后读数仍是 1），挂上帖子才释放 |
 | 7 | 收尾 | `syntheticRealStore.externalRequestCount === 0` | 全程零外呼：注入的包装只碰进程内 `Map` |
 
 ## 4. 真库读数
@@ -122,11 +122,11 @@ PASS 11: /complete 迁移：真 JPEG 种字节 → complete ⇒ 202 + ETag "2" +
 
 | 变异 | 改法 | 首个变红的用例（行） | 读数（本版实测） |
 | --- | --- | --- | --- |
-| M1 放宽时间窗 | `services/api/src/media/store-pg.ts:371` 的 `interval '24 hours'` → `'48 hours'` | PASS 9（`tests/integration/post-media-attach-http-pg.mjs:751`） | `AssertionError: 3 行都拨到 25h 前 ⇒ 25h 前的不该占位（待用池读数必须 0，实际 3）`，退出码 1；PASS 1-8 仍绿 |
+| M1 放宽时间窗 | `services/api/src/media/store-pg.ts:371` 的 `interval '24 hours'` → `'48 hours'` | PASS 9（`tests/integration/post-media-attach-http-pg.mjs:767`） | `AssertionError: 3 行都拨到 25h 前 ⇒ 25h 前的不该占位（待用池读数必须 0，实际 3）`，退出码 1；PASS 1-8 仍绿 |
 | M2 状态谓词漏 `processing` | `services/api/src/media/store-pg.ts:370` 的 `state IN ('initiated','uploaded','processing','ready')` → 去掉 `'processing'` | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:820`） | `AssertionError: initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4，实际 3`，退出码 1；PASS 9 仍绿 |
-| M3 状态谓词混进已删除态 | `services/api/src/media/store-pg.ts:370` 的 `state IN (…)` 末尾追加「已删除」那一档枚举值（值名见下一行） | **既有 PASS 6**（`tests/integration/post-media-attach-http-pg.mjs:682`），不是 PASS 10 | `AssertionError: A 第 7 张（删一张之后）：上传必须 201，实际 400 {"error":{"code":"INVALID_REQUEST","message":"每个帖子最多 3 张图片","retryable":false,"details":[{"field":"/purpose","code":"post_image_limit"}]}}`，退出码 1 |
+| M3 状态谓词混进已删除态 | `services/api/src/media/store-pg.ts:370` 的 `state IN (…)` 末尾追加「已删除」那一档枚举值（值名见下一行） | **既有 PASS 6**（`tests/integration/post-media-attach-http-pg.mjs:698`），不是 PASS 10 | `AssertionError: A 第 7 张（删一张之后）：上传必须 201，实际 400 {"error":{"code":"INVALID_REQUEST","message":"每个帖子最多 3 张图片","retryable":false,"details":[{"field":"/purpose","code":"post_image_limit"}]}}`，退出码 1 |
 | M3′ 隔离探针（只为归因） | 同一改法（塞进的是 `deleted`），另在临时副本里把 PASS 6 造的那张已删行拨到 25h 前，使既有组不再先红 | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:820`） | `AssertionError: deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4，实际 5`，退出码 1；PASS 6、PASS 9 均绿 |
-| M4 跳过 `/complete` | 把 PASS 11 的 complete 调用换成「直接复用上传响应」 | PASS 11（`tests/integration/post-media-attach-http-pg.mjs:861`） | `AssertionError: complete 必须 202，实际 201 {"data":{"media":{…"state":"initiated"…`，退出码 1 |
+| M4 跳过 `/complete` | 把 PASS 11 的 complete 调用换成「直接复用上传响应」 | PASS 11（`tests/integration/post-media-attach-http-pg.mjs:877`） | `AssertionError: complete 必须 202，实际 201 {"data":{"media":{…"state":"initiated"…`，退出码 1 |
 
 两件必须如实交代的事：
 
@@ -154,9 +154,9 @@ PASS 11: /complete 迁移：真 JPEG 种字节 → complete ⇒ 202 + ETag "2" +
 `tests/integration/post-media-attach-http-pg.mjs` 从 672 行变成 930 行，`docs/verification/gy-r87-i30-http-e2e-20261107.md` 里有 5 处指向它的行号锚点会整体后移。处理方式与本版实测：
 
 - 第 ② 道闸门第一次跑是**红的**：`tests/unit/doc-anchors-guard.test.mjs:353`（本页写作时写作该文件的第 338 行；围栏片给该文件净加 15 行后按内容重锚）报 `FAIL: 文档行号闸门未通过（基线之外新增 1 条）`，逐条只有一条 SUSPECT——R87 页那张表里，本来指着 PASS 5 `assert.deepEqual(` 的那处锚点（当时写作该脚本的第 538 行）在 `+258` 行之后落到了一段空行上，审计语是「区间内没有任何实质内容行（全空行／全右括号）」。
-- 重锚按「同一行内容在新树里的位置」逐个定位，不用算术平移：`509→603`（PASS 4 的 `a4` 上传行）、`588→682`（PASS 6 的 `a7` 上传行）、`540→634`（PASS 5 的期望对象）、`538→632`（PASS 5 的 `assert.deepEqual(`）、`267→286`（必需迁移版本清单 `['0001','0008','0022','0056']`）。
+- 重锚按「同一行内容在新树里的位置」逐个定位，不用算术平移：`509→603`（PASS 4 的 `a4` 上传行）、`588→682`（PASS 6 的 `a7` 上传行）、`540→634`（PASS 5 的期望对象）、`538→632`（PASS 5 的 `assert.deepEqual(`）、`267→286`（必需迁移版本清单 `['0001','0008','0022','0056']`）。`25a8cb70`（#1081）给该脚本再净加 16 行之后，这 5 处又整体后移 +16（R87 页已同步改成 `619`／`698`／`650`／`648`／`302`）；本页 §3／§5 的 14 处旧号是**同一次** +16 的遗留，2026-11-08 按实物逐条改到新号，登记在 `tests/unit/doc-anchor-relocations.json`。
 - 重锚后该页补了一句「行号重锚（2026-11-08，GY-R88 增补之后）」，说明「被指内容未变、第 6 节闸门①仍是本版 8 组的历史读数，不以 GY-R88 的 11 组顶替」——历史读数不许被后来的运行覆盖。
-- 本页自身不拿那条脚本的**易漂**行号当「判据」的替代——第 3 节引的三个位置（它现在的第 751、804、861 行）在新树里由本版自己钉住；将来再有插入，重锚清单在本节可直接复算。
+- 本页自身不拿那条脚本的**易漂**行号当「判据」的替代——第 3 节引的三个位置（它现在的第 767、820、877 行）在新树里由本版自己钉住；将来再有插入，重锚清单在本节可直接复算。
 
 `git diff --numstat`（本版全部改动）：`tests/integration/post-media-attach-http-pg.mjs` 262 插入 / 4 删除；`docs/verification/gy-r87-i30-http-e2e-20261107.md` 7 插入 / 5 删除（5 处锚点改写 + 一段重锚说明）；`docs/verification/gy-r88-i30-pool-decay-20261108.md` 新增。被删的 4 行全部在测试脚本的头注与 `[ALL PASS]` 尾行上：既有 8 条 `say(...)` 断言行一行都没动（可 `git diff -U0` 逐条核对）。
 
