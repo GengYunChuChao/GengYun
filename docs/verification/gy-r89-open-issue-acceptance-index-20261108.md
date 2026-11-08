@@ -1,6 +1,6 @@
 # 开放 issue 的验收现状索引（2026-11-08 快照，R89）
 
-> 读数快照：2026-11-08T15:29:30+08:00（Asia/Hong_Kong）。基线 `55f86ef8ef0af73b444057cd64d7c465edd32f74`（`origin/main`，2026-11-08 14:49:12 +0800，`ci(real-pg): 把真库臂读数下限从 13 抬到 19，并给「三处数字」加跨文件互校 (#1073)`）：本页全部行号与 issue／依赖读数按这一版核。此后 `origin/main` 已前进到 `f7a4d0d9a19dc3a5065fd7705b9717293d0b804c`（`#1078`→`c031023d`、`#1080`→`f7a4d0d9` 两笔合入，见 §一 1.2）；本页不按新基线重排已核过的行号，凡被这两笔碰过的文件另行注明（见第六节末两条）。
+> 读数快照：2026-11-08T15:29:30+08:00（Asia/Hong_Kong）。基线 `55f86ef8ef0af73b444057cd64d7c465edd32f74`（`origin/main`，2026-11-08 14:49:12 +0800，`ci(real-pg): 把真库臂读数下限从 13 抬到 19，并给「三处数字」加跨文件互校 (#1073)`）：本页全部行号与 issue／依赖读数按这一版核。此后 `origin/main` 又前进四笔、现为 `edd414817ebdb2ebe4aaa241c55206519743b12d`（`#1078`→`c031023d`、`#1080`→`f7a4d0d9` 两笔见 §一 1.2；`#1081`→`25a8cb70` 把 HTTP 端到端臂接进真库 CI，`#1086`→`673c76fd` 把本页 11 条锚点按新的脚本行号重锚并登记，两笔见第六节与第七节末条）；本页不按新基线重排已核过的行号，凡被这四笔碰过的文件另行注明。
 
 ## 怎么读这张表
 
@@ -50,7 +50,7 @@
 | --- | --- | --- | --- | --- |
 | #4 | 微信登录路由与登录态在仓内可跑 | 外部条件 | `services/api/src/routes/auth.ts:43`（登录路由注册点）、`project.config.json:5`（现用 AppID 仍是开发号） | 正式小程序 AppID 与主体资质（用户/业主） |
 | #5 | 单作物地区档案的形状已有（三项必填、`region_code` 限 `^33[0-9]{4}$`） | 依赖未清 | `services/api/src/routes/profile.ts:30-31` | 先清 #4、#28、#29（其他 issue 的负责人） |
-| #6 | 上传路由与帖子级挂载迁移在 main；real+PG 的 HTTP 端到端今天进 main，但未接 CI | 外部条件 | `services/api/src/routes/media.ts:219`、`services/api/db/migrations/0056_post_media_attachments.sql:63`、`tests/integration/post-media-attach-http-pg.mjs:767` | 真实审核供应商凭据（用户，B1）；真实对象存储桶与密钥（用户，B4）；清 #4、#29；HTTP 臂接 CI 在飞 #1081（写手+指挥） |
+| #6 | 上传路由与帖子级挂载迁移在 main；real+PG 的 HTTP 端到端今天进 main，且已随 `#1081`（`25a8cb70`）接进真库 CI：`.github/workflows/real-pg-integration.yml:1707` 是 `real-pg-http-17.11`，`.github/workflows/real-pg-integration.yml:1772` 跑该脚本 | 外部条件 | `services/api/src/routes/media.ts:219`、`services/api/db/migrations/0056_post_media_attachments.sql:63`、`tests/integration/post-media-attach-http-pg.mjs:767` | 真实审核供应商凭据（用户，B1）；真实对象存储桶与密钥（用户，B4）；清 #4、#29 |
 | #7 | 科普/除草剂查询与详情排序在仓内可跑 | 依赖未清 | `packages/reference/query.mjs:513`（按登记号升序） | 先清 #4 |
 | #9 | 实时识别路由在位，Top3 与不确定处理有契约 | 依赖未清 | `services/api/src/routes/recognitions.ts:80` | 先清 #5、#6、#7、#27；真模型端到端另见 #1003 |
 | #10 | 实时 OCR 路由在位，校正与登记精确核对有契约 | 依赖未清 | `services/api/src/routes/ocr.ts:225` | 先清 #6、#7、#27 |
@@ -68,7 +68,7 @@
 | #28 | 五 Tab 骨架与台账闸门都硬了；今天证据下限从 1 KB 抬到 8 KB | 外部条件 | `tests/reference/i26-tabbar-skeleton.test.mjs:122`（`LEDGER_MIN_EVIDENCE_BYTES = 8192`）、`docs/verification/gy-i26-demo-align-20261014.md:783`（同句与已知限制） | 真机截图与原 demo 并排、Android/iOS 各一台（用户/业主） |
 | #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞；媒体三域折叠今天补上归属；job 终态原因与 jobs 账本 CI 臂今天都落地 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户／跨用途负控制；按基线 `55f86ef8` 核，`c031023d` 之后该块在 main 上已下移，见第六节）、`services/api/src/privacy/ledger-pg.ts:765`（生产侧 `guardWriteback`）、`docs/architecture/acceptance-map.md:299`（三域折叠登记为相邻面） | 「三域失败保留原码」是否必修（产品/监工）；`#1078`（终态原因）与 `#1080`（jobs 账本 CI 臂）已落地，但两条都不构成关单依据 |
 | #1003 | 识别协议适配层在仓内（`openai-vision-v1` + 真实 fetch） | 外部条件 | `services/api/src/recognitions/openai-vision-adapter.ts:46`、`services/api/src/recognitions/openai-vision-adapter.ts:271` | 真实厂商端点与密钥、一次真调用读数（用户/业主） |
-| #1030 | real 模式每帖 ≤3 是结构约束；今天补上 24h 衰减、`state` 四值、`/complete` 迁移三组读数，但 HTTP 臂仍未接 CI | 代码在飞 | `services/api/src/media/store-pg.ts:371`（24h 窗口写在 SQL 里）、`tests/integration/post-media-attach-http-pg.mjs:767`（衰减）、`tests/integration/post-media-attach-http-pg.mjs:877`（`/complete`） | 把 HTTP 臂接进 CI（在飞 #1081，写手+指挥）；真实桶（用户，B4）；`store` 侧 `postImageLimitError()` 仍无 HTTP 证据（`docs/verification/gy-r87-i30-http-e2e-20261107.md:164`） |
+| #1030 | real 模式每帖 ≤3 是结构约束；今天补上 24h 衰减、`state` 四值、`/complete` 迁移三组读数；该 HTTP 臂自 `#1081`（`25a8cb70`）起已接进真库 CI（`.github/workflows/real-pg-integration.yml:1707` 的 `real-pg-http-17.11`，该 job 在 `.github/workflows/real-pg-integration.yml:1772` 跑该脚本） | 外部条件 | `services/api/src/media/store-pg.ts:371`（24h 窗口写在 SQL 里）、`tests/integration/post-media-attach-http-pg.mjs:767`（衰减）、`tests/integration/post-media-attach-http-pg.mjs:877`（`/complete`） | 真实桶（用户，B4）；`store` 侧 `postImageLimitError()` 仍无 HTTP 证据（`docs/verification/gy-r87-i30-http-e2e-20261107.md:164`） |
 
 ## 三、依赖墙：今天可关 = 0 张
 
@@ -151,7 +151,7 @@
 - `#29`：「三域把 provider 异常吞成 `PROVIDER_OUTCOME_UNKNOWN`」是否必修，待裁定；今天 `#1072` 只补了归属与锚点（`docs/architecture/acceptance-map.md:299`），判定没变（仍未修、相邻面、需另行裁定）。终态原因那一半已经不在飞了：`#1078` 于 14:59:57 合入（`c031023d`），但它的提交正文写的是 `References: #29 (do not close)`，落地不等于可关。
 - `#6`：证据页 §6 留了两条待裁定（上传取消是否入契约、帖子收藏/历史是否属 #15 的口径），本页不替谁拍（`docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md:133`）。
 - `#28` 台账闸门的已知限制写在测试里：只比路径、不比字节，同一张图另存 4 份物理拷贝仍能点亮多行（`tests/reference/i26-tabbar-skeleton.test.mjs:950-951`）；证据下限 8192 字节（`tests/reference/i26-tabbar-skeleton.test.mjs:122`）只抬高占位成本，不是画质判据。
-- `#1030` 的 HTTP 臂是**本地一次性簇**上跑的：对象存储是合成端点、审核域是合成端口、PG 临时簇跑完即删（`docs/verification/gy-r87-i30-http-e2e-20261107.md:160`），并且它现在还没接 CI（`.github/workflows/real-pg-integration.yml:857` 跑的是另一支 store 级臂）。
+- `#1030` 的 HTTP 臂（本地读数）是在**一次性簇**上跑的：对象存储是合成端点、审核域是合成端口、PG 临时簇跑完即删（`docs/verification/gy-r87-i30-http-e2e-20261107.md:160`），`.github/workflows/real-pg-integration.yml:857` 跑的是另一支 store 级臂；这条 HTTP 臂自 `#1081`（`25a8cb70`）起已接进真库 CI：`.github/workflows/real-pg-integration.yml:1707` 是 `real-pg-http-17.11` job，`.github/workflows/real-pg-integration.yml:1772` 跑该脚本。
 - 读数页闸门（`tools/verify-reading-pages.mjs`）只做页内算术：不与上游 json 产物对账（`tools/verify-reading-pages.mjs:32`）；页内没有「这一行属于哪一组」的声明时会误报（`tools/verify-reading-pages.mjs:30`）。
 - `SAY_FLOOR` 只挡「整节被悄悄拿走」：它按可执行 `say(` 调用点与结构串判定，不判断言语义（`tests/unit/post-media-attachments-say-floor.test.mjs:31`）。
 - `#29` 那行第三条锚（`tests/integration/egress-ledger-pg.mjs:720-731`）是按基线 `55f86ef8` 核的：`#1078`（`c031023d`）在同一文件前段插了 32 行，同一块在 `f7a4d0d9` 上已下移到后段。本页没在新基线上重核这条行号——按 main 查时请用注释块原文 `12. 撤回的作用域负控制` 定位，别用本页的行号。
@@ -169,7 +169,7 @@
 - 本页不声称 `#1055` 属本仓验收范围：那是外部线贡献，只记存在，不据它计数。
 - 本页不声称本期合入清单完整覆盖 main 上的全部提交：§一 1.1 只覆盖 `fd6a225c..55f86ef8` 这一段（11 个提交，`git log` 实跑），1.2 那三笔是成文期间追加记录的。
 - 本页不声称第五节的号集在成文后仍然成立：它只冻结 2026-11-08T15:29:30+08:00 那一刻的号集与标题，头 SHA 与 merge 状态一律不写（成文窗口内就有三张变了，见 §一 1.2）。
-- 本页不声称已在新基线上复核过全部行号：基线仍是 `55f86ef8`，`c031023d`／`f7a4d0d9` 之后只在第六节注明的那几处做过抽查。
+- 本页不声称已在新基线上复核过全部行号：基线仍是 `55f86ef8`；只有指向被 `#1081`（`25a8cb70`）改动文件的 11 条锚点已按 `edd41481` 重核并登记（`#1086`，见第六节末三条），其余锚点未逐条复核。
 
 ## 八、更正上一页（R88）
 

@@ -39,7 +39,7 @@
 
 | 入参 | 行为 |
 | --- | --- |
-| `argv[2]` 是 `postgres(ql)://…`（`tests/integration/post-media-attach-http-pg.mjs:159`） | `targetUrl = externalUrl`（`tests/integration/post-media-attach-http-pg.mjs:283-287`）：不起簇、不 `DROP`/`CREATE`，`finally` 里也不 `pg_ctl stop` |
+| `argv[2]` 是 `postgres(ql)://…`（`tests/integration/post-media-attach-http-pg.mjs:159`） | `targetUrl = externalUrl`（`tests/integration/post-media-attach-http-pg.mjs:285`）：不起簇、不 `DROP`/`CREATE`，`finally` 里也不 `pg_ctl stop` |
 | env `POST_MEDIA_HTTP_PG_TEST_URL` | 同上（CI 不用；留给本机或别的 runner） |
 | 两者都没有 | 回落 `GY_PG_BIN` 自起一次性簇（`tests/integration/post-media-attach-http-pg.mjs:166`、`tests/integration/post-media-attach-http-pg.mjs:181`），跑完 stop + 删数据目录 |
 | 三者都没有 | 打 `SKIP: 既没给外部连接串…`（`tests/integration/post-media-attach-http-pg.mjs:167-169`）+ `EXITCODE=77 表示未取得，不是通过`（`tests/integration/post-media-attach-http-pg.mjs:171`）+ `process.exit(77)` |
