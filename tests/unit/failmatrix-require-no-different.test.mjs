@@ -18,7 +18,7 @@
  *   ④ 开关开 + `notRunnable > 0` 且没给 `--require-no-not-runnable` ⇒ 仍只按 different 判（互不吞）；
  *   ⑤ id 多于 10 个时只列 10 个并写「等 N 条」；
  *   ⑥ 参数拼错 `--require-no-diff` ⇒ 与既有非法参数行为一致：`parseArgs()` 顶层 throw，exit 1；
- *   ⑦ `--require-no-different` 被 `parseArgs()` 接受（不报未知参数）；
+ *   ⑦ `--require-no-different` 被 `parseArgs()` 接受：解析器不崩、直接走到起簇（看 `[pg] bin=`/`[pg] dataDir=` 正向标记）；
  *   ⑧ 结构契约：新内容全在文件末尾，`run-real.mjs` 既有 1518 行一格没动。
  */
 import test from 'node:test';
@@ -171,7 +171,7 @@ test('参数拼错 --require-no-diff ⇒ 与既有非法参数行为一致：par
 // ---------------------------------------------------------------------------
 // ⑦ 开关被 parseArgs 接受（不落到「未知参数」那一支）
 // ---------------------------------------------------------------------------
-test('--require-no-different 被 parseArgs 接受：不报未知参数，直接走到起簇（真失败 exit 1）', (t) => {
+test('--require-no-different 被 parseArgs 接受：解析器不崩、直接走到起簇（真失败 exit 1）', (t) => {
   const binDir = mkdtempSync(join(tmpdir(), 'gy-r89-dummybin-'));
   writeFileSync(join(binDir, process.platform === 'win32' ? 'initdb.exe' : 'initdb'), '');
   try {
@@ -182,10 +182,21 @@ test('--require-no-different 被 parseArgs 接受：不报未知参数，直接�
       timeout: 60_000,
     });
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-    assert.doesNotMatch(output, /未知参数/, `新开关必须被认识：\n${output.slice(-2000)}`);
     // 空 initdb 起不了簇 ⇒ 走既有的「其它非 0（通常 1）真失败」那一支，不是 77（77 只表示缺 GY_PG_BIN）。
     assert.equal(result.status, 1, `应当落在「集群起不来」那一支（exit 1，不是 77）：\n${output.slice(-2000)}`);
-    assert.notEqual(result.status, 77, '给了 GY_PG_BIN 就不许再退 77');
+    // 正向标记，而不是「没出现某个错误」：`parseArgs()` 是**模块顶层**调用
+    // （`const opts = parseArgs(process.argv.slice(2));`），它一返回，主流程才会打
+    // `[pg] bin=` / `[pg] dataDir=` 并真的去跑 initdb。所以这两行出现 ⇒ 解析器放行了这个开关。
+    // 反过来，`requireFlagField` 未定义会在模块求值阶段当场 ReferenceError，一进 `main()` 都轮不到，
+    // 上面那两行一行都不会有 —— 这条断言把「开关被接受、起簇失败」与「解析器自己崩了」分开。
+    assert.match(output, /\[pg\] bin=/, `解析器必须放行并进到主流程（缺 [pg] bin= 说明没走到起簇）：\n${output.slice(-2000)}`);
+    assert.match(output, /\[pg\] dataDir=/, `主流程必须打出一次性簇的数据目录（缺 [pg] dataDir= 说明没走到起簇）：\n${output.slice(-2000)}`);
+    assert.match(output, /真 PG 臂 FAIL/, `空 initdb 必须被主流程报成真失败（不是被解析器吞掉）：\n${output.slice(-2000)}`);
+    assert.doesNotMatch(
+      output,
+      /ReferenceError|is not defined/,
+      `解析器不许自己崩掉（ReferenceError 会被误读成「起簇失败」，同一支 exit 1）：\n${output.slice(-2000)}`,
+    );
   } finally {
     rmSync(binDir, { recursive: true, force: true });
   }
@@ -236,4 +247,28 @@ test('文件头 usage 提到 --require-no-different（脚本没有 --help，用�
   const usage = source.slice(0, source.indexOf('import { execFileSync }'));
   assert.match(usage, /--require-no-different/, `文件头用法块必须写上新开关：\n${usage}`);
   assert.match(usage, /--require-no-not-runnable/, '既有开关的说明不许被删');
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ `requireFlagField` 对未知参数抛错（不是静默别名）
+// ---------------------------------------------------------------------------
+test('requireFlagField 对未知参数抛错：不再静默映射成 requireNoNotRunnable', () => {
+  // 回归点：早先的 fail-open 写法是 `arg === '--require-no-different' ? … : 'requireNoNotRunnable'`，
+  // 任何拼错、或将来新增却漏登记的开关都会被静默当成「另一个开关」跑下去 —— 红/绿错位极难查。
+  // 这里钉住「未知 ⇒ 抛」，而不是「未知 ⇒ 某个字段名」。
+  assert.throws(
+    () => requireFlagField('--require-no-diff'),
+    /未知的 --require-no-\* 开关/,
+    '拼错的开关必须抛错，不许静默别名',
+  );
+  assert.throws(
+    () => requireFlagField('--require-no-not-runnabl'),
+    /未知的 --require-no-\* 开关：--require-no-not-runnabl/,
+    '错误信息必须点名那个未知参数',
+  );
+  // 非开关字符串（含空串）同样不许被接纳：fail-open 时它们会变成 requireNoNotRunnable。
+  assert.throws(() => requireFlagField(''), /未知的 --require-no-\* 开关/);
+  // 两个真开关仍然按名字返回各自的字段（字段独立性由 ⑧ 再钉一次）。
+  assert.equal(requireFlagField('--require-no-different'), 'requireNoDifferent');
+  assert.equal(requireFlagField('--require-no-not-runnable'), 'requireNoNotRunnable');
 });

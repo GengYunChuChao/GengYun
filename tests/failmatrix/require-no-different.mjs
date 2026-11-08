@@ -19,11 +19,27 @@
 /**
  * `parseArgs()` 认的「`--require-no-*` 开关 → `opts` 字段名」映射。两个开关各占一个字段，互不覆盖。
  *
+ * 未知参数**抛错**（fail-closed）：早先这里是 `arg === '--require-no-different' ? … : 'requireNoNotRunnable'`，
+ * 于是任何别的字符串都会被静默映射成 `requireNoNotRunnable` —— 以后要是加了第三个开关却忘了在
+ * 这里登记，它会冒充「不许 not_runnable」那个开关，红/绿错位极难查。改成穷举 `switch` 后，
+ * 漏登记的表现是当场抛错，不是静默别名。
+ *
+ * 调用方 `parseArgs()`（`tests/failmatrix/run-real.mjs:969`）只在这两个字面量上进来，
+ * 因此抛错分支不会改变既有行为。
+ *
  * @param {string} arg 命令行参数
  * @returns {'requireNoDifferent' | 'requireNoNotRunnable'}
+ * @throws {Error} 参数不是这两个开关之一
  */
 export function requireFlagField(arg) {
-  return arg === '--require-no-different' ? 'requireNoDifferent' : 'requireNoNotRunnable';
+  switch (arg) {
+    case '--require-no-different':
+      return 'requireNoDifferent';
+    case '--require-no-not-runnable':
+      return 'requireNoNotRunnable';
+    default:
+      throw new Error(`未知的 --require-no-* 开关：${arg}`);
+  }
 }
 
 /**
