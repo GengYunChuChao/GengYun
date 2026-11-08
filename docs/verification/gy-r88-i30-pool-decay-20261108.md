@@ -122,11 +122,11 @@ PASS 11: /complete 迁移：真 JPEG 种字节 → complete ⇒ 202 + ETag "2" +
 
 | 变异 | 改法 | 首个变红的用例（行） | 读数（本版实测） |
 | --- | --- | --- | --- |
-| M1 放宽时间窗 | `services/api/src/media/store-pg.ts:371` 的 `interval '24 hours'` → `'48 hours'` | PASS 9（`tests/integration/post-media-attach-http-pg.mjs:767`） | `AssertionError: 3 行都拨到 25h 前 ⇒ 25h 前的不该占位（待用池读数必须 0，实际 3）`，退出码 1；PASS 1-8 仍绿 |
-| M2 状态谓词漏 `processing` | `services/api/src/media/store-pg.ts:370` 的 `state IN ('initiated','uploaded','processing','ready')` → 去掉 `'processing'` | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:820`） | `AssertionError: initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4，实际 3`，退出码 1；PASS 9 仍绿 |
+| M1 放宽时间窗 | `services/api/src/media/store-pg.ts:371` 的 `interval '24 hours'` → `'48 hours'` | PASS 9（断言 `tests/integration/post-media-attach-http-pg.mjs:792-796`） | `AssertionError: 3 行都拨到 25h 前 ⇒ 25h 前的不该占位（待用池读数必须 0，实际 3）`，退出码 1；PASS 1-8 仍绿 |
+| M2 状态谓词漏 `processing` | `services/api/src/media/store-pg.ts:370` 的 `state IN ('initiated','uploaded','processing','ready')` → 去掉 `'processing'` | PASS 10（断言 `tests/integration/post-media-attach-http-pg.mjs:845-849`） | `AssertionError: initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4，实际 3`，退出码 1；PASS 9 仍绿 |
 | M3 状态谓词混进已删除态 | `services/api/src/media/store-pg.ts:370` 的 `state IN (…)` 末尾追加「已删除」那一档枚举值（值名见下一行） | **既有 PASS 6**（`tests/integration/post-media-attach-http-pg.mjs:698`），不是 PASS 10 | `AssertionError: A 第 7 张（删一张之后）：上传必须 201，实际 400 {"error":{"code":"INVALID_REQUEST","message":"每个帖子最多 3 张图片","retryable":false,"details":[{"field":"/purpose","code":"post_image_limit"}]}}`，退出码 1 |
-| M3′ 隔离探针（只为归因） | 同一改法（塞进的是 `deleted`），另在临时副本里把 PASS 6 造的那张已删行拨到 25h 前，使既有组不再先红 | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:820`） | `AssertionError: deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4，实际 5`，退出码 1；PASS 6、PASS 9 均绿 |
-| M4 跳过 `/complete` | 把 PASS 11 的 complete 调用换成「直接复用上传响应」 | PASS 11（`tests/integration/post-media-attach-http-pg.mjs:877`） | `AssertionError: complete 必须 202，实际 201 {"data":{"media":{…"state":"initiated"…`，退出码 1 |
+| M3′ 隔离探针（只为归因） | 同一改法（塞进的是 `deleted`），另在临时副本里把 PASS 6 造的那张已删行拨到 25h 前，使既有组不再先红 | PASS 10（断言 `tests/integration/post-media-attach-http-pg.mjs:864-868`） | `AssertionError: deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4，实际 5`，退出码 1；PASS 6、PASS 9 均绿 |
+| M4 跳过 `/complete` | 把 PASS 11 的 complete 调用换成「直接复用上传响应」 | PASS 11（断言 `tests/integration/post-media-attach-http-pg.mjs:897`） | `AssertionError: complete 必须 202，实际 201 {"data":{"media":{…"state":"initiated"…`，退出码 1 |
 
 两件必须如实交代的事：
 
