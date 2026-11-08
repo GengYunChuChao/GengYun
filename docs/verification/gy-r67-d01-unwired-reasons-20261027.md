@@ -126,7 +126,7 @@
 
 ## 5 顺带核到、**没有修**的 D02 残余
 
-`tests/unit/ci-real-pg-wiring.test.mjs` 的判据⑨（`tests/unit/ci-real-pg-wiring.test.mjs:1209-1222` 的本体，用例在 `:2096-2098`）只把**一份** workflow 的文本喂进去：`:52` 的 `REAL_PG_WORKFLOW` 硬钉 `real-pg-integration.yml`，用例里 `source` 也只取这一份。
+`tests/unit/ci-real-pg-wiring.test.mjs` 的判据⑨（`tests/unit/ci-real-pg-wiring.test.mjs:1219-1232` 的本体，用例在 `:2106-2108`）只把**一份** workflow 的文本喂进去：`:52` 的 `REAL_PG_WORKFLOW` 硬钉 `real-pg-integration.yml`，用例里 `source` 也只取这一份。
 
 后果：`auth-privacy-postgres.yml`／`catalog-postgres.yml`／`consent-grant-postgres.yml`／`source-lifecycle-postgres.yml`／`staging-intake-postgres.yml`／`workbook-staging.yml` 这 6 份 workflow 里真跑的受管脚本，判据⑨ 看不见；它们与 `MANAGED_SCRIPTS` 是否双向相等，目前没有任何判据在看。这是**已知的 D02 残余**（D02 的事是「判据只锚一份 workflow」），本片按派单只记录、**不修**——改它要动 `ci-real-pg-wiring.test.mjs` 的判据口径与 `REQUIRED_STEP_ORDER` 一族，超出 R67-D01 的边界。
 

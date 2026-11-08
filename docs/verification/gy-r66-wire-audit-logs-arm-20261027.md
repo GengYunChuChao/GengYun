@@ -145,7 +145,7 @@ workflow、两份守卫用例、被验证臂、本页）。
 硬套判据⑦⑧ 只有两种结果：要么在 step 里写一条假的 `CREATE DATABASE`（假绿通道，守卫明写出现它就判红），
 要么把真库 job 拆成 owner URL 形态（那是改臂形态，本片不做）。
 
-故登记进 `SELF_CLUSTERED_SCRIPTS` 走等价判据（`tests/unit/ci-real-pg-wiring.test.mjs:460-473` 的块注释是这套
+故登记进 `SELF_CLUSTERED_SCRIPTS` 走等价判据（`tests/unit/ci-real-pg-wiring.test.mjs:466-479` 的块注释是这套
 豁免的口径说明）：① 必须给 `GY_PG_BIN` 且形如 `…/bin`；② 必须给出**该脚本自己读的**根键
 （`detectedRootKeys()` 从源码取真值交叉核对，给错键／只给装饰性 env 都判红）；③ step 里**不得**出现
 `CREATE DATABASE`；④ 没有 `continue-on-error`／`|| true` 吞红。本 step 三条都满足，且第 ③ 条在这里是**正向
