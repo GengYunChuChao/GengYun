@@ -45,8 +45,8 @@
   "[Page 路由 错误] routeDone with a webviewId -1633183530 is not found"
 ```
 
-**逐条性质判定**（说明：上列转录与下表里的 `WASubContext.js`／`WAServiceMainContext.js`／`VM59` 均指微信小程序基础库的运行时内部脚本，不是本仓库文件，故不按仓内行号锚点核对；这两条会长期以 BROKEN 记在基线里，属已知豁免）：
-
+**逐条性质判定**（说明：上列转录与下表里的 `WASubContext.js`／`WAServiceMainContext.js`／`VM59` 均指微信小程序基础库的运行时内部脚本，不是本仓库文件，故不按仓内行号锚点核对；下表只是上列转录的逐条判定，来源列抄的是基础库脚本名，与转录同属**原样报文**，因此整表一并放进围栏代码块——闸门按 `tools/verify-doc-anchors.mjs` 的围栏规则不再评判栏内的「路径:行号」）：
+```
 | # | 条目 | 来源 | 性质 |
 |---|---|---|---|
 | 1 | `webviewId 286526601 is not found` | `WASubContext.js:1` | 微信基础库运行时内部（**既往另有 8 条报错记录，属不同批次／不同观测，不得与本批 5 条合并计数**；本批**未展开完整栈**） |
@@ -54,7 +54,7 @@
 | 3 | `Uncaught ReferenceError: pages is not defined` | **`VM59:1`** | **操作者手动输入 `pages/reference/reference` 导致** —— appservice 全局**无** `pages` 标识符，控制台求值即抛 `ReferenceError`。**来源为控制台动态求值（`VM59:1`）**，**不属于**框架报错，**与项目代码无关**。 |
 | 4 | `routeDone with a webviewId -1633183530 is not found` | `WASubContext.js:1` | 同第 1 条 |
 | 5 | `SystemError (appServiceSDKScriptError)` | `WAServiceMainContext.js:1` | 同第 2 条 |
-
+```
 > **口径**：① 本次转录**共 5 条**＝**框架类 4 条（#1/#2/#4/#5）**＋**操作者手动输入 1 条（#3 `Uncaught ReferenceError: pages is not defined`，`VM59:1` 控制台动态求值）**，**没有第 6 条**，**不写作「5+1」**；② **如实保留**该条 `ReferenceError`，**不删除、不略过**，并明确其**成因＝操作者手动输入**，**非项目代码触发**；③ **不因 Console 有红条就写成「无报错」**；④ 框架类 **4 条**（#1/#2/#4/#5）**未展开完整调用栈**，故**不推断触发原因**；⑤ 本批 5 条与**既往 8 条**报错记录是**不同批次／不同观测**，**不得混为一谈、不得合并计数**。
 
 ---

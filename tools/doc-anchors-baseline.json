@@ -4,30 +4,6 @@
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
-      "path": "sasl.js",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "sasl.js:67"
-    },
-    {
-      "path": "services/api/src/ocr/retryable-proof-scratch.ts",
-      "reason": "BROKEN",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/retryable-proof-scratch.ts:6"
-    },
-    {
-      "path": "WAServiceMainContext.js",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "WAServiceMainContext.js:1"
-    },
-    {
-      "path": "WASubContext.js",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "WASubContext.js:1"
-    },
-    {
       "path": "README.md",
       "reason": "OUT_OF_RANGE",
       "owner": "repo",
@@ -74,12 +50,6 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/admin/ops/jobs-pg.ts:419"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:450-451"
     },
     {
       "path": "services/api/src/admin/ops/service.ts",
@@ -184,12 +154,6 @@
       "reference": "services/api/src/conversations/store-pg.ts:352"
     },
     {
-      "path": "services/api/src/privacy/ledger-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/privacy/ledger-pg.ts:477"
-    },
-    {
       "path": "services/api/src/privacy/task-egress.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
@@ -250,22 +214,10 @@
       "reference": "services/api/src/tts/service.ts:535"
     },
     {
-      "path": "tests/integration/ocr-jobs-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/ocr-jobs-pg.mjs:848"
-    },
-    {
       "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "ai-ops-ledger-pins.test.mjs:253"
-    },
-    {
-      "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/ai-ops-ledger-pins.test.mjs:253"
     },
     {
       "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
