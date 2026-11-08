@@ -393,6 +393,13 @@ const FENCE_OPEN_RUN = /^\s*(`{3,}|~{3,})/;
  * 围栏里——4 条 BROKEN（目标文件不存在）＋4 条 SUSPECT（区间全空行／全右括号），基线册因此从 56 条删到 48 条）。
  * 反过来，散文里的锚点一条都不许因此丢失，所以掩码只按下面的**定界规则**取，不猜内容。
  *
+ * 这道闸门**不验内容语义**：机器只验「行号在文件里、区间非空／非全右括号／首行非注释、同行紧邻符号对得上」，
+ * 不验那一行说的是不是文档以为的那件事。2026-11-08 变异实测：把
+ * `docs/architecture/ai-ops-spec-status.md:108` 的 `:547-548` 原样改回 `:518`，判据面读数（COUNT／FENCED／
+ * SYMBOL-LINE／SYMBOL-COVERAGE）逐字相同，只有 SUSPECT 的摘录行与 `候选过滤` 的计数随文档文本变化。所以
+ * 「行号指对了内容」只能靠实物逐行核对来证——「锚点左侧紧邻的符号必须落在目标区间内」这条规则已记入后续
+ * 任务，本分支不加（加它就是改判红逻辑）。
+ *
  * 规则（一律与 `segmentDocumentBlocks` 的切分同口径，否则同一行会在「归属」眼里是代码块、
  * 在「抽取」眼里是正文，两条判据各说各话）：
  *  ① 开启行：`^\s*(` + 连续 3 个及以上 ` 或 ~ + `)`，其后可以跟 info string（` ```js `）；缩进不限
@@ -799,6 +806,9 @@ export function collectFindings({
         else judged.push(reference.reference);
       }
       if (bare) {
+        // 口径：`judged` 记的是「进判据面**要判**」，它在本行就 +1，**早于**下面的围栏检查。所以围栏内能继承
+        // 的裸锚点会同时出现在 `judged` 与（紧随其后的）`fenced` 里：前者是「进了判据面」，后者是「进判据面
+        // 之前一步被围栏拦下」，两者不是双重计数，findings 一条都不会有（见 doc-anchors-guard.test.mjs T6b）。
         if (report) stats.bare.judged += 1;
         else stats.bare.outside += 1;
       } else {
