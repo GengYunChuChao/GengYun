@@ -11,7 +11,7 @@
 ## 本页不声称什么
 
 1. **不声称 `#1003` 已完成、也不声称可以关单。** 本页只做「哪条 AC 的证据在仓内、哪条在仓外」的读数，关闭判定权在监工与产品/架构裁定（见 §5）。
-2. **不声称骨架代码等于能力可用。** `services/api/src/recognitions/openai-vision-adapter.ts:22` 的文件头自述「零真实供应商、零真实调用、零准确率证据」在本页按**未变**处理；本页没有跑过任何一次供应商调用，一条 `usage`、一个 HTTP 状态码都不是本页产生的。
+2. **不声称骨架代码等于能力可用。** 骨架在代码里的可核形状是「全文唯一网络发送点」`services/api/src/recognitions/openai-vision-adapter.ts:271`（注入点与单测喂假实现的读法见 §2.6），本页按**未变**处理；本页没有跑过任何一次供应商调用，一条 `usage`、一个 HTTP 状态码都不是本页产生的。
 3. **不声称外部件已就位。** 真实供应商账号、付费额度、真实杂草样本、真实调用留证、独立审查这五件，本页一件都没有取得（§3 逐件列明）。
 4. **不声称任何识别质量或准确率。** 本页不含 Top1/Top3、分数、误判率任何数字；仓内也没有可用于此的样本——`docs/evaluation/README.md:91` 要求原始私有媒体不入 Git。
 5. **不声称行号长期有效。** 行号绑定 `af39bfe6`；`main` 前移后需重新对锚，本页不承诺自动跟随。
@@ -38,7 +38,7 @@
 | AC①-2（AC (a) 后半） | 识别链路在 real 下由仓内实现完成一次真实调用并留证 | **外部件阻塞** | 代码路径可走通：`services/api/src/app.ts:1124` 读三键；`services/api/src/app.ts:1125` 取真实字节端口；`services/api/src/app.ts:1131` 记账包装；`services/api/src/recognitions/provider.ts:231` 进 openai-vision 分支；`services/api/src/recognitions/openai-vision-adapter.ts:271` 发送。闸门：`services/api/src/recognitions/live-ports.ts:191` 授权串、`services/api/src/recognitions/live-ports.ts:197` 同尝试不重发 | 三件外部件：真实 `RECOGNITION_PROVIDER_URL`/`KEY`/`MODEL` 取值；付费授权与次数上限口径（§3 第 2 条）；一次 real 跑通的调用记录与留证页（§3 第 4 条）。另需一张真实杂草照片（§3 第 3 条） |
 | AC②（AC (b)） | `species_id` 必须落在 `species.json` 闭集内，否则如实回不确定 | **已满足** | 代码级过滤：`services/api/src/recognitions/openai-vision-adapter.ts:145` 闭集外直接丢弃；`services/api/src/recognitions/openai-vision-adapter.ts:123` 归一化入口；`services/api/src/recognitions/openai-vision-adapter.ts:168` 允许集只 trim 不裁剪；`services/api/src/recognitions/provider.ts:32` 读目录、`services/api/src/recognitions/provider.ts:37` 空目录即抛（fail-closed）；目录实体 `packages/knowledge/catalog/species.json:8`（8 个物种）；丢弃后落不确定 `services/api/src/recognitions/state.ts:189`、`services/api/src/recognitions/state.ts:193`；单测 `tests/unit/recognitions-species-catalog.test.mjs:117`、`tests/unit/recognitions-species-catalog.test.mjs:169` | 无新代码。真实模型返回目录外 id 时的同行为只能在真实调用里观察到，随 AC①-2 一并取证 |
 | AC③-1（AC (c) 之二态） | 失败与超时：都有明确错误码与用户可读文案 | **已满足** | 错误码闭集四条 `services/api/src/recognitions/provider.ts:42`；状态码映射 `services/api/src/recognitions/openai-vision-adapter.ts:295`（429→配额，401/403/5xx→不可用，其余→结果未知）；超时映射 `services/api/src/recognitions/openai-vision-adapter.ts:283`；码→任务态 `services/api/src/recognitions/service.ts:276`（超时→`timed_out`，其余→`failed`）；落 Job `services/api/src/recognitions/service.ts:488`；文案 `miniprogram/utils/identify-api.js:92`（识别失败）、`miniprogram/utils/identify-api.js:93`（识别超时）；单测 `tests/unit/recognitions-openai-vision.test.mjs:93`、`tests/unit/recognitions-openai-vision.test.mjs:107`、`tests/unit/recognitions-openai-vision.test.mjs:120` | 无新代码。真实供应商下这两态各触发一次并留证，属 AC①-2 的范围（`docs/architecture/adr-002-recognition-provider-route.md:62` 的证据口径同此要求） |
-| AC③-2（AC (c) 之一态） | 零候选：同样要有明确错误码与用户可读文案 | **部分满足** | 有如实原因与分支归类：`services/api/src/recognitions/state.ts:141` 原因文本、`services/api/src/recognitions/state.ts:193` 空候选必带原因；适配器如实返回空候选 `services/api/src/recognitions/openai-vision-adapter.ts:337`；分支落 `no_result` `miniprogram/utils/identify-api.js:838`（按原因文本子串匹配）；分支文案 `miniprogram/utils/identify-api.js:171`；但该分支错误码按设计为 null `services/api/src/recognitions/branches.ts:146`、`services/api/src/recognitions/branches.ts:150` | **不是实现工作量，是口径裁定**：零候选现被当作「正常调用但没结果」（`services/api/src/recognitions/live-adapter.ts:234` 同口径），只给 `uncertain` + 分支 `no_result` + 原因文本，`error_code` 恒 null。若 AC③ 字面要求「零候选也有错误码」，需先裁定是新增一个错误码，还是承认「分支归类 + 原因文本」为等价物 |
+| AC③-2（AC (c) 之一态） | 零候选：同样要有明确错误码与用户可读文案 | **部分满足** | 有如实原因与分支归类：`services/api/src/recognitions/state.ts:141` 原因文本、`services/api/src/recognitions/state.ts:193` 空候选必带原因；适配器如实返回空候选 `services/api/src/recognitions/openai-vision-adapter.ts:337`；分支落 `no_result` `miniprogram/utils/identify-api.js:838`（按原因文本子串匹配）；分支文案 `miniprogram/utils/identify-api.js:171`；但该分支错误码按设计为 null `services/api/src/recognitions/branches.ts:146`、`services/api/src/recognitions/branches.ts:150` | **不是实现工作量，是口径裁定**：零候选现被当作「正常调用但没结果」（`services/api/src/recognitions/live-adapter.ts:235` 同口径：`outcome.candidates.length === 0` ⇒ 显式置 `branch = 'no_result'`），只给 `uncertain` + 分支 `no_result` + 原因文本，`error_code` 恒 null。若 AC③ 字面要求「零候选也有错误码」，需先裁定是新增一个错误码，还是承认「分支归类 + 原因文本」为等价物 |
 
 ### 1.3 判定构成
 
@@ -48,7 +48,7 @@
 
 ### 2.1 适配器（`services/api/src/recognitions/openai-vision-adapter.ts`，349 行）
 
-文件头逐字（`services/api/src/recognitions/openai-vision-adapter.ts:22`）：
+文件头逐字（作者自述，本页不拿它当判据 —— 骨架在代码里的形状见 §2.6 与 §2.7）：
 
 ```
  * 本文件是**骨架**：零真实供应商、零真实调用、零准确率证据。单测只喂假 `fetchImpl`，不联网。
@@ -121,7 +121,7 @@
 
 1. **真实发送只有一个出口，而且默认被换掉。** 全文唯一网络发送在 `services/api/src/recognitions/openai-vision-adapter.ts:271`，注入点在 `services/api/src/recognitions/openai-vision-adapter.ts:215`；单测全部喂假 `fetchImpl`：`tests/unit/recognitions-openai-vision.test.mjs:93`、`tests/unit/recognitions-openai-vision.test.mjs:107`、`tests/unit/recognitions-openai-vision.test.mjs:120`、`tests/unit/recognitions-openai-vision.test.mjs:147`。⇒ 代码能跑，但从没跑过真端点。
 2. **落库的版本串只到剖面、不到模型。** `services/api/src/recognitions/openai-vision-adapter.ts:228` 把 `modelVersion` 固定写成剖面常量，真实模型身份另存 `providerConfigVersion`（`services/api/src/recognitions/openai-vision-adapter.ts:224`）。⇒ 单看 `model_version` 证不出「谁答的」，这正是「零准确率证据」在库里的形状。
-3. **仓内没有一条用例能触发真实分支。** 端到端脚本只跑替身提供者：`tests/integration/recognition-chain-e2e.mjs:43`（import 替身）、`tests/integration/recognition-chain-e2e.mjs:229`（替身臂装配）；文件头自陈 real 分支 fail-closed、上传即 503（`tests/integration/recognition-chain-e2e.mjs:20`）。
+3. **仓内没有一条用例能触发真实分支。** 端到端脚本只跑替身提供者：`tests/integration/recognition-chain-e2e.mjs:43`（import 替身）、`tests/integration/recognition-chain-e2e.mjs:229`（替身臂装配）；real 分支缺凭据就不可用，落点 `services/api/src/recognitions/provider.ts:187`（`available: !missing`），受理前的 503 由 `services/api/src/recognitions/service.ts:397` 的 `!provider.available` 抛出。
 
 **与哪条 AC 冲突**：与 AC①-2 **直接冲突**——文件头把「零真实调用」写成既定事实，而 AC①-2 要求的正是反过来的那一条事实。与 AC②、AC③ **不冲突**：它们只约束代码行为，已在假 `fetchImpl` 下逐条覆盖。与 ADR-002 的证据口径也不冲突，两者是同一约束的两处表述（`docs/architecture/adr-002-recognition-provider-route.md:62`）。
 
@@ -129,7 +129,7 @@
 
 | 任务书说法 | 实测（`af39bfe6` 树） | 结论 |
 | --- | --- | --- |
-| 适配器文件头自述骨架 | `services/api/src/recognitions/openai-vision-adapter.ts:22` 逐字命中 | 一致 |
+| 适配器文件头自述骨架 | `services/api/src/recognitions/openai-vision-adapter.ts:271` 为全文唯一网络发送点（注入点与假 `fetchImpl` 单测见 §2.6） | 一致（按结构事实核，不靠注释） |
 | 冻结剖面 2 MiB／15 s／3 候选／0 重试 | `services/api/src/recognitions/openai-vision-adapter.ts:55`、`services/api/src/recognitions/openai-vision-adapter.ts:59`、`services/api/src/recognitions/openai-vision-adapter.ts:61`、`services/api/src/recognitions/openai-vision-adapter.ts:62` | 一致 |
 | 闭集守卫在 `provider.ts:32-39` 附近 | `services/api/src/recognitions/provider.ts:32` 为函数声明、`services/api/src/recognitions/provider.ts:37` 为空集抛错 | 一致 |
 | `.env.example` 已登记 PROFILE／MODEL | `.env.example:82`、`.env.example:83`（同段 `.env.example:80`、`.env.example:81` 为 URL／KEY） | 一致 |
@@ -140,7 +140,7 @@
 
 ### 3.1 外部件清单（五件，逐件写「谁才能提供」）
 
-1. **真实供应商账号与三键取值。** 缺一即 fail-closed：`services/api/src/recognitions/openai-vision-adapter.ts:203`（模型名空即抛）、`services/api/src/recognitions/provider.ts:248`（端点与密钥齐备才走真实剖面）、`.env.example:80`、`.env.example:81`、`.env.example:83`（三键缺一 ⇒ 受理前 503）。仓内自查也给出同一结论：`tests/integration/recognition-chain-e2e.mjs:20` 自陈 real 分支 fail-closed。**谁提供**：持有供应商账号与密钥的运维／用户本人；仓内只能声明键名，不能声明值。
+1. **真实供应商账号与三键取值。** 缺一即 fail-closed：`services/api/src/recognitions/openai-vision-adapter.ts:203`（模型名空即抛）、`services/api/src/recognitions/provider.ts:248`（端点与密钥齐备才走真实剖面）、`.env.example:80`、`.env.example:81`、`.env.example:83`（三键缺一 ⇒ 受理前 503）。仓内自查也给出同一结论：缺凭据即 `available: false`（`services/api/src/recognitions/provider.ts:187`），受理前按 `!provider.available` 抛 503（`services/api/src/recognitions/service.ts:397`）。**谁提供**：持有供应商账号与密钥的运维／用户本人；仓内只能声明键名，不能声明值。
 2. **付费授权与次数上限口径。** 识别域闸门只有三件事：授权串逐字比对（`services/api/src/recognitions/live-ports.ts:191`）、同一尝试不重发（`services/api/src/recognitions/live-ports.ts:197`）、可选次数上限（`services/api/src/recognitions/live-ports.ts:200`）；上限默认 0 = **不限次**（`services/api/src/recognitions/live-ports.ts:184`），预留金额恒 0（`services/api/src/recognitions/live-ports.ts:205`）。仓内写死的 `MAX_PAID_CALLS` 只属于问答／LLM 装置（`tools/verify-chat-live.mjs:17`、`tools/verify-llm-live.mjs:38`），那个手工 live 装置也只放行 tts（`tools/verify-provider-adapter-live.mjs:30`）。**谁提供**：能批「花一次钱」并定上限的人；代码侧能做的（闸门、去重、账本列）已经在。
 3. **真实杂草照片与使用许可。** 原始私有媒体不入仓是硬约束（`docs/evaluation/README.md:91`），所以仓内不存在可用于真实验收的照片。此前唯一一次真实的 TokenHub 视觉 200 用的是合成图，该页自己写「无草种真值」（`docs/verification/gy-i27-live-ai-20261018.md:78`），且 `docs/verification/ai-configuration-evidence.md:11` 明写视觉推理与草种 Top3／分数／准确率均为 0。**谁提供**：能授权拍摄／使用真实样本的样本方，且要过脱敏与留存口径。
 4. **一次真实调用记录与留证页。** ADR-002 把证据口径写成上线前置（`docs/architecture/adr-002-recognition-provider-route.md:62`），`#1003` 正文同向要求跨线登记（对照物 `docs/moderation/http-layer.md` 在仓内）。目前识别域没有任何真实调用记录；唯一的真实视觉调用属 AI 配置域，不是识别链路。**谁提供**：能拿账号与付费授权做一次受控调用、并把 `usage`／HTTP 状态／落库行如实写下的人。
