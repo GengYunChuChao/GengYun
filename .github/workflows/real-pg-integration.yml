@@ -1794,3 +1794,84 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+
+  # ───────────────────────────────────────────────────────────────────────────────
+  # R90 · `#19` 片1：注销去身份真库臂（迁移 0057，11 条断言 A1–A11）。
+  #
+  # 为什么没有 `services:`：`tests/integration/deidentify-account-pg.mjs` 自己 `initdb` 出一次性 17 集群
+  # （`GY_PG_BIN` 指二进制、`GY_I19_PG_ROOT` 指可写根，`pickFreePort()` 选空闲端口，只监听 127.0.0.1），
+  # 跑完 `pg_ctl -m immediate stop` 并删数据目录 ⇒ CI 里既没有「CI 建出来的库」，也没有可核对的库名。
+  # 形态照抄本文件 `failmatrix-real-17-11` 的「自起集群」job；装 PG 17 服务端二进制那一步的命令
+  # （PGDG 源 key + `apt-get update` + `install`）与主版本自证逐字来自本文件既有那份装包 step。
+  #
+  # 退出码：77 ⇒ `exit 1`（未取得不是通过）；其它非 0 ⇒ 原样透出；退 0 后还要过「末行闸」与「A 断言条数」
+  # 读数闸——只 grep 一处时，把整组断言删掉仍会 exit 0，那就等于零覆盖。
+  #
+  # `timeout-minutes: 45`：**封顶之和 35 + 前置余量 10 = job 级 45**。
+  #   · 35 = 前置 25（`actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15）+ 装包 5 + 真库臂 5；
+  #   · 10 = job 级显式余量常量（`PREFIX_RESERVE_MINUTES`，全文件同值）。
+  #
+  # 本 job 的读数闸：`N ≥ 11`。
+  real-pg-deidentify-17-11:
+    name: real-pg-deidentify-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
+      # 装 17 服务端二进制：形状与上面四个 job 的装包 step 逐字同形（PGDG 源 + 主版本自证）。
+      - name: 安装 PG 17 服务端二进制（真 PG 臂自起集群需要 initdb/pg_ctl）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends postgresql-17
+          initdb_version=$(/usr/lib/postgresql/17/bin/initdb --version)
+          echo "$initdb_version"
+          /usr/lib/postgresql/17/bin/pg_ctl --version
+          server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 真 PG 臂会拿到错的大版本，等于没验证。"
+            exit 1
+          fi
+      - name: 注销去身份真库臂（R90 / #19 片1：擦除面·最小权限·受理事务·展示名回落）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/deidentify-account-pg.log
+          rc=0
+          node tests/integration/deidentify-account-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::注销去身份真库臂被跳过（exit 77）：GY_PG_BIN 没传到 / initdb 不可用。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::注销去身份真库臂失败（exit $rc）。"
+            exit "$rc"
+          fi
+          if ! grep -Fq '  ✓ 结论：' "$log"; then
+            echo "::error::退 0，但日志里没有「  ✓ 结论：」这一行 ⇒ 读数不可信，按未取得处理。"
+            exit 1
+          fi
+          pass_lines=$(awk '/^  ✓ A[0-9]/{n++} END{print n+0}' "$log")
+          echo "注销去身份真库臂断言读数：A 段 ${pass_lines} 条"
+          if [ "$pass_lines" -lt 11 ]; then
+            echo "::error::退 0，但只数到 ${pass_lines} 条 A 断言（应当 ≥ 11 条 A 断言，A1–A11 一条都不能少）⇒ 有整条断言被删/被跳过，按未取得处理。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-deidentify-pg
+          PGCLIENTENCODING: UTF8

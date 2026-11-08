@@ -220,6 +220,7 @@ export const READING_GATE_BASELINES = [
       + ' ⇒ 组数恒等于调用点数，`-lt 11` 即「11 组一条都不能少」。R89 审查 P2-2 的原形：本表此前只认变量名 `readings`，'
       + '这道闸门整条落在扫描面之外（注释头里「8 组 PASS」与 `-lt 8` 都无人看住）。',
   },
+  { step: '注销去身份真库臂（R90 / #19 片1：擦除面·最小权限·受理事务·展示名回落）', countedScript: 'tests/integration/deidentify-account-pg.mjs', baseline: 11, counter: `awk '/^  ✓ A[0-9]/{n++} END{print n+0}' "$log"`, source: '本机真跑（PG 17.11 一次性簇自起自停，11 条 A 断言全过）：A1–A11 每条打一行 `  ✓ A<n>`，末尾另打一行 `  ✓ 结论：` ⇒ `awk /^  ✓ A[0-9]/` 恰好数到 11 ⇒ `-lt 11` 就是「11 条一条都不能少」（删掉任何一条 A 断言当场红）。⛔ 不登记 `prose: true`：本臂用 `pass(` 而不是 `say(`，判据⑨ 的 `sayCalls` 无从登记；注释头散文由 `ci-gate-prose-consistency` 的判据⑦ 看住（那道闸与注释头同为 11）。' },
 ];
 
 /**
@@ -241,8 +242,7 @@ export const READING_GATE_BASELINES = [
  *     的 `realPgArms()` 把本文件里**所有**「`script:` + 带引号的 `tests/integration/…` 路径」的行都当演练臂清单，
  *     而 `docs/verification/gy-r69-drill-full-20261028.md` 的臂表里没有这条 HTTP 臂（本 PR 不改那份文档）
  *     ⇒ 用 `script` 键登记会让 `verify-g-drill-readings.mjs --check` 的判据②③ 当场红。
- *   · `sayCalls`：被数脚本里**可执行** `say(` 调用点数（抹掉注释与字面量后数，同
- *     `tests/unit/post-media-attachments-say-floor.test.mjs` 的 `countSayCalls`）。
+ *   · `sayCalls`：被数脚本里**可执行** `say(` 调用点数（抹掉注释与字面量后数，同 `tests/unit/post-media-attachments-say-floor.test.mjs` 的 `countSayCalls`）。
  *   · `prose: true`：该闸门所在 job 的**注释头**参与判据⑧（注释里写的组数必须等于 `-lt N`）。
  */
 
