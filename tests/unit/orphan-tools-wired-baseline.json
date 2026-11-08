@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "note": "未接线白名单：tools/*.mjs 里既没被 workflow 的 run: 点名（A），也没有被 tests 在真仓 spawn 并断言退出码（B）的脚本。kind：library=库模块，接线由 host 承担；in-process=由某份 CI 会跑的测试在进程内驱动（日志/配置装配，没有独立判定面）；by-design=确实不该接；gap=本该接、但本片（A 档，不改 .github/**）接不了，逐条写清卡在哪。已接线的条目留在表里会被判红（过期）。",
+  "entries": [
+    {
+      "path": "tools/collect-g-drill.mjs",
+      "kind": "library",
+      "host": "tools/verify-g-drill-readings.mjs",
+      "reason": "纯函数库（runDrillPlan / readSha / readDirty）：只被 tools/verify-g-drill-readings.mjs 与 tests/unit/g-drill-readings.test.mjs import，没有自己的 CLI 入口；接线由 host verify-g-drill-readings 负责（tests/unit/g-drill-readings.test.mjs:1018 在真仓上跑它并断言退出码）。"
+    },
+    {
+      "path": "tools/contract-status-core.mjs",
+      "kind": "library",
+      "host": "tools/verify-contract-status.mjs",
+      "reason": "契约锚点的核心库（解析 / 比对 / 重锚）：由 tools/verify-contract-status.mjs import，后者在 engineering-shell.yml:111 被 run: 点名；单独跑它没有判定面。tests/unit/contract-status-tool.test.mjs:422 也只动态 import 导出函数。"
+    },
+    {
+      "path": "tools/contract-status-runtime.mjs",
+      "kind": "library",
+      "host": "tools/contract-status-core.mjs",
+      "reason": "运行期探针（在子进程里载入 API 路由并打印已挂载表），由 tools/contract-status-core.mjs:68 用 execFileSync 调起；两层宿主最终都落在 tools/verify-contract-status.mjs 上，单独给它加 run: 没有意义。"
+    },
+    {
+      "path": "tools/local-debug-config.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/local-debug.test.mjs",
+      "reason": "本机调试配置读取器（readLocalConfig / privateIPv4 / clientBasePath）：由 tests/local-debug.test.mjs:9 import 后在进程内驱动，该测试被 local-wechat.yml:57 的 run: 直接点名；它没有独立的退出码语义，spawn 一个只被当库用的模块等于测 import 成功。"
+    },
+    {
+      "path": "tools/local-debug-server.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/local-debug.test.mjs",
+      "reason": "本机调试 HTTP 服务（startLocalServer）：由 tests/local-debug.test.mjs:9 import 后起在回环端口上驱动，该测试被 local-wechat.yml:57 直接点名；常驻服务没有一次性退出码，接不进 run: 判定面。"
+    },
+    {
+      "path": "tools/i22-failmatrix-evidence-table.mjs",
+      "kind": "by-design",
+      "reason": "证据页生成器：读 tests/failmatrix/.artifacts/matrix.json 与 negative-control.json（由 tests/failmatrix/run.mjs 现场生成、不入库，git ls-files 里没有），没有这两个文件裸跑只会 ENOENT；它只输出 Markdown、无判定面，唯一守卫是夹具副本加归档页保护（tests/unit/i22-failmatrix-evidence-table-guard.test.mjs）。"
+    },
+    {
+      "path": "tools/i22-failmatrix-negative-control.mjs",
+      "kind": "by-design",
+      "reason": "人工变异执行器（27 条负控制，需人读输出判读），依赖同一批未入库的 .artifacts 产物，且要故意把注入的缺陷跑出来才叫成功；tests/failmatrix/README.md:22 写明由人工执行，进 CI 会把「负控制全部按预期失败」误报成红。"
+    },
+    {
+      "path": "tools/local-env.mjs",
+      "kind": "by-design",
+      "reason": "本机开发栈编排（local:up/down/status：起真 PG17 与 API、占了固定端口、读 gitignored 的 .env）；CI 上没有这套宿主环境，也不能为了测它去拉数据库；本机使用路径已被 tests/unit/local-env.test.mjs 以 import 方式覆盖（test:unit 里跑）。"
+    },
+    {
+      "path": "tools/openapi-route-inventory.mjs",
+      "kind": "by-design",
+      "reason": "一次性盘点脚本：`node tools/openapi-route-inventory.mjs <root>` 打印已挂载路由表 JSON，没有断言、没有退出码语义（判定在同目录的 openapi-route-parity.mjs），接进 CI 等于只证明「能打印」。"
+    },
+    {
+      "path": "tools/verify-chat-live.mjs",
+      "kind": "by-design",
+      "reason": "受控付费取证脚本：默认零外发（不带 --approved 只做预检并 exit 2），真跑要 DATABASE_URL 外发台账、受控环境与用户单独授权，且最多 2 次付费调用；头注本身就把它框在人工取证里。"
+    },
+    {
+      "path": "tools/verify-provider-live-r28.mjs",
+      "kind": "by-design",
+      "reason": "文件头第 17-18 行明写「⛔ 本工具不得被任何 workflow 引用，也不得进任何 test:* 套件」——它是靠人工触发的真实供应商连通性抽查，接进 CI 会直接违背工具自己的使用边界。"
+    },
+    {
+      "path": "tools/verify-production-provisioning.mjs",
+      "kind": "by-design",
+      "reason": "真云控制台核对（生产实例 / 备份 / 告警配置），需要生产只读凭据；仓库规矩是未审代码不接触生产凭据、凭据只在内存，CI 里没有也不该有这套凭据。"
+    },
+    {
+      "path": "tools/verify-real-capability-config.mjs",
+      "kind": "by-design",
+      "reason": "校验 docs/verification/config.local.json（.gitignore:42 明确忽略的本地配置，access-verification.yml:43 还用 git check-ignore 证明它不该入库）；没有这份文件脚本无法判定，接进 CI 只会红。"
+    },
+    {
+      "path": "tools/verify-gy-i05-log-redaction.mjs",
+      "kind": "by-design",
+      "reason": "负例对照探针：要在一份「改前」的 services/api/src/app.ts 上跑，证明探针抓得到泄漏，判定明细走 stderr、靠人工 tee before.log 与 after.log 对比；把改前源码固化进 CI 才能重复，等于把历史版本塞进流水线。"
+    },
+    {
+      "path": "tools/run-python.mjs",
+      "kind": "gap",
+      "reason": "本该接：它是 npm run test:docs 链的第一环（npm 脚本里 `node tools/run-python.mjs tools/validate_development_docs.py`），而 test:docs 在 15 份 workflow 里 0 命中——本片发现的第二个空档；接它必须改 engineering-shell.yml（加一条 run:），A 档不动 .github/**，故登记 gap。"
+    },
+    {
+      "path": "tools/openapi-route-parity.mjs",
+      "kind": "gap",
+      "reason": "本该接：package.json 的 verify:parity 就是 `node tools/openapi-route-parity.mjs`，是个现成门禁，但没有任何 workflow 调用它；tests/contract/openapi-route-parity.test.mjs 只在进程内调导出函数（不算 B）。接它要改 .github/**，A 档不动，故登记 gap。"
+    },
+    {
+      "path": "tools/verify-gy-i09-candidates.mjs",
+      "kind": "gap",
+      "reason": "本该接：头注自称「可复核探针 … 供人工与 CI 复核」，纯本地合成数据、不联网不连库、退出码 0/1 就是判定；但 15 份 workflow 与 package.json 里 0 命中。接它要改 .github/**，A 档不动，故登记 gap。"
+    },
+    {
+      "path": "tools/verify-verification-comment-anchors.mjs",
+      "kind": "gap",
+      "reason": "本该接（本片就是因它而做：单测全绿、真仓跑却 EXIT 1 基线外新增 9 条）：现有守卫 tests/unit/verify-verification-comment-anchors.test.mjs 只用临时夹具调导出函数，头注写明「⛔ 不 spawn 子进程、不写仓库内文件」，所以真仓从未被跑过；正确接法是在 workflow 里跑它并断言退出码，A 档不动 .github/**，故登记 gap。"
+    }
+  ]
+}
