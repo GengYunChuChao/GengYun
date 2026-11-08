@@ -1,8 +1,10 @@
 # R89 真库臂读数闸门：把 `pass_groups` 那道闸收进扫描面（2026-11-08）
 
-> 读数快照：2026-11-08（Asia/Hong_Kong），基线 `76f647c15331cbc8df17999dd43534f3f0e760ff`（`origin/main`，
-> `ci(real-pg): real-pg-http-17-11 job 内的组数注释从 8 组口径改为 ≥ 11 (#1093)`）。
-> 本页所有行号按这一版核；本提交**不改** `.github/**`，被引用的 workflow 行号因此不需要任何位移登记。
+> 读数快照：2026-11-08（Asia/Hong_Kong），基线 `76f647c15331cbc8df17999dd43534f3f0e760ff`
+> （`#1093` 合入后的 `origin/main`，`ci(real-pg): real-pg-http-17-11 job 内的组数注释从 8 组口径改为 ≥ 11`）。
+> 本页所有 workflow 行号按这一版核；此后 `#1094` / `#1096` 只动文档，`.github/**` 在 `76f647c1..origin/main`
+> 区间零提交（`git log` 实测为空），故这些行号仍然有效。
+> 本提交**不改** `.github/**`，被引用的 workflow 行号因此不需要任何位移登记。
 > 本页是独立审查 `98b55f84` 在 PR #1093 上指出的 P2-2 的补口记录。
 
 ## 一句话
@@ -28,10 +30,13 @@
   `if [ -z "$pass_groups" ] || [ "$pass_groups" -lt 11 ]; then`。它的读数来自
   `.github/workflows/real-pg-integration.yml:1785` 的 `sed -n … | tail -n 1`（从日志末行抽「共 N 组 PASS」），
   失败文案在 `.github/workflows/real-pg-integration.yml:1788`（「应当 ≥ 11」）。
-- 变量名里没有 `readings` ⇒ 旧 `gateLines()` 不认它 ⇒ 判据②③⑤⑥ 全都看不见它。后果不是理论上的：
-  `#1093` 之前这道闸门就是 `-lt 8`，`real-pg-http-17-11` 的注释头（`.github/workflows/real-pg-integration.yml:1676`、
-  `.github/workflows/real-pg-integration.yml:1678`、`.github/workflows/real-pg-integration.yml:1699`）也跟着写 8 组；
-  两边一起错，而守卫全绿。
+- 变量名里没有 `readings` ⇒ 旧 `gateLines()` 不认它 ⇒ 判据②③⑤⑥ 全都看不见它。后果不是理论上的，但方向要说准：
+  这道闸门从接线起就是 `-lt 11`（`76f647c1^` 的 `.github/workflows/real-pg-integration.yml:1787` 与
+  `.github/workflows/real-pg-integration.yml:1788` 已经是 11），漂移的是**散文**——`real-pg-http-17-11` 的注释头
+  （`.github/workflows/real-pg-integration.yml:1676`、`.github/workflows/real-pg-integration.yml:1678`、
+  `.github/workflows/real-pg-integration.yml:1699`）此前写着 8 组，闸门写 11，两边不一致而守卫全绿。
+  `#1093` 只改这三条注释（`1 file changed, 3 insertions(+), 3 deletions(-)`，三处全在注释里），闸门数字一个字没动。
+  也就是说真实历史是「**闸门 11 + 散文 8**」的漂移，而且它不是守卫发现的，是人肉审查发现的。
 - 组数的真值在臂脚本里：`tests/integration/post-media-attach-http-pg.mjs` 有 11 个**无条件** `say(` 调用点
   （裸 `grep` 也是 11，本脚本没有注释里的 `say(`），`passed` 计数器在
   `tests/integration/post-media-attach-http-pg.mjs:188`，末行打印在
@@ -46,8 +51,8 @@
    `tests/unit/ci-real-pg-readings-gates.test.mjs:389` 的 `countedVariableInComparison`）。
    ⛔ 不按变量名白名单放宽：retention 三条臂的读数真值就是 8，靠命名会误伤
    （`.github/workflows/real-pg-integration.yml:187` 的 `-lt 8` 数的是 `^PASS ` 行，真值也是 8）。
-2. **冻结基线**：基线表新增第 16 条，登记期望组数 `baseline: 11`
-   （`tests/unit/ci-real-pg-readings-gates.test.mjs:157`）、被数脚本
+2. **冻结基线**：基线表新增第 16 条（`step` 在 `tests/unit/ci-real-pg-readings-gates.test.mjs:211`），登记期望组数
+   `baseline: 11`（`tests/unit/ci-real-pg-readings-gates.test.mjs:213`）、被数脚本
    `tests/unit/ci-real-pg-readings-gates.test.mjs:212`、计数式（与 `.github/workflows/real-pg-integration.yml:1785` 逐字相等）、以及脚本侧的
    `sayCalls: 11`（`tests/unit/ci-real-pg-readings-gates.test.mjs:215`）。判据⑤ 的「计数式唯一 + 逐字」跟着
    闸门自己的变量名走（`tests/unit/ci-real-pg-readings-gates.test.mjs:430`、
@@ -78,19 +83,28 @@
 | 3 | `.github/workflows/real-pg-integration.yml:370` | 41 | `readings` | `real-pg-17-11` |
 | 4 | `.github/workflows/real-pg-integration.yml:410` | 10 | `readings` | `real-pg-17-11` |
 | 5 | `.github/workflows/real-pg-integration.yml:462` | 7 | `readings` | `real-pg-17-11` |
-| 6 | `.github/workflows/real-pg-integration.yml:868` | 19 | `readings` | `real-pg-admin-read-17-11` |
-| 7 | `.github/workflows/real-pg-integration.yml:910` | 14 | `readings` | `real-pg-admin-read-17-11` |
-| 8 | `.github/workflows/real-pg-integration.yml:1022` | 12 | `readings` | `real-pg-admin-write-17-11` |
-| 9 | `.github/workflows/real-pg-integration.yml:1056` | 3 | `readings` | `real-pg-admin-write-17-11` |
-| 10 | `.github/workflows/real-pg-integration.yml:1153` | 11 | `readings` | `failmatrix-real-17-11` |
-| 11 | `.github/workflows/real-pg-integration.yml:1182` | 34 | `readings` | `failmatrix-real-17-11` |
-| 12 | `.github/workflows/real-pg-integration.yml:1208` | 5 | `readings` | `failmatrix-real-17-11` |
-| 13 | `.github/workflows/real-pg-integration.yml:1236` | 10 | `readings` | `failmatrix-real-17-11` |
-| 14 | `.github/workflows/real-pg-integration.yml:1263` | 10 | `readings` | `failmatrix-real-17-11` |
-| 15 | `.github/workflows/real-pg-integration.yml:1296` | 18 | `readings` | `failmatrix-real-17-11` |
+| 6 | `.github/workflows/real-pg-integration.yml:868` | 19 | `readings` | `real-pg-17-11` |
+| 7 | `.github/workflows/real-pg-integration.yml:910` | 14 | `readings` | `real-pg-17-11` |
+| 8 | `.github/workflows/real-pg-integration.yml:1022` | 12 | `readings` | `real-pg-admin-read-17-11` |
+| 9 | `.github/workflows/real-pg-integration.yml:1056` | 3 | `readings` | `real-pg-admin-read-17-11` |
+| 10 | `.github/workflows/real-pg-integration.yml:1153` | 11 | `readings` | `real-pg-admin-write-17-11` |
+| 11 | `.github/workflows/real-pg-integration.yml:1182` | 34 | `readings` | `real-pg-admin-write-17-11` |
+| 12 | `.github/workflows/real-pg-integration.yml:1208` | 5 | `readings` | `real-pg-admin-write-17-11` |
+| 13 | `.github/workflows/real-pg-integration.yml:1236` | 10 | `readings` | `real-pg-admin-write-17-11` |
+| 14 | `.github/workflows/real-pg-integration.yml:1263` | 10 | `readings` | `real-pg-admin-write-17-11` |
+| 15 | `.github/workflows/real-pg-integration.yml:1296` | 18 | `readings` | `real-pg-admin-write-17-11` |
 | **16（新）** | `.github/workflows/real-pg-integration.yml:1787` | **11** | **`pass_groups`** | `real-pg-http-17-11` |
 
-## 四、变异自证（三项，逐字红）
+归属按 yml 的 job 键边界（`^  [a-z0-9-]+:`）逐行判定，各 job 加总 = 16，与上表逐行一致：
+`real-pg-17-11` 7 道（#1–#7）、`real-pg-admin-read-17-11` 2 道（#8–#9）、`real-pg-admin-write-17-11` 6 道（#10–#15）、
+`real-pg-http-17-11` 1 道（#16）；`failmatrix-real-17-11`、`real-pg-ledger-17-11`、`real-pg-jobs-ledger-17-11`
+这三个 job 里一道 `-lt` 闸都没有（0 道）。
+
+## 四、变异自证（四项：两项逐字留档，两项在判据⑩ 内部断言）
+
+判据⑩（`tests/unit/ci-real-pg-readings-gates.test.mjs:1292`）在测试内部自证四种变异：闸门降 3 / 注释头降 3 /
+表里 `baseline` 降 3 / 脚本少一个 `say(`，每种都断言「恰好报一处并点名」。下面是其中两项**真改工作树**的外部
+变异（逐字留档）加还原；另两项只在判据⑩ 的断言里跑，不落工作树。
 
 工具：`node <临时目录>/mut.mjs gate-8|gate-11|prose-8|prose-11`（字节级替换，命中数必须恰好 1，否则 exit 3）。
 每次变异都只改 `.github/workflows/real-pg-integration.yml` 一处，跑完立刻还原并用 `git status --porcelain` 复核。
@@ -182,6 +196,7 @@ EXIT=0
 - `文档锚点位移恒等：目标文件没改 ⇒ 行号恒等…` ——
   `# SKIP: d6a263770e23..92de0ab5008c 本次文档提交只有新增行，没有锚点位移面（1 个纯新增 hunk）`
   ⇒ 本提交的文档改动只有新增页，既有文档的带锚点行一行没动，没有位移面可判（该用例的 37 条夹具与新页无关，照跑）。
+  （区间右端点就是当时 HEAD 的短 SHA；PR 期间 rebase / amend 会换掉它，判据与结论不变。）
 - `native separate-connection withdrawal and account state changes at guarded read boundary` ——
   `# SKIP`（既有用例，与读数闸门无关）。
 
@@ -189,8 +204,8 @@ EXIT=0
 
 ## 六、六道闸门
 
-全部在 rebase 到 `d6a26377` 之后的 HEAD（`92de0ab5`；此后只再改过本页文字，守卫测试与 workflow 逐字未动）上跑
-（工作树干净，提交只含本页与守卫测试两个文件）。§四 的三项变异也在同一份文件内容上跑（rebase 只换了父提交，
+全部在最终 HEAD 上跑（工作树干净，提交只含本页与守卫测试两个文件；本页此后只改文字，守卫测试与 workflow
+逐字未动，故 ①②④ 在最终 HEAD 上重跑仍逐字相同）。§四 的变异也在同一份文件内容上跑（rebase 只换了父提交，
 守卫测试与 workflow 一个字符都没变）。
 
 | # | 闸门 | EXIT | 尾行 |
@@ -199,7 +214,7 @@ EXIT=0
 | 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ tests 37 / pass 36 / fail 0 / skipped 1`（skip 见 §五：纯新增文档提交无位移面） |
 | 3 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。` |
 | 4 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 351 页（扫描面 356 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` |
-| 5 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 只打印一棵树（无冲突文件名；对 `upstream/main`＝`d6a26377` 跑同一条也是同一棵树） |
+| 5 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 只打印一棵树（无冲突文件名；当轮 `origin/main`＝`cb3bce5e`，对 `upstream/main` 跑同一条是同一棵树） |
 | 6 | `git diff --name-only origin/main...HEAD` | 0 | `docs/verification/gy-r89-readings-gate-pass-groups-20261108.md`、`tests/unit/ci-real-pg-readings-gates.test.mjs`（只有这两条） |
 
 附带读数：`node tools/verify-g-drill-readings.mjs --check` ⇒ 0，
@@ -208,14 +223,18 @@ EXIT=0
 
 ## 七、本提交**没有**做的事
 
-- 不改 `.github/**`：`real-pg-integration.yml` 一字未动，这道闸门的数字与散文在 main 上本来就是 11。
+- 不改 `.github/**`：`real-pg-integration.yml` 一字未动。这道闸门是 `-lt 11`
+  （`.github/workflows/real-pg-integration.yml:1787`，失败文案在 `.github/workflows/real-pg-integration.yml:1788`），
+  注释头的三条散文由 `#1093` 从 8 改成 11（`.github/workflows/real-pg-integration.yml:1676`、
+  `.github/workflows/real-pg-integration.yml:1678`、`.github/workflows/real-pg-integration.yml:1699`）；
+  本提交只是让守卫开始看住「闸门数字 ↔ 注释数字」这对关系，两边一个数都没改。
 - 不改 `tools/**`：`realPgArms()` 的臂清单口径没动，所以新条目换键名（见 §二 6）。
 - 不改 `services/**`、`apps/**`、`packages/**`。
 - 不把 15 条既有闸门补上 `sayCalls`：那需要逐条核臂脚本的 `say(` 数，是另一件事；本提交只要求
   「登记了就必须对、标了 `prose: true` 就必须登记」。
 - 不真跑 PG 集群：新条目的 `source` 写明是**静态计数**（11 个可执行 `say(`），真跑读数留给有集群的一轮 CI。
 
-## 八、同类闸门：还有哪些没被看住（本 PR 不改）
+## 八、同类闸门与已知边界（本 PR 不改）
 
 本页顺带记下形状相同、但这次没动的缺口，供后续派单：
 
@@ -230,3 +249,24 @@ EXIT=0
    有没有写死组数、写没写错，没有任何判据在看；要逐个核再登记，本 PR 不做。
 5. **被数脚本的「组」定义**：判据⑨ 数的是 `say(` 调用点，不是「断言条数」。若某脚本用 `say(` 打非 PASS
    的提示行（本 HTTP 臂没有这种情况），组数与调用点数会脱钩。
+
+### 8.1 扫描面已知的误收／漏收形状（5 种，都不影响本 PR 结论）
+
+1. **只告警不 exit 的比较被当闸**：`warns=$(grep -c '^WARN ' "$log")` 配 `if [ "$warns" -lt 3 ]`（只 `echo`
+   警告、不 `exit 1`）会被口径② 收进闸门集合，判据② 随即要求给它登记基线 —— 对「不是闸的读数」属于误收。
+2. **「零失败」语义被当闸并撞判据①**：`failed=$(grep -c '^FAIL ' "$log")` 配 `-lt 1` 同样被收；而 `-lt 1`
+   正好撞判据①（反空转禁令），于是这种「零失败」写法一进扫描面就先红在① 上。
+3. **`export` 前缀漏收**：`export pass_groups=$(…)` 不是 `VAR=$(…)` 形状（正则要求行首是变量名），口径② 不认。
+4. **跨行赋值漏收**：`pass_groups=$(` ⏎ `sed -n … "$log" …` ⏎ `)` 的三行写法，`LOG_COUNTER_ASSIGNMENT`
+   只吃单行，漏收。
+5. **大写 `$LOG` 漏收**：口径② 只认 `$log` / `${log}`；`$LOG`、`$LOGFILE` 都不认（区分大小写）。
+
+### 8.2 两条维护陷阱（本次踩过或验证过）
+
+1. **`countedScript` 能躲开演练臂正则，只因为那条正则区分大小写**：`tools/lib/g-drill-readings.mjs:480` 匹配的是
+   字面 `script: 'tests/integration/…'`（没有词边界）。实测：`countedScript:` 不匹配；但 `counted_script:` 与
+   `countedscript:` **都匹配**（它们分别是 `counted_` + `script:` 和 `counted` + `script:`），会被当成第 16 条演练臂
+   ⇒ `tools/verify-g-drill-readings.mjs` 的判据②③ 红。改键名时必须保持 `Script` 大写。
+2. **`prose: true` 只能给「注释头真写了组数」的条目**：给 `.github/workflows/real-pg-integration.yml:187`
+   （retention 臂，真值 8）加 `prose: true` 会立刻**假红** —— 它所属的 `real-pg-17-11` 的注释头 22 行里一个组数
+   散文都没有（实测 0 处「N 组 PASS」/「≥ N」），而判据⑧ 的规定是「一个数字都抓不到也红」。
