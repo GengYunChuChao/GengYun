@@ -11,7 +11,7 @@
 
 | 位置 | 内容 |
 | --- | --- |
-| `.github/workflows/real-pg-integration.yml:1707` | job key `real-pg-http-17-11:`——**追加在文件最末**，前面 5 个 job（`real-pg-17-11` / `real-pg-admin-read` / `real-pg-admin-write` / `failmatrix-real` / `real-pg-ledger`）一个字节没动 |
+| `.github/workflows/real-pg-integration.yml:1707` | job key `real-pg-http-17-11:`——**追加在文件最末**，前面 6 个 job（`real-pg-17-11` / `real-pg-admin-read` / `real-pg-admin-write` / `failmatrix-real` / `real-pg-ledger` / `real-pg-jobs-ledger`）本片一个字节没动（第 6 个 `real-pg-jobs-ledger` 由 `#1080` 后来插在 HTTP job 之前） |
 | `.github/workflows/real-pg-integration.yml:1708` | `name: real-pg-http-17.11`（check 名；与 job key 只差 `-`↔`.`） |
 | `.github/workflows/real-pg-integration.yml:1709` | `runs-on: ubuntu-24.04` |
 | `.github/workflows/real-pg-integration.yml:1710` | `timeout-minutes: 45` = 封顶之和 35 + 前置余量 10（`tests/unit/ci-real-pg-step-timeouts.test.mjs` 判据②③；逐项分解写在 1702 起的注释块里） |
@@ -86,13 +86,13 @@
 - 行号位移（§8.3 口径：**纯位移只改文档里的数字，不往 `doc-anchor-relocations.json` 加条**）：+10 行把 5 份文档里的锚点整体推后——713→723 与 539→545（`docs/verification/gy-r29-real-pg-arms-audit-20261022.md:60`、`docs/verification/gy-r29-real-pg-arms-audit-20261022.md:210`）、460-473→466-479（`docs/verification/gy-r66-wire-audit-logs-arm-20261027.md:148`）、239→243 与 322→328（`docs/verification/gy-r67-c-wiring-20261027.md:20`）、646→656 与 713→723（`docs/verification/gy-r67-c-wiring-20261027.md:21`）、2462→2472（`docs/verification/gy-r67-c-wiring-20261027.md:90`，`kind:"correction"` 既有条目）、1209-1222→1219-1232 与 2096-2098→2106-2108（`docs/verification/gy-r67-d01-unwired-reasons-20261027.md:129`）、603→619 与 682→698 与 634→650 与 632→648（`docs/verification/gy-r87-i30-http-e2e-20261107.md:128`、`docs/verification/gy-r87-i30-http-e2e-20261107.md:129`、`docs/verification/gy-r87-i30-http-e2e-20261107.md:130`、`docs/verification/gy-r87-i30-http-e2e-20261107.md:131`——main 侧 `docs/verification/gy-r87-i30-http-e2e-20261107.md:137` 的重锚段已把 509/588/540/538 推到 603/682/634/632，本提交脚本净 +16 行 ⇒ 再整体 +16）、286→302（`docs/verification/gy-r87-i30-http-e2e-20261107.md:167`）。另一批是 rebase 后才成立的位移：`docs/verification/gy-r88-i30-pool-decay-20261108.md` 里三条指本脚本的锚点 804→820、813→829、886→902（本提交脚本净 +16 行，同页三处一起跟位，仍不给登记表加条）。索引页 `docs/verification/gy-r88-open-issue-acceptance-index-20261108.md:66` 的两条（159→161 与 161→163）本支**不再改**：`#1079` 已在 main 上按同一目标值修好并登记（见下一条），索引页因此不在本提交的改动面里。
 - `tests/unit/doc-anchor-relocations.json`：3 条**既有**条目的 `to`（723 / 2472 / 328）跟到新行号、reason 末尾续一句 GY-R88 的落点；索引页那两条登记**沿用 main 的 `#1079`**（`cebb0f17` / `1b618a04`，缺省 `kind`、无 `symbol`），本支在第二次 rebase 时丢掉了自己写的同义重复条目 ⇒ 最终 **611 条**，与 `origin/main` 只在这 3 行上不同（判据：以 main 侧为基底替换这 3 行，`JSON.parse` 得 611、`index:66` 恰 2 条）。做法是逐行编辑（只改 3 行），⛔ 没有 `JSON.parse`+`JSON.stringify` 整体重写。
 - `docs/verification/gy-r87-i30-http-e2e-20261107.md:166`：原文断言「**本脚本仍未接进 CI**」已失效 ⇒ 换成「**已接进 CI（2026-11-08 · GY-R88）**」并指向本页（只换这一行，文件 168 行不变）。
-- 锚点闸门：`.github/workflows/real-pg-integration.yml:1281`（被 `docs/verification/gy-r87-failmatrix-real-arm-rerun-20261107.md:5` 锚着的那行）仍是实质代码行；新 job 只追加在原第 1530 行之后，不存在把被锚行改成空行的路径——`node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` exit 0。
+- 锚点闸门：`.github/workflows/real-pg-integration.yml:1332`（`    name: failmatrix-real-17.11`，check 名；job key `failmatrix-real-17-11:` 在上一行）仍是实质代码行；`docs/verification/gy-r87-failmatrix-real-arm-rerun-20261107.md:5` 引的正是这个 check 名，但那一页写的行号已陈旧（那里现在是 `        run: |`），该页的漂移不在本片改动面——新 job 只追加在原第 1530 行之后，不存在把被锚行改成空行的路径——`node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` exit 0。
 
 ## §6 变异自证（三条，均本机跑、跑完还原）
 
 | # | 变异 | 期望 | 实测 |
 | --- | --- | --- | --- |
-| ① | 把 `.github/workflows/real-pg-integration.yml:1633` 那步 `node …` 注释掉 | `ci-real-pg-wiring` 红 | fail 10/20、exit 1 |
+| ① | 把 `.github/workflows/real-pg-integration.yml:1772` 那步 `node …` 注释掉 | `ci-real-pg-wiring` 红 | fail 10/20、exit 1 |
 | ② | 把 `tests/unit/ci-integration-chain-structure.test.mjs:98` 的 reason 前缀改回「未接线（真缺口）：」 | `ci-unwired-declaration-reasons` 红 | fail 1/1、exit 1 |
 | ③ | 把 `tests/unit/ci-unwired-declaration-reasons.test.mjs:34` 的 `ENTRY_COUNT` 改成 59 | 同上红 | fail 1/1、exit 1 |
 
