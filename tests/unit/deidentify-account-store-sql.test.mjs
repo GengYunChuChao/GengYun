@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { lexSegments } from './line-anchor-scan.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const STORE = join(ROOT, 'services/api/src/privacy/deletion-requests-pg.ts');
@@ -36,6 +37,48 @@ function createRequestBody() {
   const commit = source.indexOf("await client.query('COMMIT')", start);
   assert.notEqual(commit, -1, '`createRequest()` 里必须有 `COMMIT`');
   return source.slice(start, commit);
+}
+
+/** `lexSegments()` 掩码里「代码」段的取值：0（字符串/模板/正则/注释段都非 0）。 */
+const SEG_CODE = 0;
+
+/**
+ * `createRequest()` **方法体自身**的边界（方法签名 → 配对的 `}`），半开区间 `[start, end)`。
+ *
+ * 为什么不能「从签名一路切到文件尾」：同文件里 `createRequest()` **之后**还有成员（将来也还会有）。
+ * 谁在那之后加一次 `pool.connect()`（完全合法的改动）都会被算进本方法的账，判据当场**假红**。
+ * 「只允许一次连接」这条判据只该覆盖本方法体，所以切片终点必须是方法体自己的 `}`。
+ *
+ * 为什么用仓内词法器 `lexSegments()` 配平、而不是裸数花括号：注释/字符串/模板/正则里的花括号
+ * 不参与配对。裸数会被注释里一个孤立的 `{`、或模板里的花括号带偏，边界**静默**算错（比假红更糟）。
+ */
+function createRequestSpan() {
+  const start = source.indexOf('async createRequest(input)');
+  assert.notEqual(start, -1, '`createRequest()` 必须存在（受理路径的唯一入口）');
+  const open = source.indexOf('{', start);
+  assert.notEqual(open, -1, '`createRequest()` 的方法体必须由 `{` 开始');
+  const kind = lexSegments(source);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (kind[i] !== SEG_CODE) continue;
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const end = i + 1;
+        // 边界自证：方法体之后必须紧跟**成员分隔符**（`,` 或对象字面量的 `}`）。
+        // 落在别处（例如把默认参数里的对象当成了方法体）⇒ 当场报错，⛔ 不回落到文件尾。
+        assert.match(
+          source.slice(end).trimStart(),
+          /^[,}]/,
+          '`createRequest()` 的切片终点必须落在成员边界上（`,` 或对象字面量的 `}`）',
+        );
+        return { start, end };
+      }
+    }
+  }
+  assert.fail('`createRequest()` 的方法体没有配对的 `}`：切片终点无法确定（⛔ 不回落到文件尾）');
 }
 
 test('`DEIDENTIFY_SQL` 逐字：`SELECT public.deidentify_account($1::uuid) AS result`', () => {
@@ -76,7 +119,8 @@ test('位置：`DEIDENTIFY_SQL` 紧跟 `LOCK_TIMEOUT_SQL`；调用在 `CALL_FUNC
 });
 
 test('同一连接：`createRequest()` 只允许一次 `pool.connect()`（另开会 4s 后 55P03 自死锁）', () => {
-  const body = source.slice(source.indexOf('async createRequest(input)'));
+  const { start, end } = createRequestSpan();
+  const body = source.slice(start, end);
   const connects = body.match(/pool\.connect\(\)/g) ?? [];
   assert.equal(
     connects.length,
