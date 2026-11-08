@@ -99,7 +99,7 @@ assert.ok(hit[0].includes(SITE.profileRegions), `红字必须点名语句站点 
 
 | 位置 | 锚 | owner | 为什么不能自动定位（摘要） |
 | --- | --- | --- | --- |
-| `tests/unit/contract-status-tool.test.mjs:321` | `services/api/src/routes/ocr.ts:2-8` | `R31` | 这数字是测试**喂进去的错误输入**（mutate 故意把 `evidence[0].lines` 写成 `2-8`），断言的是工具能认出「覆盖的是 post /ocr 块」；数字必须落在测试自造的 25 行 `OCR_ROUTE_SOURCE` 上，真 `ocr.ts` 有 353 行 |
+| `tests/unit/contract-status-tool.test.mjs:321` | `services/api/src/routes/ocr.ts:2-8`（头注的 `createOCR` 等五个 operationId） | `R31` | 这数字是测试**喂进去的错误输入**（mutate 故意把 `evidence[0].lines` 写成 `2-8`），断言的是工具能认出「覆盖的是 post /ocr 块」；数字必须落在测试自造的 25 行 `OCR_ROUTE_SOURCE` 上，真 `ocr.ts` 有 353 行 |
 | `:332` | `…ocr.ts:10-16` | `R31` | 同上：区间互换时被断言的错位坐标，取的是夹具第 10-16 行 |
 | `:339` | `…ocr.ts:1-25` | `R31` | `1-25` 是「区间恰好等于整个夹具文件」的**边界值**（规则：区间==整文件⇒无法定位），不是任何语句的位置 |
 | `:355` | `…ocr.ts:11-13` | `R31` | 要的是「落在别人注册块内、又不覆盖本操作」的**部分重叠**形状，必须手挑 3 行，夹具里没有等价符号 |
