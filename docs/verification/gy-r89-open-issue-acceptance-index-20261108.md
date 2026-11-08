@@ -151,7 +151,7 @@
 - `#29`：「三域把 provider 异常吞成 `PROVIDER_OUTCOME_UNKNOWN`」是否必修，待裁定；今天 `#1072` 只补了归属与锚点（`docs/architecture/acceptance-map.md:299`），判定没变（仍未修、相邻面、需另行裁定）。终态原因那一半已经不在飞了：`#1078` 于 14:59:57 合入（`c031023d`），但它的提交正文写的是 `References: #29 (do not close)`，落地不等于可关。
 - `#6`：证据页 §6 留了两条待裁定（上传取消是否入契约、帖子收藏/历史是否属 #15 的口径），本页不替谁拍（`docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md:133`）。
 - `#28` 台账闸门的已知限制写在测试里：只比路径、不比字节，同一张图另存 4 份物理拷贝仍能点亮多行（`tests/reference/i26-tabbar-skeleton.test.mjs:950-951`）；证据下限 8192 字节（`tests/reference/i26-tabbar-skeleton.test.mjs:122`）只抬高占位成本，不是画质判据。
-- `#1030` 的 HTTP 臂是**本地一次性簇**上跑的：对象存储是合成端点、审核域是合成端口、PG 临时簇跑完即删（`docs/verification/gy-r87-i30-http-e2e-20261107.md:160`），`.github/workflows/real-pg-integration.yml:857` 跑的是另一支 store 级臂；这条 HTTP 臂自 `#1081`（`25a8cb70`）起已接进真库 CI：`.github/workflows/real-pg-integration.yml:1707` 是 `real-pg-http-17.11` job，`.github/workflows/real-pg-integration.yml:1772` 跑该脚本。
+- `#1030` 的 HTTP 臂（本地读数）是在**一次性簇**上跑的：对象存储是合成端点、审核域是合成端口、PG 临时簇跑完即删（`docs/verification/gy-r87-i30-http-e2e-20261107.md:160`），`.github/workflows/real-pg-integration.yml:857` 跑的是另一支 store 级臂；这条 HTTP 臂自 `#1081`（`25a8cb70`）起已接进真库 CI：`.github/workflows/real-pg-integration.yml:1707` 是 `real-pg-http-17.11` job，`.github/workflows/real-pg-integration.yml:1772` 跑该脚本。
 - 读数页闸门（`tools/verify-reading-pages.mjs`）只做页内算术：不与上游 json 产物对账（`tools/verify-reading-pages.mjs:32`）；页内没有「这一行属于哪一组」的声明时会误报（`tools/verify-reading-pages.mjs:30`）。
 - `SAY_FLOOR` 只挡「整节被悄悄拿走」：它按可执行 `say(` 调用点与结构串判定，不判断言语义（`tests/unit/post-media-attachments-say-floor.test.mjs:31`）。
 - `#29` 那行第三条锚（`tests/integration/egress-ledger-pg.mjs:720-731`）是按基线 `55f86ef8` 核的：`#1078`（`c031023d`）在同一文件前段插了 32 行，同一块在 `f7a4d0d9` 上已下移到后段。本页没在新基线上重核这条行号——按 main 查时请用注释块原文 `12. 撤回的作用域负控制` 定位，别用本页的行号。
