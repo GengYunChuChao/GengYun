@@ -93,13 +93,13 @@
 | # | 变异 | 期望 | 实测 |
 | --- | --- | --- | --- |
 | ① | 把 `.github/workflows/real-pg-integration.yml:1772` 那步 `node …` 注释掉 | `ci-real-pg-wiring` 红 | fail 10/20、exit 1 |
-| ② | 把 `tests/unit/ci-integration-chain-structure.test.mjs:98` 的 reason 前缀改回「未接线（真缺口）：」 | `ci-unwired-declaration-reasons` 红 | fail 1/1、exit 1 |
+| ② | 把 `tests/unit/ci-integration-chain-structure.test.mjs:98` 的 reason 前缀改回「未接线（真缺口）：」 | `ci-unwired-declaration-reasons` 红 | fail 1/1、exit 1（2026-11-08 重跑同读数：tests 1／pass 0／fail 1） |
 | ③ | 把 `tests/unit/ci-unwired-declaration-reasons.test.mjs:34` 的 `ENTRY_COUNT` 改成 59 | 同上红 | fail 1/1、exit 1 |
 
-红原文（逐字摘）：
+红原文（逐字摘；② 于 2026-11-08 在本页口径下重跑后重抄，①③ 沿用成文时的读数）：
 
 - ① `AssertionError [ERR_ASSERTION]: 有受管真库脚本既没有被任何 workflow 的 run: 执行，也没有对应的真库臂——`，随后点名 `· tests/integration/post-media-attach-http-pg.mjs`，并给改法「在 `.github/workflows/real-pg-integration.yml`（或另一个带 `services.postgres` 的 workflow）里加一步 `node <脚本>`，不要只写在注释里、也不要只写裸文件名。」——同一次还有判据⑥⑦⑧⑨ 三条一并红，正是「注释掉 = 没接线」。
-- ② `白名单理由与事实不符：` + `- tests/integration/post-media-attach-http-pg.mjs（第 97 行）：说的是「未接线（真缺口）：」，但 .github/workflows/real-pg-integration.yml#real-pg-http-17-11 真在跑它` + `- 已接线条数 52 ≠ 真被 workflow run: 跑到的白名单脚本数 53`。
+- ② `白名单理由与事实不符：` + `- tests/integration/post-media-attach-http-pg.mjs（第 97 行）：说的是「未接线（真缺口）：」，但 .github/workflows/real-pg-integration.yml#real-pg-http-17-11 真在跑它` + `- 已接线条数 53 ≠ 真被 workflow run: 跑到的白名单脚本数 54`。
 - ③ `白名单理由与事实不符：` + `- 白名单条目数 58 ≠ 59`。
 
 ## §7 已知限制（不声称的部分）
