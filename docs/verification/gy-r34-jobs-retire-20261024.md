@@ -155,7 +155,7 @@ code: 'ERR_MODULE_NOT_FOUND'
 
 1. **谁在什么条件下可以删表**：`DROP TABLE public.jobs` 作为独立片，前置 ①在途 0033/0034 落定后可取 0035；②正向迁移里先建立该动作的先例写法（全仓 `DROP TABLE` 目前只在 rollback）；③确认没有运维脚本再向它 seed（`docs/verification/gy-i24-restore-drill-local-20261018.md:81` 那份种子脚本必须先改，否则删表后演练会红）。
 2. **行为变更需要补覆盖**：若产品要继续「历史 jobs 行 ⇒ 409」的旧语义，必须补一条真库臂用例（当前为零覆盖，见 §0）。
-3. **真库确认**：`deploy/postgres-cvm/sql/90-assert-least-privilege.sql:3699-3708` 的静态值 `115 条 / 3632` 需真库跑一次 `count(*)` 类核对（含 `sum(length(label)+2)`）；若真库给出别的数，以真库为准并同步 `:3699-3704` 与本页 §3.5。
+3. **真库确认**：`deploy/postgres-cvm/sql/90-assert-least-privilege.sql:3698-3707` 的静态值 `115 条 / 3632` 需真库跑一次 `count(*)` 类核对（含 `sum(length(label)+2)`）；若真库给出别的数，以真库为准并同步 `:3698-3703` 与本页 §3.5。
 
 ## 6 提交与工作树读数
 

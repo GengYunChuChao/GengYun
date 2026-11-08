@@ -30,7 +30,7 @@
 | 改动 | 位置（改后行号） | 内容 |
 | --- | --- | --- |
 | 新增顶层 CTE | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2374` | `unwired_manifest(tbl, why, source) AS (VALUES …)`，21 行，每行「表名 + 理由 + `migrations/`/`docs/` 出处」 |
-| 扩 87 号（就地） | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:3766` 起 | 标签仍是 `runtime_surface_parity`：原来的 (i)(ii) 保留，追加 (iii) 全表归类、`(iv-a)` 清单行必须是普通表、`(iv-b)` 清单行对 runtime 零权限、`(v)` 三清单两两不相交 |
+| 扩 87 号（就地） | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:3765` 起 | 标签仍是 `runtime_surface_parity`：原来的 (i)(ii) 保留，追加 (iii) 全表归类、`(iv-a)` 清单行必须是普通表、`(iv-b)` 清单行对 runtime 零权限、`(v)` 三清单两两不相交 |
 | 新增离线钉子 | `tests/unit/assert-domain-visibility.test.mjs` | 4 条纯文本断言，不连库（见 §6） |
 | 新增证据页 | 本文件 | — |
 

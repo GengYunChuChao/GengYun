@@ -2784,7 +2784,6 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
 
          '运行时应能连接业务库'
 
-  UNION ALL
   -- ---------------------------------------------------------------------------
   -- GY-I19（#19 片1 / 迁移 0057）追加：注销**去身份**唯一写路径的函数级契约断言。
   -- 背景：运行时对 public.users 的 nickname/avatar_media_id/wechat_subject_cipher/
@@ -2796,7 +2795,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- ⛔ 这五条**不**放松任何既有断言，也**不**给运行时角色补任何列权限。
   -- ---------------------------------------------------------------------------
   UNION ALL
-  -- 16a. 唯一写路径必须恰存在一个（名字 + 精确签名 `(p_user_id uuid)`）
+  -- 112. 唯一写路径必须恰存在一个（名字 + 精确签名 `(p_user_id uuid)`）
   SELECT 'deidentify_function_exists',
          to_regprocedure('public.deidentify_account(uuid)') IS NOT NULL
          AND (SELECT count(*) FROM pg_proc
@@ -2809,7 +2808,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '注销去身份唯一写路径必须恰为 public.deidentify_account(p_user_id uuid)'
 
   UNION ALL
-  -- 17a. 必须真的是 SECURITY DEFINER（否则函数以调用者身份执行，四列擦除必然 42501）
+  -- 113. 必须真的是 SECURITY DEFINER（否则函数以调用者身份执行，四列擦除必然 42501）
   SELECT 'deidentify_function_security_definer',
          (SELECT p.prosecdef
             FROM pg_proc p
@@ -2818,7 +2817,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '注销去身份函数必须声明 SECURITY DEFINER'
 
   UNION ALL
-  -- 18a. search_path 必须固定为 pg_catalog（不做 search_path 劫持的入口），且时区固定为 UTC
+  -- 114. search_path 必须固定为 pg_catalog（不做 search_path 劫持的入口），且时区固定为 UTC
   SELECT 'deidentify_function_search_path',
          (SELECT p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']
             FROM pg_proc p
@@ -2827,7 +2826,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '注销去身份函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
 
   UNION ALL
-  -- 19a. 属主正确：必须是能改 users 的 PII 四列与 deletion_generation、且能改
+  -- 115. 属主正确：必须是能改 users 的 PII 四列与 deletion_generation、且能改
   --      exports.provider_request_ref_cipher 的角色，且运行时角色既不是它、也不能 SET ROLE 成为它
   SELECT 'deidentify_function_owner',
          (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
@@ -2844,7 +2843,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '函数属主必须是能改 users 的 PII 四列/deletion_generation 与 exports.provider_request_ref_cipher 的运营方角色，且运行时角色无法成为它'
 
   UNION ALL
-  -- 20a. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  -- 116. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
   SELECT 'deidentify_function_execute',
          has_function_privilege(
            'gengyun_api_runtime',
@@ -4833,6 +4832,10 @@ SELECT CASE
 -- `runtime_grants_post_media_attachments`；`domain_manifest` 同时增一行
 -- `granted / required=true`（第 47 条「每个 public 关系都要被分类」据此才不判红）。
 -- `allow_table_dml` 增一个三元组（20 → 21），它只进 detail 文案、不增减断言行。
+-- GY-I19（`#19` 片1 / 迁移 0057 注销去身份）：再追加**五条**（112–116：去身份唯一写路径的
+-- 函数面 —— 存在与精确签名 `(p_user_id uuid)` / SECURITY DEFINER / search_path+TimeZone /
+-- 属主的列权前提 / EXECUTE 闭集）⇒ 静态值 135 条；`protected_columns` 与 `external_manifest`
+-- **一句未动**（运行时对 users 的 PII 四列与 exports.provider_request_ref_cipher 仍零列权）。
 DO $$
 DECLARE
   v_failed integer;
