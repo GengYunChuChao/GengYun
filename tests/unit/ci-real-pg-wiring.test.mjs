@@ -234,13 +234,13 @@ const MANAGED_SCRIPTS = Object.freeze([
   // R87（`#29` 的最后一块）：provider 调用记账臂住**独立 job** `real-pg-ledger-17.11`（它要建库 + 建全局角色，
   // 而 `real-pg-17-11` 里多条臂对「集群里有没有同名角色」有顺序依赖），故在清单与顺序表里都排最后。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
-  // R88：jobs 台账臂同样住**独立 job** `real-pg-jobs-ledger-17.11`（它要求一个**全新空库**：脚本先断言
-  // `public` 下 0 个关系，再跑全链迁移），与 `real-pg-17-11` 的「先跑过多条臂的库」互不相容，故排在 HTTP 臂之前。
+  // R88：jobs 台账臂住**独立 job** `real-pg-jobs-ledger-17.11`（它要求一个**全新空库**：脚本先断言 `public` 下 0 个关系，再跑全链迁移），故排在 HTTP 臂之前。
   'tests/integration/jobs-ledger-pg.mjs',
-  // R88（`GY-I30` 的尾巴）：媒体挂载的**真 HTTP 端到端**（11 组 PASS：路由层 + 信封层复验 0056 的
-  // 「每帖 ≤3 张」）住独立 job `real-pg-http-17.11`；它要一条能建库的超管连接，故与其它臂
-  // 无状态依赖，清单与顺序表都排最后。
+  // R88（`GY-I30` 的尾巴）：媒体挂载的**真 HTTP 端到端**住独立 job `real-pg-http-17.11`（要一条能建库的超管连接），与其它臂无状态依赖，清单与顺序表都排最后。
   'tests/integration/post-media-attach-http-pg.mjs',
+  // R90（`#19` 片1）：`deidentify-account-pg` 自起集群（`GY_PG_BIN` + `GY_I19_PG_ROOT`，自己 `initdb` 出一次性 17 簇），
+  // 住同样自起集群的独立 job `real-pg-deidentify-17.11`；与其它臂无状态依赖。
+  'tests/integration/deidentify-account-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -296,12 +296,12 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/media-row-purge-pg.mjs',
-  // R87（`#29`）：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  // R87（`#29`）/ R88 / R90（`#19` 片1）：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
-  // R88：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/jobs-ledger-pg.mjs',
-  // R88：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/post-media-attach-http-pg.mjs',
+  // R90（`#19` 片1）：`deidentify-account-pg` 是自起集群族（`GY_PG_BIN` + `GY_I19_PG_ROOT`）⇒ 同位置追加。
+  'tests/integration/deidentify-account-pg.mjs',
 ]);
 
 /**
@@ -595,10 +595,10 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //     所以它不能与上面任何一条共享库 ⇒ 住独立 job `real-pg-jobs-ledger-17.11`，在文件里排在
   //     HTTP 臂之前；它与上面 24 条之间**没有任何状态依赖**（不同集群）。
   'tests/integration/jobs-ledger-pg.mjs',
-  // 26. `post-media-attach-http-pg`：**不吃 `services.postgres` 之外的任何前置**（job 先
-  //     `CREATE DATABASE gengyun_post_media_http_test`，连接串走 `argv[2]`），住独立 job
-  //     `real-pg-http-17.11`，在文件里排最后，故这里也排最后；与其它臂之间**没有状态依赖**。
+  // 26. `post-media-attach-http-pg`：**不吃 `services.postgres` 之外的任何前置**（job 先 `CREATE DATABASE gengyun_post_media_http_test`，连接串走 `argv[2]`），住独立 job `real-pg-http-17.11`，在文件里排最后，故这里也排最后。
   'tests/integration/post-media-attach-http-pg.mjs',
+  // 27. `deidentify-account-pg`（R90 / `#19` 片1）：**自起集群**（`GY_PG_BIN` + `GY_I19_PG_ROOT`，自己 `initdb` + `pickFreePort()`），住同样自起集群的独立 job `real-pg-deidentify-17.11`，排在各臂之后。
+  'tests/integration/deidentify-account-pg.mjs',
 ]);
 
 /**
@@ -711,9 +711,9 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   // `retention-clock-drill-pg`：自起集群，7/30 日加速时钟。
   'tests/integration/retention-clock-drill-pg.mjs',
-  // R67-C3：`media-row-purge-pg.mjs` 自起集群（自建 `gengyun_media_row_purge_test`、跑完 `pg_ctl stop`
-  // 并删数据目录），根键 **`GY_R34_PG_ROOT`**（与 `recognitions-speech-purge-pg` 同键、各自子目录）。
+  // R67-C3 / R90（`#19` 片1）：两条自起集群臂——`media-row-purge-pg`（自建 `gengyun_media_row_purge_test`、跑完 `pg_ctl stop` 并删数据目录，根键 `GY_R34_PG_ROOT`）、`deidentify-account-pg`（`initdb -U postgres -A trust` + `pickFreePort()` 先探活、跑完 `pg_ctl -m immediate stop`，根键 `GY_I19_PG_ROOT`）。
   'tests/integration/media-row-purge-pg.mjs',
+  'tests/integration/deidentify-account-pg.mjs',
 ]);
 
 /**
@@ -772,9 +772,9 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   'tests/integration/moderation-full-chain-pg.mjs': 'GY_I14C_PG_ROOT',
   'tests/integration/recognitions-speech-purge-pg.mjs': 'GY_R34_PG_ROOT',
   'tests/integration/retention-clock-drill-pg.mjs': 'GY_I19_PG_ROOT',
-  // R67-C3：`media-row-purge-pg.mjs` 读 **`GY_R34_PG_ROOT`**（源码取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`；
-  // 日志键是 `GY_R34_PG_LOG`，不匹配根键形状，故不会误登记）。
+  // R67-C3 / R90（`#19` 片1）：`media-row-purge-pg` 读 **`GY_R34_PG_ROOT`**（日志键 `GY_R34_PG_LOG` 不匹配根键形状，故不会误登记）；`deidentify-account-pg` 读 **`GY_I19_PG_ROOT`**（源码唯一取值点 `process.env.GY_I19_PG_ROOT ?? tmpdir()`，无 `GY_*_PG_LOG` 键）。
   'tests/integration/media-row-purge-pg.mjs': 'GY_R34_PG_ROOT',
+  'tests/integration/deidentify-account-pg.mjs': 'GY_I19_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */
@@ -1018,9 +1018,9 @@ export function postgresJobProblems(source, { managed = MANAGED_SCRIPTS, require
   }
   const problems = [];
   for (const job of running) {
-    for (const problem of postgresServiceProblems(job.body, { requiredMajor })) {
-      problems.push(`job \`${job.id}\`：${problem}`);
-    }
+    // 自起集群专属 job（R90 / `#19` 片1）⇒ 跳过判据③；豁免必须窄，见 `isSelfClusteredOnlyJob` 与反向控制⑪。
+    if (isSelfClusteredOnlyJob(job, managed)) continue;
+    for (const problem of postgresServiceProblems(job.body, { requiredMajor })) problems.push(`job \`${job.id}\`：${problem}`);
   }
   return problems;
 }
@@ -2229,7 +2229,7 @@ test('反向控制⑥：两个脚本拆成两个 job 必须仍绿；只降**第�
   const primaryId = runningJobs[0].id;
   const split = withSplitJobs(source, primaryId, `${primaryId}-community`);
   const form = split === null ? source : split;
-  const formJobIds = jobsRunningManagedScripts(form).map((job) => job.id);
+  const formJobIds = jobsRunningManagedScripts(form).filter((job) => !isSelfClusteredOnlyJob(job)).map((job) => job.id);
   const firstId = formJobIds[0];
   const secondId = formJobIds[formJobIds.length - 1];
   assert.ok(formJobIds.length >= 2, '被测形态必须是「两个 job 各跑一个受管脚本」');
@@ -2239,7 +2239,7 @@ test('反向控制⑥：两个脚本拆成两个 job 必须仍绿；只降**第�
   // `删 services 必须且只能报一条问题 expected: 1, actual: 2`；两个 job 改名 ⇒ `pass 7 / fail 3`）。
   // 判据③ 本来就是 job 作用域的，假红来自测试文件的单 job 假设。
   assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(form));
-  for (const job of jobsRunningManagedScripts(form)) {
+  for (const job of jobsRunningManagedScripts(form).filter((candidate) => !isSelfClusteredOnlyJob(candidate))) {
     assert.deepEqual(postgresServiceProblems(job.body), [], `job \`${job.id}\` 自身的 \`services:\` 必须合规`);
   }
 
@@ -2676,4 +2676,65 @@ test('反向控制⑩：root 键按脚本映射——错映射／丢映射／装
     '失败消息必须点名脚本里**新**的键（证明读的是源码，不是登记表）',
   );
   assert.throws(() => assertNoDatabaseGuardProblems(renamedProblems), /GY_ZZ_PG_ROOT/, '同一断言必须失败');
+});
+
+/**
+ * 判据③ 的**窄豁免**（R90 / `#19` 片1）：这个 job 是不是「自起集群专属」？
+ *
+ * 为什么需要：`tests/integration/deidentify-account-pg.mjs` 自己 `initdb` 出一次性 17 集群
+ * （`GY_PG_BIN` + `GY_I19_PG_ROOT` + `pickFreePort()`），跑完 `pg_ctl -m immediate stop` 并删数据目录。
+ * 这类 job 在 YAML 里**没有 `services:`**——它既不需要服务容器，也没有「CI 建出来的库」可核对，
+ * 判据③ 在它身上没有作用域。等价（且更强）的判据是⑦⑧（`databaseGuardProblems`）：必须有 `GY_PG_BIN`
+ * + 该脚本自己读的 `GY_*_PG_ROOT`、且 step 里不得出现 `CREATE DATABASE`。
+ *
+ * ⛔ 豁免故意做得比「跑的全是自起集群脚本」更窄，两条同时满足才成立：
+ *   ① job 的 `run:` 命中的受管脚本**全部**在 `SELF_CLUSTERED_SCRIPTS` 里（混一条非自起集群脚本就失效）；
+ *   ② job 里**根本没有** `services:` 块（声明了就照原样核对镜像主版本——否则「把镜像降到 16.4」
+ *      在那种 job 上会静默变绿）。
+ */
+export function isSelfClusteredOnlyJob(job, managed = MANAGED_SCRIPTS) {
+  const commands = runCommandTextsOf(job.body);
+  const scriptsHere = managed.filter((script) => commands.some((command) => command.includes(script)));
+  if (scriptsHere.length === 0) return false;
+  if (!scriptsHere.every((script) => SELF_CLUSTERED_SCRIPTS.includes(script))) return false;
+  return !/^\s+services:\s*$/m.test(job.body);
+}
+
+/**
+ * 反向控制⑪：上面那条豁免必须窄到「只在自起集群专属 job 上生效」。
+ * 三条读数缺一不可：③ 豁免真的生效（否则「生效」只是一句注释）；① 带 `services:` 时仍核对镜像、
+ * ② 混一条非自起集群脚本仍核对——缺了这两条，豁免就能被当成「删掉判据③」的通道。
+ */
+test('反向控制⑪：自起集群 services 豁免必须窄（只对「无 services 且只跑自起集群脚本」的 job 生效）', () => {
+  const source = (jobs) => `name: fixture\non: [push]\njobs:\n${jobs}`;
+  const selfClustered = SELF_CLUSTERED_SCRIPTS[0];
+  const serviceFed = 'tests/integration/messages-pg.mjs';
+  assert.ok(MANAGED_SCRIPTS.includes(selfClustered), '自证前提：自起集群脚本必须在受管清单里');
+  assert.ok(MANAGED_SCRIPTS.includes(serviceFed), '自证前提：非自起集群脚本必须在受管清单里');
+  assert.ok(!SELF_CLUSTERED_SCRIPTS.includes(serviceFed), '自证前提：`messages-pg` 不得是自起集群脚本');
+
+  const steps = (scripts) => `    timeout-minutes: 45\n    steps:\n${scripts.map((script) => `      - run: node ${script}`).join('\n')}\n`;
+
+  // ③ 无 `services:`、只跑自起集群脚本 ⇒ 豁免生效。
+  assert.deepEqual(
+    postgresJobProblems(source(`  a3:\n    runs-on: ubuntu-24.04\n${steps([selfClustered])}`)),
+    [],
+    '自起集群专属 job 上判据③ 必须不适用（等价判据在⑦⑧）',
+  );
+
+  // ① 同样的脚本，但 job 声明了 `services:`（镜像降到 16.4）⇒ 豁免不得生效。
+  const downgraded = source(
+    '  a1:\n    runs-on: ubuntu-24.04\n    services:\n      postgres:\n        image: postgres:16.4\n'
+      + steps([selfClustered]),
+  );
+  const downgradedProblems = postgresJobProblems(downgraded);
+  assert.equal(downgradedProblems.length, 1, '带 `services:` 的 job 必须且只能报一条（豁免不得掩盖镜像降级）');
+  assert.ok(downgradedProblems[0].includes('`a1`'), '失败消息必须点名该 job');
+  assert.ok(downgradedProblems[0].includes('16'), '失败消息必须写出实际主版本');
+
+  // ② 无 `services:`，但混一条非自起集群脚本 ⇒ 豁免失效。
+  const mixedProblems = postgresJobProblems(source(`  a2:\n    runs-on: ubuntu-24.04\n${steps([selfClustered, serviceFed])}`));
+  assert.equal(mixedProblems.length, 1, '混一条非自起集群脚本必须且只能报一条（豁免不得扩散）');
+  assert.ok(mixedProblems[0].includes('`a2`'), '失败消息必须点名该 job');
+  assert.ok(mixedProblems[0].includes('services'), '失败消息必须指出缺的是 services');
 });
