@@ -4,6 +4,8 @@
 > 基线 `9f09fcb3bf36d0ded290fb1187465e0b8550fdf1`（`origin/main`）。本单开工时 `origin/main` 是 `bc9c28d8…`，中途前进了
 > 7 个提交到 `9f09fcb3`，但 `.github/**` 在这 7 个提交里**零变化**（`git diff --name-only bc9c28d8 9f09fcb3 -- .github/` 为空），
 > 所以本页所有 workflow 行号按哪一版核都相同；§六 的计数已整体在 `9f09fcb3` 上重取，§七 的六道闸门也在 rebase 后的 HEAD 上重跑。
+> 收尾时 `origin/main` 又前进到 `afedd3df5657ffd199f1d6710f9cad61dbca16e8`（8 个文件：7 份 `docs/verification/**` 读数页 +
+> `tests/unit/doc-anchor-relocations.json`，`.github/**` 仍**零变化**），§七 第 5、6 道闸门已在新基线上重跑，仍 EXIT 0。
 > 本提交改 `.github/workflows/real-pg-integration.yml` 的三行，**行数一个字符没变**（1796 行 → 1796 行；job 键仍在
 > 94 / 945 / 1087 / 1331 / 1455 / 1581 / 1707），所以被引用的 workflow 行号不需要任何位移登记（§六 用闸门输出逐字比对证明）。
 > 本页是「CI 假红」这一类问题的第二份记录，前一份是 [R89 读数闸门](gy-r89-readings-gate-pass-groups-20261108.md)。
@@ -232,7 +234,7 @@
 | 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ tests 37 / pass 36 / fail 0 / skipped 1`（skip 那条正是「纯新增 docs 提交没有锚点位移面」） |
 | 3 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。` |
 | 4 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 359 页（扫描面 364 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` |
-| 5 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 只打印一棵树、没有任何冲突文件名（当轮 `origin/main`＝`9f09fcb3`） |
+| 5 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 只打印一棵树、没有任何冲突文件名（先在 `origin/main`＝`9f09fcb3` 上跑，再在前进后的 `afedd3df` 上重跑，两次都只有一行树哈希） |
 | 6 | `git diff --name-only origin/main...HEAD` | 0 | `.github/workflows/real-pg-integration.yml`、`docs/verification/gy-r90-ci-pg-install-retry-20261109.md`（只有这两条） |
 
 附带读数（读 yml 的既有测试，也是本提交的 yaml 合法性验证手段——`node_modules` 里既没有 `yaml` 也没有 `js-yaml`，
