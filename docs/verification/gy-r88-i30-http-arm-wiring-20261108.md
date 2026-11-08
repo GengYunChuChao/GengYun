@@ -7,23 +7,23 @@
 
 ## §1 接在哪（job 名 / 触发条件 / 关键行号）
 
-新 job 的骨架与 `#1070` 合入的 ledger job（`.github/workflows/real-pg-integration.yml:1446`）逐段同款，只有「跑哪条脚本、库名、读数闸」不同：
+新 job 的骨架与 `#1070` 合入的 ledger job（`.github/workflows/real-pg-integration.yml:1455`）逐段同款，只有「跑哪条脚本、库名、读数闸」不同：
 
 | 位置 | 内容 |
 | --- | --- |
-| `.github/workflows/real-pg-integration.yml:1568` | job key `real-pg-http-17-11:`——**追加在文件最末**，前面 5 个 job（`real-pg-17-11` / `real-pg-admin-read` / `real-pg-admin-write` / `failmatrix-real` / `real-pg-ledger`）一个字节没动 |
-| `.github/workflows/real-pg-integration.yml:1569` | `name: real-pg-http-17.11`（check 名；与 job key 只差 `-`↔`.`） |
-| `.github/workflows/real-pg-integration.yml:1570` | `runs-on: ubuntu-24.04` |
-| `.github/workflows/real-pg-integration.yml:1571` | `timeout-minutes: 45` = 封顶之和 35 + 前置余量 10（`tests/unit/ci-real-pg-step-timeouts.test.mjs` 判据②③；逐项分解写在 1563 起的注释块里） |
-| `.github/workflows/real-pg-integration.yml:1574` | `image: postgres:17.11`（判据③ 只认主版本 17） |
-| `.github/workflows/real-pg-integration.yml:1580` | `--health-cmd pg_isready`（5s 间隔 × 10 次） |
-| `.github/workflows/real-pg-integration.yml:1600` | service 自证 step：`show server_version` 主版本必须 17、`pg_roles.rolsuper` 必须 `t`——把「真 17」与「这条臂要的超管连接」变成读数，而不是靠镜像名相信 |
-| `.github/workflows/real-pg-integration.yml:1631` | `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_post_media_http_test'`（**先建库**） |
-| `.github/workflows/real-pg-integration.yml:1633` | `node tests/integration/post-media-attach-http-pg.mjs postgres://…/gengyun_post_media_http_test 2>&1 \| tee "$log" \|\| rc=$?`（连接串**只经 `argv[2]`**） |
-| `.github/workflows/real-pg-integration.yml:1634` | `rc == 77` ⇒ `::error::` + `exit 1`（77 = 未取得，不是通过） |
-| `.github/workflows/real-pg-integration.yml:1638` | 其它非 0 ⇒ 原样透出 `rc` |
-| `.github/workflows/real-pg-integration.yml:1642` | 末行闸 `grep -Fq '[ALL PASS] 真库 HTTP 端到端'` |
-| `.github/workflows/real-pg-integration.yml:1646` | 读数闸：从尾行抽「共 N 组 PASS」，`N ≥ 11`（只 grep 一道时，删掉整组断言仍会 exit 0 并打 pass） |
+| `.github/workflows/real-pg-integration.yml:1707` | job key `real-pg-http-17-11:`——**追加在文件最末**，前面 5 个 job（`real-pg-17-11` / `real-pg-admin-read` / `real-pg-admin-write` / `failmatrix-real` / `real-pg-ledger`）一个字节没动 |
+| `.github/workflows/real-pg-integration.yml:1708` | `name: real-pg-http-17.11`（check 名；与 job key 只差 `-`↔`.`） |
+| `.github/workflows/real-pg-integration.yml:1709` | `runs-on: ubuntu-24.04` |
+| `.github/workflows/real-pg-integration.yml:1710` | `timeout-minutes: 45` = 封顶之和 35 + 前置余量 10（`tests/unit/ci-real-pg-step-timeouts.test.mjs` 判据②③；逐项分解写在 1702 起的注释块里） |
+| `.github/workflows/real-pg-integration.yml:1713` | `image: postgres:17.11`（判据③ 只认主版本 17） |
+| `.github/workflows/real-pg-integration.yml:1720` | `--health-cmd pg_isready`（5s 间隔 × 10 次） |
+| `.github/workflows/real-pg-integration.yml:1739` | service 自证 step：`show server_version` 主版本必须 17、`pg_roles.rolsuper` 必须 `t`——把「真 17」与「这条臂要的超管连接」变成读数，而不是靠镜像名相信 |
+| `.github/workflows/real-pg-integration.yml:1770` | `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_post_media_http_test'`（**先建库**） |
+| `.github/workflows/real-pg-integration.yml:1772` | `node tests/integration/post-media-attach-http-pg.mjs postgres://…/gengyun_post_media_http_test 2>&1 \| tee "$log" \|\| rc=$?`（连接串**只经 `argv[2]`**） |
+| `.github/workflows/real-pg-integration.yml:1773` | `rc == 77` ⇒ `::error::` + `exit 1`（77 = 未取得，不是通过） |
+| `.github/workflows/real-pg-integration.yml:1777` | 其它非 0 ⇒ 原样透出 `rc` |
+| `.github/workflows/real-pg-integration.yml:1781` | 末行闸 `grep -Fq '[ALL PASS] 真库 HTTP 端到端'` |
+| `.github/workflows/real-pg-integration.yml:1785` | 读数闸：从尾行抽「共 N 组 PASS」，`N ≥ 11`（只 grep 一道时，删掉整组断言仍会 exit 0 并打 pass） |
 
 触发条件：`on:` = `pull_request` + `push: branches: [main]`（`.github/workflows/real-pg-integration.yml:65-68`），权限 `contents: read`（`.github/workflows/real-pg-integration.yml:69-70`）；该 job **没有** `if:` / `needs:` ⇒ 每个 PR 与每次 main push 都跑。把它加进分支保护的 required checks 属于仓库设置，不在本片范围。
 
