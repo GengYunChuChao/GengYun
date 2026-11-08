@@ -380,6 +380,12 @@
       "accept": 0,
       "orphans": 3475,
       "outsideRed": 117
+    },
+    {
+      "why": "gy-r31 裸锚补全为完整路径（#1098）",
+      "accept": 0,
+      "orphans": 3469,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -2859,13 +2865,7 @@
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|:494-497|no-explicit-in-block",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|:505-510|no-explicit-in-block",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|:7|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:102|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:121|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:1589|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:166|no-explicit-in-block",
     "docs/verification/gy-r31-i16-pg-arm-20261022.md|:1|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:202|no-explicit-in-block",
-    "docs/verification/gy-r31-i16-pg-arm-20261022.md|:63|no-explicit-in-block",
     "docs/verification/gy-r31-i17-g5-20261022.md|:107-115|no-explicit-in-block",
     "docs/verification/gy-r31-i17-g5-20261022.md|:110-126|no-explicit-in-block",
     "docs/verification/gy-r31-i17-g5-20261022.md|:129-130|ambiguous-block",
