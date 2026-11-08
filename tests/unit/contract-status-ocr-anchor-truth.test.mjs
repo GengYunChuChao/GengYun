@@ -519,10 +519,17 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * COMMENT_ANCHOR 裁决就撤掉（26→25 条；读数「登记 25、命中 25、陈旧 0、新增 0」）。字节数
  * 283954→284084（JSON）、206581→206711（md），行数都不变。仍是「正常改台账、非回归」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-08 第二十六次同步（GY-R89 / #1099：`listKnowledge` 的 blocker 末句「#7 的 `/herbicides` 读面排序
+ * 口径另待裁定」写的是「待裁定」，而 2026-10-22 早已裁定）：裁定为「`/herbicides` 属来源目录，来源目录排序
+ * 用稳定键即可；登记号升序是稳定、确定、可复算的键 ⇒ 不构成缺陷、不列整改项、不改实现（#7 评论 6692062974）」，
+ * 故把该末句改写成与裁定一致的表述。真正的阻塞项（真实生产 `DATABASE_URL`、已审来源数据未取得）与后面的
+ * 「`status` 改判属监工权限」一字未动，`status` 字段仍是 `partial`（改判属监工权限）。中文对照表同次手工镜像
+ * 同一句（`verify-contract-status.mjs` 的「中文表格一致」判据仍 PASS）。这句比原句长 ⇒ 行数不变、两份台账各
+ * +217 字节（284301 / 4460、206928 / 220）。仍是「正常改台账、非回归」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284084, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206711, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284301, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206928, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
