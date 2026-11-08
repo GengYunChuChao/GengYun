@@ -888,7 +888,7 @@ test('KNOWN-GAP（低）·令牌覆盖缺口：禁用/不宜/不建议 不在否
 });
 
 test('反例·播放中 replay() 先彻底停掉再从头重播（不叠音：live 恒为 1）', () => {
-  const { port, state } = spyPlayer();
+  const { port, state, handles } = spyPlayer();
   const controller = audioPlayback.createPlaybackController({ player: port });
   controller.play('a.mp3');
   assert.equal(controller.snapshot().state, 'playing');
@@ -900,7 +900,10 @@ test('反例·播放中 replay() 先彻底停掉再从头重播（不叠音：li
   // 但两个句柄会同时发声（叠音）。叠音的可复核判据是端口侧的 destroyed / live：
   assert.equal(state.destroyed, 1, '重播前必须真的停掉并销毁旧句柄（destroyed 0 ⇒ 旧句柄还活着）');
   assert.equal(state.live, 1, '同一时刻最多一个活动句柄（live 2 ⇒ 新旧句柄同时播 = 叠音）');
-  assert.equal(state.created - state.destroyed, state.live, '计数自洽：created - destroyed === live');
+  // 计数恒等式（created - destroyed === live）不在这里断言：它在 spy 的 create()/destroy() 里被同步加减，
+  // 只要句柄走过端口就必然成立，永真、没有判别力（假修法下同样绿）。端口侧真正有判别力的判据是
+  // **活下来的是哪一个句柄**：只销毁新句柄、把旧句柄留着一样会叠音，而 live===1 计数照样自洽。
+  assert.deepEqual(handles.map((handle) => handle.isDestroyed()), [true, false], '端口侧：旧句柄已销毁、重播新建的句柄存活');
   assert.equal(controller.snapshot().hasHandle, true);
   assert.equal(controller.isListened(), false);
   // 停止之后再重播同样从头开始（同一入口，停止态不再触发先停分支）。
@@ -922,12 +925,17 @@ test('反例·多段计划播到第 2 段（idx=1）后 replay()：回到 plan[0
 
   const replayed = controller.replay();
   assert.equal(replayed.ok, true);
-  // ① 「从头」而不是「接着播」：新句柄必须回到 plan[0]，段号归零、计划长度不变。
-  //    变异实测（只从当前段起重播）：末次 create 的 src 变成 b.mp3、total 掉到 1 —— 下面几条会红。
-  assert.equal(controller.snapshot().index, 0, 'replay 必须从第 0 段重来（接着播会停在 idx=1）');
-  assert.equal(state.srcs[state.srcs.length - 1], 'a.mp3', '重播的新句柄 src 必须是 plan[0]');
-  assert.equal(handles[handles.length - 1].src, 'a.mp3');
-  assert.equal(controller.snapshot().total, 2, '计划长度不变（重播不是截断计划）');
+  // ① 「从头」而不是「接着播」：新句柄必须回到 plan[0]。
+  //    变异实测（把 `const at = index` 放在 `stop()` **之前**、再 `play(plan.slice(at), { auto: false })` 的
+  //    「接着播」写法，见 `docs/verification/gy-r90-i1112-assertion-audit-20261109.md`）：末次 create 的 src
+  //    变成 b.mp3、total 掉到 1 —— 下面三条都会红。注意存量 PR 正文里那句 `play(plan.slice(index))` 是 no-op：
+  //    `stop()` 已经把 index 归零，逐字照抄不会变红。
+  assert.equal(state.srcs[state.srcs.length - 1], 'a.mp3', '重播的新句柄 src 必须是 plan[0]（端口侧：按 create 顺序采集）');
+  // 下面两条读的是**状态机内部字段**（`snapshot().index` / `snapshot().total`），不是端口可观察行为：
+  // 它们没有外部等价物（计划长度与段号只在 snapshot 里露出），保留作「接着播」的辅助读数，
+  // 主判据仍是上面那条端口侧 src 断言——别把这两条当成行为断言。
+  assert.equal(controller.snapshot().index, 0, '内部字段 index：replay 必须从第 0 段重来（接着播会停在 idx=1）');
+  assert.equal(controller.snapshot().total, 2, '内部字段 total：计划长度不变（重播不是截断计划）');
   // ② 不叠音：b 段句柄在 replay 时被停掉并销毁；此刻只剩 1 个活动句柄。
   assert.equal(state.live, 1, '重播后只允许一个活动句柄');
   assert.equal(state.destroyed, 2, '段 0 播完销毁 1 个 + replay 停掉 b 段再销毁 1 个');
