@@ -7,7 +7,7 @@
 - **基线**：`5250520cdb4ceff9da4ef04e39d6aefecf621e32`（`git rev-parse upstream/main` 开工实测；`git log -1 --oneline` 逐字
   `5250520 docs(GY-I24): 部署备份恢复材料索引与跨平台离线门禁 (Refs #24) (#283)`）。基线未前进，未触发停手条件。
 - **实测日期/环境**：2026-10-18（本机 CST）；Windows；Node `v24.16.0`；隔离 PostgreSQL **17.11**（`.pg17\pgsql\bin`）。
-- **本页改动范围**：只新增本文件。`services/**`、`packages/**`、`tests/**`、`tools/**`、旧证据页
+- **本页改动范围**（**建立时**，`de66803a`／`#285`）：只新增本文件；此后本页自身已被改过，最近一次 `750a0416`／`#995`。`services/**`、`packages/**`、`tests/**`、`tools/**`、旧证据页
   `docs/verification/gy-i22-cross-module-security-e2e-20261027.md` **改动 0 字节**（`git status --short` 收工 0 行，见 §7）。
 
 ## 0 旧页 §5.1 原文摘录（逐字，限必要片段）

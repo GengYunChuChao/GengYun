@@ -3,7 +3,7 @@
 - **Issue**：[#6](https://github.com/GengYunChuChao/GengYun/issues/6)（P0 / M1；验收 AC07、AC09、AC23；功能 F05、F12、F13、F15、F16）。**不关闭整项**（`Refs #6`）。
 - **分支 / worktree**：`feat/gy-r28-b3-media-real-plan`（独立 worktree `E:\GengYunCommander\wt-b3-media`）。
 - **基线 HEAD**：`f7155d5ac1329974b20a6128e332bb84c19c733d`。
-- **文档性质**：**只出接线方案，零代码改动**。本片不修改 `services/**`、`packages/**`、`packages/contracts/**`、`.github/workflows/**`，只新增本文件。
+- **文档性质**：**只出接线方案，零代码改动**。本片不修改 `services/**`、`packages/**`、`packages/contracts/**`、`.github/workflows/**`，只新增本文件（**建立时**：`edd71486`／`#382`；此后本页自身已被改过，最近一次 `115811a2`／`#973`）。
 - **证据性质**：本片**不产生**任何真实对象存储证据（无真实桶、无真实凭据、未发任何网络请求），**不构成** #6 验收通过，也不改变 [#6 现状证据](gy-i06-private-media-20261014.md) 与 [S3 适配器跑通证据](gy-r27-object-store-s3-paths-20261020.md) 的既有结论。
 
 ## 0 一句话结论

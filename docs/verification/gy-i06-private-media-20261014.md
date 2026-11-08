@@ -5,7 +5,7 @@
 - **初版基线**：`upstream/main` = `ab5df72b6d4a0dbc6e1055bce39c0161fe10b2a4`。
 - **返修时合入的 `upstream/main`**：`1fc0308818b85227078d43b6246d006cb2aead7f`（`git merge upstream/main`，无冲突）。
 - **提交**：`5880f819e0157df29c475452aba1de4a077c33af`（实现 + 测试 + 契约状态对照表）、
-  `725ae5bc7869e3ee6391b589f42bf60503faa5bb`（初版证据文档），以及**本次返修提交**
+  `725ae5bc7869e3ee6391b589f42bf60503faa5bb`（初版证据文档），以及**当次返修提交**
   （监工批复 P1 修复 + 针对性验证 + 本文档 §11；SHA 见 PR #129 的最新 HEAD 与回传）。
 - **环境**：Node `v24.16.0` / npm `11.13.0`；仓库为 npm workspaces + 纯 ESM（`npm install`，**未使用**任何 junction/symlink）。
 
