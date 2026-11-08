@@ -396,6 +396,8 @@ function createPlaybackController(options) {
   function replay() {
     if (released) return { ok: false, code: 'RELEASED' }
     if (plan.length === 0) return { ok: false, code: 'NOTHING_TO_REPLAY' }
+    // 「重播」= 从头开始：先彻底停掉当前播放（停掉后 `play()` 不会再被同一计划短路）。
+    if (state === 'playing' || state === 'loading' || state === 'paused') stop()
     return play(plan.slice(), { auto: false })
   }
 

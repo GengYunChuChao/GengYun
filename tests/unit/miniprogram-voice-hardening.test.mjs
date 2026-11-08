@@ -725,7 +725,8 @@ test('反例·播完后迟到 error 不得把已完成会话翻成失败（成�
 
 // ---- 以下仍为在册 KNOWN-GAP（断言"当前行为 + 已登记"，不在本片修复范围）；
 //      其中「端口退订为空操作（同步 stop 污染终态快照）」一条已被本片段级守卫附带修好，
-//      故按**正式负例**断言（标题已改为"反例·"），其余保持已登记口径。
+//      「播放中 replay() 不从头重播」一条已由 #23 修好（replay() 先 stop() 再 play()），
+//      两条故按**正式负例**断言（标题已改为"反例·"），其余保持已登记口径。
 
 test('KNOWN-GAP（中）·play() 同步失败仍返回 {ok:true}（调用方按返回值判断会以为在播）', () => {
   const cases = [
@@ -884,17 +885,17 @@ test('KNOWN-GAP（低）·令牌覆盖缺口：禁用/不宜/不建议 不在否
   assert.equal(speechText.verifySpeakPlan(['若高温则施药'], '仅高温则施药').ok, false);
 });
 
-test('KNOWN-GAP（低）·replay() 在播放中返回 ALREADY_PLAYING 且不从头重播（与注释"先彻底停掉"不一致）', () => {
+test('反例·播放中 replay() 先彻底停掉再从头重播', () => {
   const { port, state } = spyPlayer();
   const controller = audioPlayback.createPlaybackController({ player: port });
   controller.play('a.mp3');
   assert.equal(controller.snapshot().state, 'playing');
   const replayed = controller.replay();
-  // 当前行为（已登记）：replay() 走 play(plan) 被"同一计划防叠音"短路，用户按"重播"看不到从头开始。
-  assert.deepEqual(replayed, { ok: false, code: 'ALREADY_PLAYING' });
-  assert.equal(state.created, 1, '没有重建句柄，也就没有从头重播');
+  // 修复前是未从头重播（已登记 KNOWN-GAP，本 PR 反转）：replay() 走 play(plan) 被"同一计划防叠音"短路。
+  assert.equal(replayed.ok, true);
+  assert.equal(state.created, 2, '一次原播 + 一次重播：旧句柄已销毁、新首段已重建');
   assert.equal(controller.isListened(), false);
-  // 停止之后再重播才按注释语义工作。
+  // 停止之后再重播同样从头开始（同一入口，停止态不再触发先停分支）。
   controller.stop();
   assert.equal(controller.replay().ok, true);
 });
