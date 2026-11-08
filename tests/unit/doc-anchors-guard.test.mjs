@@ -598,6 +598,33 @@ test('T6 围栏代码块内的行不进判据面（```／~~~／缩进／未闭�
   }
 });
 
+// T6b 钉住 T6 没覆盖的另一半：围栏内的裸锚点**能**继承时（同块只有一条显式锚点、指向同一个文件）走的是
+// `inherited` 分支，不是孤儿册。它照样进 `stats.bare`（`total`／`inherited` 各 +1），也照样在围栏检查**之前**
+// 被计进 `judged`；随后才由围栏规则拦下并计入 `stats.fenced`。两条读数同时成立不是重复计数：`judged` 记
+// 「进判据面要判」，`fenced` 记「进判据面之前一步被围栏拦下」，findings 一条都不许有。
+const FENCE_INHERIT_MD = ['# 标题', '', '```js', '报错：`src/x.mjs:3`，栈帧 `:7`', '```', ''].join('\n');
+
+test('T6b 围栏内**能继承**的裸锚点：进裸锚点账与判据面读数，但一条都不许判红（`inherited` 路径的钉子）', () => {
+  const root = makeBareFixture({ 'docs/architecture/fence-inherit.md': FENCE_INHERIT_MD });
+  try {
+    const { findings, bareOrphans, stats } = collectFindings({ root, targets: ['docs/architecture'] });
+    assert.deepEqual(findings, [], '围栏内这一行是原样报文，继承来的行号在范围内也不许判红');
+    assert.deepEqual(bareOrphans, [], '能继承的裸锚点不是孤儿，不许落进 BARE_ORPHAN 册');
+    assert.equal(stats.bare.total, 1, '围栏内那条裸锚点必须进裸锚点总账（不因围栏而消失）');
+    assert.equal(stats.bare.inherited, 1, '同块只有一条显式锚点 ⇒ 必须走继承分支，不许记成 no-explicit-in-block');
+    assert.equal(stats.bare.judged, 1, '`judged` 记「进判据面要判」，它在围栏拦下之前就 +1（口径见 tools 里 stats.bare 那段注释）');
+    assert.equal(stats.fenced, 2, '围栏内两条锚点（显式 `src/x.mjs:3` + 继承来的 `src/x.mjs:7`）都要如实计入跳过数');
+    const attribution = attributeBareAnchors({ text: FENCE_INHERIT_MD, references: extractReferences(FENCE_INHERIT_MD) });
+    assert.deepEqual(
+      attribution.inherited.map(item => [item.docLine, item.raw, item.reference, item.via, item.fenced]),
+      [[4, ':7', 'src/x.mjs:7', 'block', true]],
+      '围栏标记必须跟着继承结果一起带出来（`fenced: true` 才是它稍后被跳过、并计入 stats.fenced 的依据）',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('T7 反空转：块切分与扫描面有下界断言（否则「全部孤儿」也能让上面几条看起来绿）', () => {
   const lines = ['# 标题', '', '段落一', '段落一的续行', '', '- 列表项一', '- 列表项二', '', '| a | b |', '', '```', 'code', '```', ''];
   const { blocks } = segmentDocumentBlocks(lines);
