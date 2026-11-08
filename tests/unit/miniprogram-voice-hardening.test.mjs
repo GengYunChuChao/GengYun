@@ -41,14 +41,15 @@ const LATIN_LINE = '每亩用 30 毫升/亩，稀释 1:100，用量 300-500ml，
 
 /**
  * 可完全观测的替身播放端口（测试专用）。三件事是可复核的：
- * 1. `created/destroyed/live/plays` 计数；
+ * 1. `created/destroyed/live/plays` 计数，外加 `srcs`（按 create 顺序追加采集传入的源）；
  * 2. `deliver(event, payload)` **直接调用控制器注册过的包装器**——绕过退订与销毁，
  *    用来模拟"平台回调已在飞行中/重复投递"的迟到事件（既有替身端口的 `emit` 会被退订
  *    与 destroyed 挡住，因此那条负例其实没有真正打到代次守卫）；
  * 3. `emitPlayOnPlay` / `emitStopOnStop` 控制 `play()` / `stop()` 是否**同步**回发事件。
  */
 function spyPlayer(options = {}) {
-  const state = { created: 0, destroyed: 0, live: 0, plays: 0 };
+  // `srcs` 只追加采集：用来区分「从头重播」（末次 create 的 src === plan[0]）与「接着播」。
+  const state = { created: 0, destroyed: 0, live: 0, plays: 0, srcs: [] };
   const handles = [];
   const port = {
     kind: 'spy_player',
@@ -56,6 +57,7 @@ function spyPlayer(options = {}) {
     create(src) {
       state.created += 1;
       state.live += 1;
+      state.srcs.push(src);
       let destroyed = false;
       /** 端口当前有效监听：退订会移除、destroy 清空（合规端口的真实投递面）。 */
       const active = [];
@@ -885,7 +887,7 @@ test('KNOWN-GAP（低）·令牌覆盖缺口：禁用/不宜/不建议 不在否
   assert.equal(speechText.verifySpeakPlan(['若高温则施药'], '仅高温则施药').ok, false);
 });
 
-test('反例·播放中 replay() 先彻底停掉再从头重播', () => {
+test('反例·播放中 replay() 先彻底停掉再从头重播（不叠音：live 恒为 1）', () => {
   const { port, state } = spyPlayer();
   const controller = audioPlayback.createPlaybackController({ player: port });
   controller.play('a.mp3');
@@ -894,10 +896,48 @@ test('反例·播放中 replay() 先彻底停掉再从头重播', () => {
   // 修复前是未从头重播（已登记 KNOWN-GAP，本 PR 反转）：replay() 走 play(plan) 被"同一计划防叠音"短路。
   assert.equal(replayed.ok, true);
   assert.equal(state.created, 2, '一次原播 + 一次重播：旧句柄已销毁、新首段已重建');
+  // `created === 2` 单独看**挡不住假修法**：不销毁旧句柄、直接从第 0 段再建一个，created 同样是 2，
+  // 但两个句柄会同时发声（叠音）。叠音的可复核判据是端口侧的 destroyed / live：
+  assert.equal(state.destroyed, 1, '重播前必须真的停掉并销毁旧句柄（destroyed 0 ⇒ 旧句柄还活着）');
+  assert.equal(state.live, 1, '同一时刻最多一个活动句柄（live 2 ⇒ 新旧句柄同时播 = 叠音）');
+  assert.equal(state.created - state.destroyed, state.live, '计数自洽：created - destroyed === live');
+  assert.equal(controller.snapshot().hasHandle, true);
   assert.equal(controller.isListened(), false);
   // 停止之后再重播同样从头开始（同一入口，停止态不再触发先停分支）。
   controller.stop();
   assert.equal(controller.replay().ok, true);
+  assert.equal(state.live, 1, '停止后重播同样只留一个活动句柄');
+});
+
+test('反例·多段计划播到第 2 段（idx=1）后 replay()：回到 plan[0]，旧句柄全销毁', () => {
+  const { port, state, handles } = spyPlayer();
+  const controller = audioPlayback.createPlaybackController({ player: port });
+  controller.play(['a.mp3', 'b.mp3']);
+  assert.equal(controller.snapshot().index, 0);
+  // 第 0 段自然播完 ⇒ 推进到 idx=1（这是「接着播」的正常路径，不是重播）。
+  handles[0].deliver('ended');
+  assert.equal(controller.snapshot().index, 1);
+  assert.equal(handles[1].src, 'b.mp3', '第 2 段已换成 b.mp3 的句柄');
+  assert.equal(state.live, 1);
+
+  const replayed = controller.replay();
+  assert.equal(replayed.ok, true);
+  // ① 「从头」而不是「接着播」：新句柄必须回到 plan[0]，段号归零、计划长度不变。
+  //    变异实测（只从当前段起重播）：末次 create 的 src 变成 b.mp3、total 掉到 1 —— 下面几条会红。
+  assert.equal(controller.snapshot().index, 0, 'replay 必须从第 0 段重来（接着播会停在 idx=1）');
+  assert.equal(state.srcs[state.srcs.length - 1], 'a.mp3', '重播的新句柄 src 必须是 plan[0]');
+  assert.equal(handles[handles.length - 1].src, 'a.mp3');
+  assert.equal(controller.snapshot().total, 2, '计划长度不变（重播不是截断计划）');
+  // ② 不叠音：b 段句柄在 replay 时被停掉并销毁；此刻只剩 1 个活动句柄。
+  assert.equal(state.live, 1, '重播后只允许一个活动句柄');
+  assert.equal(state.destroyed, 2, '段 0 播完销毁 1 个 + replay 停掉 b 段再销毁 1 个');
+  assert.equal(state.created, 3, 'a 段 → b 段 → 重播的 a 段');
+  assert.deepEqual(
+    handles.filter((handle) => handle.isDestroyed() === false).map((handle) => handle.src),
+    ['a.mp3'],
+    '端口侧只剩重播刚建的那一个句柄'
+  );
+  assert.equal(controller.isListened(), false, '中段重播不得记「已听取」');
 });
 
 test('KNOWN-GAP（低）·端口 on() 抛异常时 play() 同步抛出，状态停在 loading 且句柄未释放', () => {

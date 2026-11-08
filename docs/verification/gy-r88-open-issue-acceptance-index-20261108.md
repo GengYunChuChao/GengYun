@@ -65,6 +65,8 @@
 | #1003 | 识别协议适配层已在仓内（`openai-vision-v1` + 真实 fetch） | 外部条件 | `services/api/src/recognitions/openai-vision-adapter.ts:46`、`services/api/src/recognitions/openai-vision-adapter.ts:271` | 真实厂商端点与密钥、一次真调用读数（用户/业主） |
 | #1030 | real 模式每帖 ≤3 已是结构约束，并发与计数负控制有测试钉住；但 ⑩/⑪ 目前无 CI 计数闸门覆盖（`tests/integration/post-media-attachments-pg.mjs:506` 自述） | 代码在飞 | `services/api/db/migrations/0056_post_media_attachments.sql:70`、`services/api/src/community/store-pg.ts:397`、`tests/integration/post-media-attachments-pg.mjs:600` | real+PG 的 **HTTP** 端到端仍缺（现有用例是 store 层直连）：`feat/gy-r87-i30-http-e2e` @ `b0513fb4` 未推（指挥）→ 2026-11-08 05:20 校正：已补上，`#1071`（`ecbe343c`）把 `tests/integration/post-media-attach-http-pg.mjs` 合入 main（建 app、走 HTTP 面，真库 + 503 信封 + 待用池释放），读数在 `docs/verification/gy-r87-i30-http-e2e-20261107.md`；仓内仍剩两处缺口：24h 自衰减未测（`docs/verification/gy-r87-i30-http-e2e-20261107.md:163`）与上传完成 ⇒ ready 的 `/complete` 状态迁移未覆盖（`docs/verification/gy-r87-i30-http-e2e-20261107.md:161`） |
 
+> 上表 `#1030` 行的「24h 自衰减未测 / 不走 `/complete`」已失效：24h 自衰减由 PASS 9 覆盖（`tests/integration/post-media-attach-http-pg.mjs:786` 的时间穿越 SQL `UPDATE public.media SET created_at = now() - interval '25 hours'`，PASS 9 块首在 `tests/integration/post-media-attach-http-pg.mjs:767`），`/complete` 状态迁移由 PASS 11 覆盖（`tests/integration/post-media-attach-http-pg.mjs:893` 的 `POST /media/uploads/:id/complete`，PASS 11 块首在 `tests/integration/post-media-attach-http-pg.mjs:877`）；读数见 `docs/verification/gy-r88-i30-pool-decay-20261108.md`。原文保留以便追溯。
+
 ## 三、依赖墙：今天可关 = 0 张
 
 数据源：`docs/initial-issues.json` 的 `tasks[].dependencies`，实算 27 项任务。映射必须留意：`GY-I01..I24` → `#1..#24`，但 `GY-I25→#27`、`GY-I26→#28`、`GY-I27→#29`——**ledger 里的 `GY-I27` 是 issue #29，不是 #27**，写成 #27 会把整张依赖图算错。`#1003`、`#1030` 是缺陷单，不在 `tasks` 里，本墙不涉及。
