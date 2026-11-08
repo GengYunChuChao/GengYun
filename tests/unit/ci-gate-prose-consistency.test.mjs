@@ -16,9 +16,9 @@
 //      job 之前，见 `real-pg-integration.yml:1699` 的「`N ≥ 11`」在 `:1707` 的 job key 之上），**块尾**是下一个
 //      job 的**注释头**起点（⛔ 不是下一个 key 行 —— 否则上一个 job 会把下一个 job 的注释头吞掉，同一处散文被
 //      数两遍）。
-//   ③ 闸门真值：`"$var" -lt N` / `"$var" -ne N` / `"$var" != N` 形态的数值比较。`-ne 0` / `!= 0` 归为
-//      **rc 闸**（退出码，不是读数），不进比较；`pg_isready`、`timeout-minutes`、`5432:5432` 这类端口/超时数字
-//      根本不是比较式，**按构造**不会被匹配（判据⑦ 有反例 fixture 钉这一点）。
+//   ③ 闸门真值：`"$var" -lt N` / `"$var" -ne N` / `"$var" != N` 形态的数值比较。`-ne 0`（退出码）与 `!= 17`
+//      （`server_major` 版本闸，如 `real-pg-integration.yml:604`，全仓 7 处）都**不是读数** ⇒ 一律落「非 count」档、
+//      不进 ④⑤ 的组数判定；`pg_isready`、`timeout-minutes`、`5432:5432` 这类端口/超时数字**按构造**不会被匹配（判据⑦ 有反例）。
 //   ④ 散文声称：`N 组`、`N 条读数`、`基线 N`、`共 N 组`、`≥ N`（含 `>= N`）、`< N` 六种形态的数字。
 //      ⛔ 不把裸 `= N` 当门槛（「3 条前置 + 装包 5 + 两条臂各 5 = 22」是加法，不是 ≥）。
 //   ⑤ 对应关系（先按语义、再按位置，**判不了就登记**，绝不默认放行）：
@@ -377,20 +377,31 @@ function assertNoUnlistedFindings(scan, allowlist) {
   );
 }
 
-/** 判据⑥：清单条目必须仍能复现同一 finding；修好了/行号漂了 ⇒ 条目 stale ⇒ 判红。 */
-function assertNoStaleAllowlist(scan, allowlist) {
-  const byKey = new Map(scan.findings.map((f) => [f.key, f]));
+/**
+ * 判据⑥：清单条目必须仍能复现同一 finding；修好了/行号漂了 ⇒ 条目 stale ⇒ 判红。
+ *
+ * ⚠ 入参是 **findings 数组**而不是单个 `scan`，因为调用方必须在「判集合相等」**之前**用全量 findings
+ * 判一遍 stale：顺序反了的话，自洁失效（散文改好但条目没删）时读者先看到的是一份集合 diff
+ * （`- 'real-pg-integration.yml#real-pg-17-11:351:23:mismatch'`），要自己反推那是「新漂移」还是
+ * 「已过期的登记」—— 而后者才是本条判据唯一想提示的动作（删掉它）。
+ */
+function assertNoStaleAllowlist(findings, allowlist) {
+  const byKey = new Map(findings.map((f) => [f.key, f]));
   const stale = [];
   for (const entry of allowlist) {
     const found = byKey.get(entry.key);
     if (!found) {
-      stale.push(`${entry.key} ⇒ 已扫不到这条 finding（散文/闸门被改好，或行号漂了）`);
+      stale.push(`${entry.key} ⇒ 已过期：扫不到这条 finding 了（散文/闸门被改好，或行号漂了）——请删掉这条登记`);
       continue;
     }
-    if (found.kind !== entry.kind) stale.push(`${entry.key} ⇒ kind 从 ${entry.kind} 漂成 ${found.kind}`);
-    if ((found.gate ?? null) !== (entry.gate ?? null)) stale.push(`${entry.key} ⇒ gate 从 ${entry.gate} 漂成 ${found.gate}`);
+    if (found.kind !== entry.kind) {
+      stale.push(`${entry.key} ⇒ 已过期：kind 从 ${entry.kind} 漂成 ${found.kind}——请删掉或重登这条`);
+    }
+    if ((found.gate ?? null) !== (entry.gate ?? null)) {
+      stale.push(`${entry.key} ⇒ 已过期：gate 从 ${entry.gate} 漂成 ${found.gate}——请删掉或重登这条`);
+    }
   }
-  assert.deepEqual(stale, [], `允许清单有 ${stale.length} 条已失效（stale）——请删掉对应条目，别让它变成永久豁免。`);
+  assert.deepEqual(stale, [], `允许清单有 ${stale.length} 条已过期（stale）——请删掉对应条目，别让它变成永久豁免。`);
 }
 
 /** 判据②：把 `real-pg-integration.yml` 的 `-lt 11` 改成 `-lt 8` 这类变异必须红（不落盘，纯内存）。 */
@@ -540,7 +551,13 @@ jobs:
 
 test('判据④⑤：真实扫描 —— 今天每一处「不一致 / 判不了」都必须与允许清单逐字相等', () => {
   const scans = scanAllWorkflows();
-  const offenders = scans.flatMap((s) => s.findings).filter(isOffender).sort((a, b) => a.key.localeCompare(b.key));
+  const findings = scans.flatMap((s) => s.findings);
+  const offenders = findings.filter(isOffender).sort((a, b) => a.key.localeCompare(b.key));
+  // ⚠ 顺序是判据的一部分：**先**判「清单里有没有已过期的条目」，**再**判 offenders 集合相等。
+  // 反过来的话，自洁失效（散文被改好、条目忘删）时读者先看到的是一份集合 diff
+  // （`- 'real-pg-integration.yml#real-pg-17-11:351:23:mismatch'`），得自己反推那一行是
+  // 「新漂移」还是「已过期登记」—— 后者才是判据⑥ 唯一想提示的动作：删掉它。
+  assertNoStaleAllowlist(findings, ALLOWLIST);
   // 「先枚举、再登记」：这条断言失败时就地打印全清单，方便逐条抄进 ALLOWLIST。
   console.log(`[ci-gate-prose] 不一致/判不了 清单（${offenders.length} 条）：`);
   for (const f of offenders) {
@@ -555,7 +572,6 @@ test('判据④⑤：真实扫描 —— 今天每一处「不一致 / 判不了
     // 只校验属于本文件的条目：逐文件遍历时把别的文件的条目也塞进来，它们必然「扫不到」而被误判 stale。
     const mine = ALLOWLIST.filter((entry) => entry.key.startsWith(`${scan.file}#`));
     assertNoUnlistedFindings(scan, mine);
-    assertNoStaleAllowlist(scan, mine);
   }
 });
 
@@ -594,9 +610,10 @@ test('判据⑤：清单外的幻造不一致 ⇒ 判红（fixture，且不依�
   // 登记进去 ⇒ 通过；但把散文改成 11 后条目就 stale（判据⑥）
   const allow = offenders.map((f) => ({ key: f.key, kind: 'mismatch', gate: f.gate, why: 'fixture 里演示允许清单的登记与失效', owner: 'fixture' }));
   assert.doesNotThrow(() => assertNoUnlistedFindings(scan, allow));
-  assert.doesNotThrow(() => assertNoStaleAllowlist(scan, allow));
+  assert.doesNotThrow(() => assertNoStaleAllowlist(scan.findings, allow));
   const fixed = scanWorkflow('fixture-mismatch.yml', FIXTURE_MISMATCH.replace(/8 组读数/g, '11 组读数').replace(/≥ 8/g, '≥ 11'));
-  assert.throws(() => assertNoStaleAllowlist(fixed, allow), /已失效（stale）/);
+  // 自洁失效的文案必须是「已过期」+ 该删哪条，不能只丢一份集合 diff。
+  assert.throws(() => assertNoStaleAllowlist(fixed.findings, allow), /已过期（stale）/);
 });
 
 test('判据⑤：多道闸门时按变量名选对（fixture）', () => {
