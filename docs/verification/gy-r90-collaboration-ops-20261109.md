@@ -189,6 +189,7 @@
 
 - 闸门 ① 就是 CI 跑的同一条命令（`.github/workflows/engineering-shell.yml:112`），本地绿 ≠ CI 绿的唯一差别是扫描面一致、环境不同。
 - 闸门 ② 的「必红」不是缺陷：`tests/unit/doc-anchor-relocation-identity.test.mjs:1309` 的自诊断把「base 与 HEAD 同一提交」当成取 base 逻辑坏掉的信号（§4 第 6 条）。
+- 表内读数取自**本分支**（base `af39bfe6`）的实跑。取证期间 `origin/main` 前进到 `7835bfe5`（`#1129` 注释锚点影子闸门基线在新 main 上重收）：`git merge-tree --write-tree --name-only origin/main HEAD` 在旧、新两个 main 上都 exit 0 且无冲突路径，但那是**当时**的判定——合并前必须按 §6 第 5 条用当次的 `origin/main` 重跑一次，不许拿本页读数顶替。
 - 本页自检：`Select-String -Path docs/verification/gy-r90-collaboration-ops-20261109.md -Pattern '(?<![\w./-]):\d'` —— 命中 **0** 行（本页无裸行号）。
 
 ## 8 派单写的 vs 实测（只有这几处不一致，其余逐条对得上）
