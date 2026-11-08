@@ -49,7 +49,7 @@ import {
   idempotencyScope,
 } from '../auth/idempotency.ts';
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
-import { ApiError } from '../errors.ts';
+import { ApiError, terminalFailureCodeOf } from '../errors.ts';
 import { speechAudioMimeRefusal, type SpeechMediaPort } from './media.ts';
 import type { ProviderFailureCode, SpeechProvider } from './provider.ts';
 import {
@@ -538,7 +538,7 @@ export function createSpeechService(options: SpeechServiceOptions) {
       return;
     }
     if (outcome.kind === 'threw') {
-      await commitTerminal(jobId, running, { state: 'failed', errorCode: 'PROVIDER_OUTCOME_UNKNOWN' }, null);
+      await commitTerminal(jobId, running, { state: 'failed', errorCode: terminalFailureCodeOf(outcome.error) }, null);
       return;
     }
     const value = outcome.value;
@@ -603,7 +603,7 @@ export function createSpeechService(options: SpeechServiceOptions) {
 
   async function runProviderWithDeadline(job: SpeechJobRow): Promise<
     | { kind: 'timeout' }
-    | { kind: 'threw' }
+    | { kind: 'threw'; error: unknown }
     | { kind: 'value'; value: Awaited<ReturnType<SpeechProvider['transcribe']>> }
   > {
     const remaining = Math.max(0, job.deadlineAt.getTime() - now().getTime());
@@ -617,7 +617,7 @@ export function createSpeechService(options: SpeechServiceOptions) {
     const call = provider
       .transcribe({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision })
       .then((value) => ({ kind: 'value' as const, value }))
-      .catch(() => ({ kind: 'threw' as const }));
+      .catch((error: unknown) => ({ kind: 'threw' as const, error }));
     try {
       return await Promise.race([call, timeout]);
     } finally {

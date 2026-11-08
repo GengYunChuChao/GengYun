@@ -54,6 +54,8 @@ const sqlFile = (path) => readFileSync(new URL(`../../services/api/db/${path}`, 
 
 let app;
 let realFallbackApp;
+/** 负控制 C 专用：同一池、同一合成传输，但 `recognitionJobDeadlineMs` 压到 500ms（不必等 30 秒）。 */
+let deadlineApp;
 let pool;
 let passed = 0;
 const createdRoles = [];
@@ -84,6 +86,11 @@ function syntheticRecognitionProvider() {
       unavailableReason: null,
       async recognize(input) {
         calls.push(input);
+        if (mode === 'boom') {
+          // 负控制 C（GY-R87 / #29）：提供者**抛未知错**（不是撤回、也不是超时）
+          // ⇒ 读面仍必须是 `failed / PROVIDER_OUTCOME_UNKNOWN`，不许被标成撤回。
+          throw new Error('synthetic provider exploded');
+        }
         if (mode === 'hang') {
           return new Promise((resolve) => {
             releaseHang = () =>
@@ -108,6 +115,9 @@ function syntheticRecognitionProvider() {
     calls,
     hang() {
       mode = 'hang';
+    },
+    boom() {
+      mode = 'boom';
     },
     normal() {
       mode = 'normal';
@@ -201,6 +211,19 @@ async function terminalJobState(token, jobId) {
   if (res.status !== 200) return null;
   const state = res.body.data.state;
   return ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'].includes(state) ? state : null;
+}
+/**
+ * 读面快照（GY-R87 / #29 新增）：`GET /api/v1/jobs/{id}` 的 `state` **和** `error_code` 一起取。
+ *
+ * 为什么另开一个函数而不改 `terminalJobState`：上面那个只回状态串，既有场景全靠它「等终态」；
+ * 本片要的正是「终态的**原因**可读」，两件事分开写，既有断言零改动。
+ */
+async function terminalJobReadout(token, jobId) {
+  const res = await http(`/jobs/${jobId}`, { token });
+  if (res.status !== 200) return null;
+  const state = res.body.data.state;
+  if (!['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'].includes(state)) return null;
+  return { state, errorCode: res.body.data.error_code ?? null };
 }
 
 try {
@@ -529,13 +552,22 @@ try {
   assert.equal(afterWithdraw.state, 'failed', '撤回必须撤销在途外发');
   assert.equal(afterWithdraw.error_code, 'CONSENT_WITHDRAWN');
   synthetic.release();
-  await waitFor(() => terminalJobState(b.token, createdB.body.data.id), 'B 任务终态');
+  const terminalB = await waitFor(() => terminalJobReadout(b.token, createdB.body.data.id), 'B 任务终态');
+  // 正控制（GY-R87 / #29，本片新增的**读面**断言）：终态原因必须自证「因撤回而终止」，
+  // 而不是供应商超时/网络炸的 `PROVIDER_OUTCOME_UNKNOWN`。改前这条只等「任意终态」，
+  // 于是「撤回是否终止已受理的 job」在读面上没有任何断言。
+  assert.equal(terminalB.state, 'failed', '撤回导致的终态必须是 failed');
+  assert.equal(
+    terminalB.errorCode,
+    'CONSENT_WITHDRAWN',
+    `读面必须自证撤回：期望 CONSENT_WITHDRAWN，实际 ${terminalB.errorCode}（落成 PROVIDER_OUTCOME_UNKNOWN ＝ 仍然分不清撤回与供应商故障）`,
+  );
   assert.equal(await writebackCount(sentB.id), 0, '撤回后晚到的提供者结果必须零写入');
   const entryAfterWithdraw = await postRecognition(b.token, randomUUID());
   assert.equal(entryAfterWithdraw.status, 403, JSON.stringify(entryAfterWithdraw.body));
   assert.equal(entryAfterWithdraw.body.error.code, 'CONSENT_REQUIRED');
   assert.equal(await countExports(b.id), 1, '被拒的入口不得新增账本行');
-  say('HTTP 撤回端到端（真 PG）：撤回 200 + 在途外发置 failed + 晚到结果零写入 + 入口拒绝且不新增账本行');
+  say('HTTP 撤回端到端（真 PG）：撤回 200 + 在途外发置 failed + 读面 error_code=CONSENT_WITHDRAWN + 晚到结果零写入 + 入口拒绝且不新增账本行');
 
   // ---------------------------------------------------------------- 8. 取消墓碑不可复活
   const c = await login('ledger-c');
@@ -833,10 +865,90 @@ try {
     '撤回作用域负控制（真 PG）：A 走 HTTP 撤回只撤自己那一行（failed + CONSENT_WITHDRAWN + revision+1）；同用户另一用途行与 B 的 sent/reserved 两行逐字段不变；purpose=null 撤回恰撤 1 行且 B 仍逐字段不变',
   );
 
+  // ---------------------------------------------------------------- 13. 负控制 B：撤回后晚到的回调不许复活
+  //
+  // 既有 `tests/integration/egress-revoke-race-pg.mjs` 用 HTTP 竞态覆盖过这条；这里在账本面上
+  // **直接**再钉一次。夹具复用 §7 那行已被真实 HTTP 撤回置终态的外发（`sentB`）——它同时满足
+  // 两个前提：`state='failed'` 且 `error_code='CONSENT_WITHDRAWN'`（§7 已断言），所以下面
+  // 「被拒」测的是**终态守卫本身**，不是「行不存在」这种弱拒绝。
+  // 晚到的回写既要被拒（`OBJECT_UNAVAILABLE`），又必须**零写入**，而且 exports 的
+  // `error_code` 仍写着 `CONSENT_WITHDRAWN`（不许被失败码覆盖成别的）。
+  const bWithdrawnRow = (await owner.query('SELECT state, error_code FROM exports WHERE id=$1', [sentB.id])).rows[0];
+  assert.equal(bWithdrawnRow.state, 'failed', '前提：§7 的那行已被撤回置 failed');
+  assert.equal(bWithdrawnRow.error_code, 'CONSENT_WITHDRAWN', '前提：§7 的那行已写明撤回原因');
+  await assert.rejects(
+    () => ledger.guardWriteback({ exportId: sentB.id, userId: b.id, result: { content_class: 'structural_only' } }),
+    (error) => {
+      assert.equal(error.code, 'OBJECT_UNAVAILABLE', `晚到回写必须被拒：实际 ${error.code}`);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => inFlight.saveResult({ exportId: sentB.id, userId: b.id, objectVersion: 1, result: { outcome: 'late' } }),
+    (error) => {
+      assert.equal(error.code, 'OBJECT_UNAVAILABLE', `在途守卫的晚到 saveResult 必须被拒：实际 ${error.code}`);
+      assert.match(error.message, /回写被阻断|已终态/, `文案必须说清是终态阻断：${error.message}`);
+      return true;
+    },
+  );
+  assert.equal(await writebackCount(sentB.id), 0, '撤回后的晚到回调必须零写入（export_writebacks 0 行）');
+  assert.equal(
+    (await owner.query('SELECT error_code FROM exports WHERE id=$1', [sentB.id])).rows[0].error_code,
+    'CONSENT_WITHDRAWN',
+    '晚到回调不得改写出错原因',
+  );
+  say('负控制 B（真 PG）：撤回后晚到回调 ⇒ guardWriteback/saveResult 均 OBJECT_UNAVAILABLE + export_writebacks 0 行 + error_code 仍 CONSENT_WITHDRAWN');
+
+  // ---------------------------------------------------------------- 14. 负控制 C：不许把正常失败标成撤回
+  //
+  // 两半：(a) 提供者**真超时** ⇒ `timed_out / PROVIDER_TIMEOUT`；
+  //       (b) 提供者**抛未知错** ⇒ `failed / PROVIDER_OUTCOME_UNKNOWN`。
+  // 若 `terminalFailureCodeOf` 被改成「一律 CONSENT_WITHDRAWN」，这两条必然红。
+  deadlineApp = buildApp({
+    config: realConfig,
+    pool,
+    wechat,
+    recognitionProvider: synthetic.provider,
+    recognitionMedia: mediaPort,
+    consentGrantTestOptions: { allowSyntheticGrantPolicy: true },
+    recognitionJobDeadlineMs: 500,
+  });
+  const deadlineOrigin = await deadlineApp.listen({ host: '127.0.0.1', port: 0 });
+  const deadlineHttp = makeHttp(deadlineOrigin);
+  const t1 = await login('ledger-t1-timeout');
+  await grantForRecognition(t1.token);
+  synthetic.hang();
+  const createdT1 = await deadlineHttp('/recognitions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': `rec-t1-${randomUUID().slice(0, 12)}` },
+    body: JSON.stringify({ media_id: randomUUID(), media_revision: 1 }),
+    token: t1.token,
+  });
+  assert.equal(createdT1.status, 202, JSON.stringify(createdT1.body));
+  const terminalT1 = await waitFor(() => terminalJobReadout(t1.token, createdT1.body.data.id), 'T1 任务终态');
+  assert.equal(terminalT1.state, 'timed_out', '真超时必须仍是 timed_out');
+  assert.equal(terminalT1.errorCode, 'PROVIDER_TIMEOUT', `真超时的原因必须仍是 PROVIDER_TIMEOUT：实际 ${terminalT1.errorCode}`);
+  synthetic.release();
+  const u1 = await login('ledger-u1-boom');
+  await grantForRecognition(u1.token);
+  synthetic.boom();
+  const createdU1 = await postRecognition(u1.token, randomUUID());
+  assert.equal(createdU1.status, 202, JSON.stringify(createdU1.body));
+  const terminalU1 = await waitFor(() => terminalJobReadout(u1.token, createdU1.body.data.id), 'U1 任务终态');
+  synthetic.normal();
+  assert.equal(terminalU1.state, 'failed', '提供者抛未知错必须仍是 failed');
+  assert.equal(
+    terminalU1.errorCode,
+    'PROVIDER_OUTCOME_UNKNOWN',
+    `提供者炸了绝不能被标成撤回：实际 ${terminalU1.errorCode}`,
+  );
+  say('负控制 C（真 PG）：真超时 ⇒ timed_out/PROVIDER_TIMEOUT；提供者抛未知错 ⇒ failed/PROVIDER_OUTCOME_UNKNOWN（撤回分支不误伤）');
+
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求`);
 } finally {
   await app?.close?.();
   await realFallbackApp?.close?.();
+  await deadlineApp?.close?.();
   await pool?.end?.();
   // `EGRESS_LEDGER_KEEP=1`：保留角色/表/数据，供后继只追加脚本（如
   // `egress-object-key-pg.mjs` 的 0014 迁移演练）在**已有行**的库上继续验收。

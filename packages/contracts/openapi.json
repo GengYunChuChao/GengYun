@@ -12776,7 +12776,7 @@
           "SESSION_REQUIRED",
           "SESSION_EXPIRED",
           "SCOPE_DENIED",
-          "CONSENT_REQUIRED",
+          "CONSENT_REQUIRED", "CONSENT_WITHDRAWN",
           "ACCOUNT_INACTIVE",
           "NOT_FOUND",
           "REVISION_CONFLICT",
@@ -19897,7 +19897,7 @@
         }
       },
       "Error403": {
-        "description": "SCOPE_DENIED, CONSENT_REQUIRED, ACCOUNT_INACTIVE, SELF_SCOPE_GRANT_DENIED",
+        "description": "SCOPE_DENIED, CONSENT_REQUIRED, CONSENT_WITHDRAWN, ACCOUNT_INACTIVE, SELF_SCOPE_GRANT_DENIED",
         "content": {
           "application/json": {
             "schema": {
@@ -20110,7 +20110,7 @@
     ],
     "403": [
       "SCOPE_DENIED",
-      "CONSENT_REQUIRED",
+      "CONSENT_REQUIRED", "CONSENT_WITHDRAWN",
       "ACCOUNT_INACTIVE",
       "SELF_SCOPE_GRANT_DENIED"
     ],

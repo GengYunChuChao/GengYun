@@ -21,15 +21,15 @@
  *      且 `DOCUMENTED_EXCEPTIONS` 的每个成员都必须真的出现在命中里（不许留过期条目）、
  *      必须 ∉ `ERROR_CODES`（一旦它进了契约就该从例外表删掉，逼人回来改口径）。
  *
- * ## `DOCUMENTED_EXCEPTIONS` 为什么今天还留着 2 个值
- * 它们是**已登记、未在本片修**的既有缺口，不是"合法自造码"：
+ * ## `DOCUMENTED_EXCEPTIONS` 今天只剩 1 个值
+ * 它是**已登记、未在本片修**的既有缺口，不是"合法自造码"：
  *   - `OBJECT_CANCELLED`（`ledger-pg.ts:699/722` 的取消墓碑、`in-flight.mjs:210`）：语义是「该对象版本
  *     已被取消，迟到的回调不得复活它」，与 `OBJECT_UNAVAILABLE`（对象不可用）不是一回事，硬改字面量
  *     会把语义差掩盖掉。它目前**没有臂级断言**（两条真库臂 `egress-ledger-pg.mjs:420`、
  *     `egress-revoke-race-pg.mjs:355` 断言的是 `CONSENT_WITHDRAWN`，`OBJECT_CANCELLED` 零命中），
  *     正确出路是给它一个契约内专用码并补臂，属契约文件改动 ⇒ 本片范围不含，留给后续切片。
- *   - `CONSENT_WITHDRAWN`（`ledger-pg.ts:741` 的撤回 SQL、`ledger.mjs:478` 的内存账本）：
- *     语义是「因同意被撤回而失败」，比 `CONSENT_REQUIRED`（403，缺授权）更准；被上面两条真库臂
+ *   - 第二个值 `CONSENT_WITHDRAWN` **已从本表删除**：#29 起它进了契约闭集（403 档），
+ *     例外表的语义是「账本会写、但契约表达不了」，它现在表达得了；撤回语义仍由上面两条真库臂
  *     与 `tests/unit/account-deletion-egress-revoker-reachability.test.mjs:33` 的 SQL 正则钉住。
  *
  * ## 负控制（仓库外临时副本，原始失败行见交付报告）
@@ -89,8 +89,14 @@ const KNOWN_SITES = Object.freeze([
   'services/api/src/privacy/task-egress.ts:OBJECT_UNAVAILABLE',
 ]);
 
-/** 已登记、未在本片修的例外（理由见文件头）。⛔ 加宽必须同时写清为什么不改，不许当逃生门用。 */
-const DOCUMENTED_EXCEPTIONS = Object.freeze(['OBJECT_CANCELLED', 'CONSENT_WITHDRAWN']);
+/**
+ * 已登记、未在本片修的例外（理由见文件头）。⛔ 加宽必须同时写清为什么不改，不许当逃生门用。
+ *
+ * GY-R87（#29）起 `CONSENT_WITHDRAWN` **已进契约闭集**（403 档），按本文件 `:145-155` 的规矩
+ * 必须从这张例外表删掉——例外表的语义是「账本会写、但契约表达不了」，它现在表达得了了。
+ * `OBJECT_CANCELLED` 仍留在表里：取消墓碑是另一件事，契约今天没有对应码。
+ */
+const DOCUMENTED_EXCEPTIONS = Object.freeze(['OBJECT_CANCELLED']);
 
 function scanSites() {
   const hits = [];

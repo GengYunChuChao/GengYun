@@ -30,7 +30,7 @@ import {
   idempotencyScope,
 } from '../auth/idempotency.ts';
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
-import { ApiError } from '../errors.ts';
+import { ApiError, terminalFailureCodeOf } from '../errors.ts';
 import type { OcrMediaPort } from './media.ts';
 import type { OcrProvider, ProviderFailureCode } from './provider.ts';
 import type { OcrDosePort, OcrReferencePort } from './reference.ts';
@@ -569,7 +569,7 @@ export function createOcrService(options: OcrServiceOptions) {
       return;
     }
     if (outcome.kind === 'threw') {
-      await commitTerminal(jobId, running, { state: 'failed', errorCode: 'PROVIDER_OUTCOME_UNKNOWN' }, null);
+      await commitTerminal(jobId, running, { state: 'failed', errorCode: terminalFailureCodeOf(outcome.error) }, null);
       return;
     }
     if (outcome.value.kind === 'failed') {
@@ -617,7 +617,7 @@ export function createOcrService(options: OcrServiceOptions) {
 
   async function runProviderWithDeadline(job: OcrJobRow): Promise<
     | { kind: 'timeout' }
-    | { kind: 'threw' }
+    | { kind: 'threw'; error: unknown }
     | { kind: 'value'; value: Awaited<ReturnType<OcrProvider['extract']>> }
   > {
     const remaining = Math.max(0, job.deadlineAt.getTime() - now().getTime());
@@ -632,7 +632,7 @@ export function createOcrService(options: OcrServiceOptions) {
     const call = provider
       .extract({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision })
       .then((value) => ({ kind: 'value' as const, value }))
-      .catch(() => ({ kind: 'threw' as const }));
+      .catch((error: unknown) => ({ kind: 'threw' as const, error }));
     try {
       return await Promise.race([call, timeout]);
     } finally {
