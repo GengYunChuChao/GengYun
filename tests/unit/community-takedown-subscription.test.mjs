@@ -13,11 +13,11 @@
  * （键格式见 `services/api/src/community/events.ts:112-118`，takedown 分支取 `:<reason>`
  * 且只取前 80 字；缺省 reason `admin_hide` 见 `services/api/src/community/takedown.ts:62`）。
  *
- * ## 与既有负向钉的分工
+ * ## 与既有钉的分工
  *
- * `tests/unit/community-notify-dedupe-pins.test.mjs:130` 钉的是反方向：「重审驳回**不**产生
- * `community:takedown:` 键」。只钉负向的话，把观察器整段删掉也能全绿；本文件补上正向那一半，
- * 于是「观察器失灵」（漏发）与「观察器越界」（多发）两种相反的回归各有一条红灯。
+ * 观察器「真的在发事件」在 app 级端到端已有人守：`tests/unit/community-notify-dedupe-pins.test.mjs:145-161` 走真 app 的 `POST /admin/posts/:id/hide`（`:149-154`），
+ * 断言隐藏成功后作者收件箱里的下架键**恰好一条**、逐字为 `community:takedown:post:${hidden.id}:r1:admin_hide`（`:157-161`）——把观察器整段删掉，这条对照立刻变红。
+ * 本文件把 ①② 下沉为同一链路的单元级读数（② 的同键重投面在 app 级一次投递里看不到）；真正此前无人钉的是 ③ fail-open（`git grep EVENT_PORT_UNAVAILABLE` 在 `tests/` 只命中本文件）与 ④ 匿名（`author_id` 为 NULL）不投递。
  *
  * ## 版本口径（① 的核心）
  *

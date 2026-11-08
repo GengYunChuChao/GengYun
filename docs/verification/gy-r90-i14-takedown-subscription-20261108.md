@@ -49,7 +49,7 @@
 
 ## 3. 变异自证（改坏产品代码 ⇒ 用例必须红；测完逐条还原）
 
-变异前基线：`node --test tests/unit/community-takedown-subscription.test.mjs` ⇒ 4 pass / 0 fail（EXIT=0）。每条变异后都 `git checkout -- services/api/src/community/takedown.ts` 还原，`git status --porcelain` 只剩未跟踪的新用例文件。
+变异前基线：`node --test tests/unit/community-takedown-subscription.test.mjs` ⇒ 4 pass / 0 fail（EXIT=0）。每条变异后都 `git checkout -- services/api/src/community/takedown.ts` 还原；实现时在本工作树 `git status --porcelain` 只剩未跟踪的新用例文件，提交并推送后应为空。
 
 | 变异 | 改动 | 期望变红 | 实测 |
 | --- | --- | --- | --- |
