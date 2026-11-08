@@ -2,7 +2,7 @@
 
 - 基线 `origin/main = 3561b1fc31558409242829b4610213c00f95f7fb`（`git fetch origin --prune` 后实测，2026-11-07 21:34 HKT）；本页跑的树就是它：工作树 `E:\GengYunCommander\.pg17\wt-r87-realarm`、分支 `docs/gy-r87-i22-real-arm-reading`、`git rev-parse HEAD` = `3561b1fc`、`status --porcelain` 空。
 - 本页补的是 `#22` 一直欠着的**新读数**：`#1033`（`0ecae98c test(failmatrix): 按执行模式分叉真库期望`）把 5 条 `different` 改成 real 侧期望，但那次**没有重跑真库臂**，所以「改完到底读数是什么」此前没有本机实测。
-- 本页读数**全部来自本机实跑**：`run-real.mjs` 的 stdout 与它写出的 `--json` 产物。⛔ 没有抄 CI artifact 的任何数字——那个 artifact 的实名是 `failmatrix-real-<sha>`（`.github/workflows/real-pg-integration.yml:1359`；`failmatrix-real-17.11` 是同文件 `.github/workflows/real-pg-integration.yml:1281` 的 **job/check 名**，不是 artifact 名）——也没抄任何旧页的读数来充本轮。
+- 本页读数**全部来自本机实跑**：`run-real.mjs` 的 stdout 与它写出的 `--json` 产物。⛔ 没有抄 CI artifact 的任何数字——那个 artifact 的实名是 `failmatrix-real-<sha>`（`.github/workflows/real-pg-integration.yml:1410`；`failmatrix-real-17.11` 是同文件 `.github/workflows/real-pg-integration.yml:1332` 的 **job/check 名**，不是 artifact 名）——也没抄任何旧页的读数来充本轮。
 - 只读 + 写文档：没有改 `cases.mjs` / `run-real.mjs` / 任何业务代码，没有 push，没有合并，没有碰 `#1037` 占用的文件。
 
 ## §1 基线与环境
