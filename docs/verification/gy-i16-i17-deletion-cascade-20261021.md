@@ -72,7 +72,7 @@
 | 1 | `POST /me/account/deletion`（`guards.requireUser` 守卫） | `services/api/src/routes/account-deletion.ts:255` | — |
 | 2 | `service.request()` → `deletion.requestDeletionFor()` + `await deletion.executeHandlers()` | `services/api/src/privacy/account-deletion.ts:225-228` | — |
 | 3 | 受理事务（SECURITY DEFINER 函数） | `0016_account_deletion_persistence.sql:68` → `:122-128`（users 软改）/`:132-134`（sessions 软撤）/`:138-145`（deletion_requests 插入） | **否**（全是 UPDATE/INSERT） |
-| 4 | 事务内第 2 步：写备份副本清单行 | `services/api/src/privacy/deletion-requests-pg.ts:251` `insertBackupCopySeeds(client, …)` | INSERT（不是删） |
+| 4 | 事务内第 2 步：写备份副本清单行 | `services/api/src/privacy/deletion-requests-pg.ts:297` `insertBackupCopySeeds(client, …)` | INSERT（不是删） |
 | 5 | `executeHandlers()` 驱动协调器 | `services/api/src/privacy/user-data-deletion.ts:412-416` | — |
 | 6 | 每模块处理器 | `services/api/src/privacy/user-data-deletion.ts:342-392` | **是**（`purgeOwnerData` ⇒ `DELETE … RETURNING`） |
 | 7 | 备份阶段 | 同上 `:362-380` → `services/api/src/privacy/backup-copies-pg.ts:250-338` | 到期才 `UPDATE payload='null', state='purged'`（`:74-82`） |

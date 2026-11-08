@@ -212,7 +212,7 @@ export const RETENTION_EXCLUSIONS = Object.freeze([
   }),
   Object.freeze({
     table: 'public.exports / public.export_writebacks',
-    reason: '外发台账是 F13 取证材料（docs/implementation-requirements.md:281），随注销去身份而非按日历删除。',
+    reason: '外发台账是 F13 取证材料（docs/implementation-requirements.md:281）；行保留，PII 由迁移 0057 的 public.deidentify_account() 在注销受理事务内擦除（provider_request_ref_cipher 置空，recipient_id/object_id 保留为证据链），不按日历删除。',
   }),
   Object.freeze({
     table: 'public.jobs',

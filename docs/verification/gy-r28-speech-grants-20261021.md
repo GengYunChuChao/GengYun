@@ -106,7 +106,7 @@
 - **A 臂（SELECT 4 列）**：`speech_jobs` 与 `transcriptions` 全部通过，但 `speech_idempotency` 的**每一条**语句都 `42501`——`:143`（findIdempotent 的 SELECT）、`:154`（claim 的 INSERT）、`:170`、`:179`（finalize）、`:191`（release）、`:204`（purge）。
 - **B 臂（SELECT 6 列）**：幂等台全部通过，唯一一条 stderr 是 `:170: error: no rows returned for \gset`——那是探针写法问题（`ON CONFLICT DO NOTHING RETURNING scope` 在**真冲突**分支返回 0 行，`\gset` 遇零行记一次 psql 错误），不是权限问题。
 
-原因是三处都要 SELECT 权：`findIdempotent` 的 `WHERE scope = $1 AND key_hash = $2`、`claim` 的 `ON CONFLICT (scope, key_hash) … RETURNING scope`、`purge` 的 `WHERE expires_at <= … RETURNING scope`。**结论：SELECT 必须 6 列**（与 S28 的 `recognition_idempotency` 同形，见 `20-login-roles.sql:787-790` 的既有论断）。本页 §4.2 记录了对派单矩阵的这一处更正；不更正的话，本片防的正是它自己要犯的 `42501`。
+原因是三处都要 SELECT 权：`findIdempotent` 的 `WHERE scope = $1 AND key_hash = $2`、`claim` 的 `ON CONFLICT (scope, key_hash) … RETURNING scope`、`purge` 的 `WHERE expires_at <= … RETURNING scope`。**结论：SELECT 必须 6 列**（与 S28 的 `recognition_idempotency` 同形，见 `20-login-roles.sql:811-814` 的既有论断）。本页 §4.2 记录了对派单矩阵的这一处更正；不更正的话，本片防的正是它自己要犯的 `42501`。
 
 ## 4. 授权设计
 
@@ -126,7 +126,7 @@
 
 派单 §3 写的是 4 列。§3.4 已实测：只授 4 列时，`findIdempotent`（`WHERE scope/key_hash`）、`claim`（`ON CONFLICT … RETURNING scope`）、`purge`（`WHERE expires_at … RETURNING scope`）全部 `42501`。PG 的规则是「语句里**读到的**列都要 SELECT 权」：`WHERE` 里的 `scope` / `key_hash`、`RETURNING` 里的 `scope` 都算。
 
-因此段 K 授予 6 列，与同一张表在 S28 的同构兄弟 `recognition_idempotency` 完全同形（`20-login-roles.sql:787-790` 的注释写明了同样的理由）。这是本片**唯一**偏离派单矩阵的地方，已单列在报告里。
+因此段 K 授予 6 列，与同一张表在 S28 的同构兄弟 `recognition_idempotency` 完全同形（`20-login-roles.sql:811-814` 的注释写明了同样的理由）。这是本片**唯一**偏离派单矩阵的地方，已单列在报告里。
 
 ### 4.3 为什么 `SELECT … FOR UPDATE` 不另授 `UPDATE (revision)` 行锁载体
 

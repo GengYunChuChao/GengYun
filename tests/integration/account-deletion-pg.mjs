@@ -145,6 +145,30 @@ function deletionGrantRegion() {
 }
 
 /**
+ * 从**出厂文件**同一份 `20-login-roles.sql` 抽取 **0057 注销去身份**的 EXECUTE 授权区域并原样执行。
+ *
+ * 为什么要执行它：受理路径（`createRequest()`）在 `request_account_deletion` 之后、**同一事务内**
+ * 还会调 `public.deidentify_account(uuid)` 擦除身份四列与 `exports.provider_request_ref_cipher`；
+ * 运行时角色若没有这条函数的 EXECUTE ⇒ 每次受理都 `42501` 并折成 503（fail-closed），
+ * 本测试的 202 臂就会红。不复制粘贴 SQL（区域被删/被改宽 ⇒ 本测试必须变红）。
+ */
+function deidentifyGrantRegion() {
+  const matched = deploySqlFile('20-login-roles.sql').match(
+    /-- #region gy-i19-deidentify-grant\r?\n([\s\S]*?)\r?\n\s*-- #endregion gy-i19-deidentify-grant/,
+  );
+  assert.ok(matched !== null, '20-login-roles.sql 必须含 gy-i19-deidentify-grant 区域');
+  const region = matched[1];
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.deidentify_account'),
+    '区域必须含 REVOKE … deidentify_account … FROM PUBLIC',
+  );
+  assert.equal((region.match(/GRANT EXECUTE ON FUNCTION/g) ?? []).length, 1, '区域必须**恰好一条** GRANT EXECUTE');
+  assert.ok(region.includes(`TO ${runtimeRole};`), 'EXECUTE 只能授予运行时登录角色');
+  assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
+  return region;
+}
+
+/**
  * 从**出厂文件**同一份 `20-login-roles.sql` 抽取 **0031 在线证据**的 EXECUTE 授权区域并原样执行。
  *
  * 为什么要执行它：受理路径（`executeHandlers()`）现在会用迁移 0031 的唯一写函数落证据，
@@ -594,6 +618,7 @@ try {
   createdRoles.push(runtimeRole);
   await owner.query(`GRANT ${groups.join(', ')} TO ${runtimeRole}`);
   await owner.query(deletionGrantRegion());
+  await owner.query(deidentifyGrantRegion());
   // 0031 的两条窄口径函数：EXECUTE 同样从出厂文件原样抽取执行（受理时写证据、回执照证据推导都要它）。
   await owner.query(onlineEvidenceGrantRegion());
   // 0038 的三条回执台账函数：EXECUTE 同样从出厂文件原样抽取执行（回执签发/反查/诊断读数只有这三条路径）。

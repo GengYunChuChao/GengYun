@@ -133,10 +133,24 @@ function deletionInput() {
 }
 
 const isCall = (text) => String(text).includes('public.request_account_deletion');
+// `#19` 片1：受理事务的第 3 步是 `SELECT public.deidentify_account($1::uuid)`（迁移 0057）。
+const isDeidentify = (text) => String(text).includes('public.deidentify_account');
 
-/** 事务池替身：函数调用语句返回 `payload`（其余语句回空）。 */
-function deletionPoolReturning(payload) {
-  const respond = (text) => (isCall(text) ? { rows: [{ result: payload }] } : { rows: [] });
+/** 去身份函数的默认读数（成功路径用；形状类失败用例可单独覆盖）。 */
+const DEIDENTIFY_OK = Object.freeze({ identity: 1, exports: 0, generation: 1 });
+
+/**
+ * 事务池替身：函数调用语句返回 `payload`（其余语句回空）。
+ *
+ * `deidentifyPayload` 默认给一份**合法**读数——否则「成功形状」对照组会被去身份的
+ * fail-closed 解析（形状不符 ⇒ 503）误伤，对照组就失去意义。
+ */
+function deletionPoolReturning(payload, deidentifyPayload = DEIDENTIFY_OK) {
+  const respond = (text) => {
+    if (isCall(text)) return { rows: [{ result: payload }] };
+    if (isDeidentify(text)) return { rows: [{ result: deidentifyPayload }] };
+    return { rows: [] };
+  };
   const client = { async query(text) { return respond(text); }, release() {} };
   return { async query(text) { return respond(text); }, async connect() { return client; } };
 }
@@ -144,7 +158,10 @@ function deletionPoolReturning(payload) {
 /** 事务池替身：函数调用语句抛指定数据库错误（BEGIN 等语句照常成功）。 */
 function deletionPoolThrowing(code) {
   const client = {
-    async query(text) { if (isCall(text)) throw dbError(code); return { rows: [] }; },
+    async query(text) {
+      if (isCall(text) || isDeidentify(text)) throw dbError(code);
+      return { rows: [] };
+    },
     release() {},
   };
   return { async query() { return { rows: [] }; }, async connect() { return client; } };
@@ -189,6 +206,25 @@ test('注销受理：成功形状不被误伤（对照组，证明上面的失�
   assert.equal(record.id, DELETION_ID);
   assert.equal(record.userId, DELETION_USER);
   assert.equal(record.revokedSessions, 0);
+  // `#19` 片1：去身份读数合流进服务端记录（⛔ 不进 HTTP 体，见 openapi 的 DeletionReceipt）。
+  assert.deepEqual(record.deidentified, { ...DEIDENTIFY_OK }, '去身份读数必须原样合流进记录');
+});
+
+test('注销去身份（`#19` 片1）：读数形状不符 ⇒ 503 且 retryable:false（在 COMMIT 之前失败关闭）', async () => {
+  const bad = [
+    null, // 函数没返回 result（或返回 null）
+    'not-an-object',
+    { identity: 1, exports: 0 }, // 缺 generation
+    { identity: 1.5, exports: 0, generation: 1 }, // 非整数
+  ];
+  for (const deidentifyPayload of bad) {
+    const store = createPostgresDeletionRequestStore({
+      pool: deletionPoolReturning(validReceipt(), deidentifyPayload),
+    });
+    const error = await capture(store.createRequest(deletionInput()));
+    assertApiError(error, { code: 'PROVIDER_UNAVAILABLE', status: 503, retryable: false });
+    assertEnvelope(error, { code: 'PROVIDER_UNAVAILABLE', retryable: false });
+  }
 });
 
 test('注销受理：57014/55P03 ⇒ 504 可重试；40001/08P01 ⇒ 503 可重试（反向对照）', async () => {

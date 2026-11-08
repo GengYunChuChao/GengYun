@@ -250,6 +250,30 @@ REVOKE ALL ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer,ti
 GRANT EXECUTE ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) TO gengyun_api_runtime;
 -- #endregion gy-i19-deletion-grant
 
+-- --- D1. 注销去身份：唯一写路径的 EXECUTE（GY-I19 / 迁移 0057）------------------
+-- 迁移 0057 建了**窄口径** `SECURITY DEFINER` 函数 `public.deidentify_account(uuid)`
+-- （属主＝迁移管理员）并 `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：
+-- 运行时对 `public.users` 的 `nickname`/`avatar_media_id`/`wechat_subject_cipher`/
+-- `wechat_subject_lookup`/`deletion_generation` 以及 `public.exports.provider_request_ref_cipher`
+-- **仍然没有任何直接列权限**（`sql/90-assert-least-privilege.sql` 的 `deidentify_function_*`
+-- 五条断言钉死这条），只能经此函数在**受理事务内**擦除身份。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即说明迁移没跑完，
+-- 必须在此显式失败（而不是留一个「看似已收敛、实际不去身份」的运行态）。
+-- #region gy-i19-deidentify-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）：
+-- `tests/integration/deidentify-account-pg.mjs` 抽取本区域并原样执行，以证明出厂的授权语句本身可用。
+DO $$
+BEGIN
+  IF to_regprocedure('public.deidentify_account(uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.deidentify_account(uuid)：迁移 0057 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.deidentify_account(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.deidentify_account(uuid) TO gengyun_api_runtime;
+-- #endregion gy-i19-deidentify-grant
+
 -- --- D2. 在线清理证据：唯一写/读路径的 EXECUTE（GY-R32 / 迁移 0031）------------
 -- 迁移 0031 把「在线清理的成功行证据」从命令报告 stdout 落进
 -- `public.deletion_requests.online_purge_evidence`（append-only jsonb 数组），并提供两条**窄口径**
@@ -1024,6 +1048,7 @@ GRANT DELETE ON public.jobs TO gengyun_api_runtime;
 
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
 \echo '20-login-roles.sql：已授予 public.request_account_deletion(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
+\echo '20-login-roles.sql：已授予 public.deidentify_account(uuid) 的 EXECUTE（注销去身份的唯一写路径；未授予 users/exports 的任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.suspend_account(...) / public.restore_account(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.list_admin_accounts() 的 EXECUTE（账号读面唯一读路径；未授予 users 的任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.feature_flags 的 SELECT 与 public.set_feature_flag(...) 的 EXECUTE（唯一写路径；未授予任何表级写权限）。'

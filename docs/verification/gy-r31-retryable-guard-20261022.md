@@ -101,7 +101,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 
 ## 4. 白名单理由表（12 条，逐条给「为什么可以不是 false」）
 
-原 6 条（`owner: GY-I22`）理由原文保留在 `tests/unit/retryable-guard-allowlist.mjs:29-83`，此处只摘判定：`db/catalog.ts` ×2、`conversations/store-pg.ts:63-69`、`privacy/deletion-requests-pg.ts:183-188`、`db/source-lifecycle.ts:69-78`、`privacy/ledger-pg.ts:86-90` —— 都是「瞬时类分类器 / 已识别的瞬时分支」⇒ 合法放宽。
+原 6 条（`owner: GY-I22`）理由原文保留在 `tests/unit/retryable-guard-allowlist.mjs:29-83`，此处只摘判定：`db/catalog.ts` ×2、`conversations/store-pg.ts:63-69`、`privacy/deletion-requests-pg.ts:228-233`、`db/source-lifecycle.ts:69-78`、`privacy/ledger-pg.ts:86-90` —— 都是「瞬时类分类器 / 已识别的瞬时分支」⇒ 合法放宽。
 
 新增 6 条（`owner: R31`）的判定与理由：
 

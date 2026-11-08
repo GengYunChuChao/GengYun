@@ -29,12 +29,12 @@
 
 | 改动 | 位置（改后行号） | 内容 |
 | --- | --- | --- |
-| 新增顶层 CTE | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2368` | `unwired_manifest(tbl, why, source) AS (VALUES …)`，21 行，每行「表名 + 理由 + `migrations/`/`docs/` 出处」 |
-| 扩 87 号（就地） | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:3675` 起 | 标签仍是 `runtime_surface_parity`：原来的 (i)(ii) 保留，追加 (iii) 全表归类、`(iv-a)` 清单行必须是普通表、`(iv-b)` 清单行对 runtime 零权限、`(v)` 三清单两两不相交 |
+| 新增顶层 CTE | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2374` | `unwired_manifest(tbl, why, source) AS (VALUES …)`，21 行，每行「表名 + 理由 + `migrations/`/`docs/` 出处」 |
+| 扩 87 号（就地） | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:3765` 起 | 标签仍是 `runtime_surface_parity`：原来的 (i)(ii) 保留，追加 (iii) 全表归类、`(iv-a)` 清单行必须是普通表、`(iv-b)` 清单行对 runtime 零权限、`(v)` 三清单两两不相交 |
 | 新增离线钉子 | `tests/unit/assert-domain-visibility.test.mjs` | 4 条纯文本断言，不连库（见 §6） |
 | 新增证据页 | 本文件 | — |
 
-为什么是「就地扩 87 号」而不是新增标签：`checks` 的静态断言条数是文件尾注释里登记的口径值（改前 128 条），新增一个 `UNION ALL` 分支会让那个数漂移，而就地扩只改判据不改条数。清单本身必须是**顶层 CTE**（该文件所有清单都是顶层 CTE，`domain_manifest` / `external_manifest` / `expected` / `allow_table_dml` 皆然），因此插在 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2396` 的 `checks(label, ok, detail) AS (` 之前。
+为什么是「就地扩 87 号」而不是新增标签：`checks` 的静态断言条数是文件尾注释里登记的口径值（改前 128 条），新增一个 `UNION ALL` 分支会让那个数漂移，而就地扩只改判据不改条数。清单本身必须是**顶层 CTE**（该文件所有清单都是顶层 CTE，`domain_manifest` / `external_manifest` / `expected` / `allow_table_dml` 皆然），因此插在 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2402` 的 `checks(label, ok, detail) AS (` 之前。
 
 三条新谓词的分工：
 
@@ -55,7 +55,7 @@
 
 改前的 53 与 78 的差就是本片的意义：**旧域从来看不见那 21 张表**。`domain_manifest` 里 4 张 forbidden 行（`community_media_grants` / `deletion_requests` / `deletion_handlers` / `third_party_deletions`）对 runtime 零权限，旧域同样看不见 ⇒ 53 = 57 − 4。
 
-## 4 清单 21 行逐行理由（与 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2368` 起逐行对应）
+## 4 清单 21 行逐行理由（与 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2374` 起逐行对应）
 
 21 张表对 `gengyun_api_runtime` 的**静态权限状态**已逐条核对：运行时闭包 = `gengyun_api_runtime` + 5 个组（`gengyun_auth_privacy` / `gengyun_consent_granter` / `gengyun_knowledge_runtime` / `gengyun_preview_reader` / `gengyun_profile_runtime`）；`gengyun_egress_ledger` 与 `gengyun_source_executor` 都**不在**闭包内。全库没有 `GRANT … ON ALL TABLES IN SCHEMA public`。
 

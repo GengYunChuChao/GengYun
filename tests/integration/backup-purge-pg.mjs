@@ -372,10 +372,11 @@ try {
     return region;
   }
   await owner.query(deployRegion('gy-i19-deletion-grant'));
+  await owner.query(deployRegion('gy-i19-deidentify-grant'));
   const copiesRegion = deployRegion('gy-i19-backup-copies-grant');
   assert.ok(copiesRegion.includes('to_regclass'), '备份副本授权区域必须断言迁移已执行（缺表即显式失败）');
   await owner.query(copiesRegion);
-  note('已执行 20-login-roles.sql 的两个区域（注销函数 EXECUTE＋备份副本列级 DML）');
+  note('已执行 20-login-roles.sql 的三个区域（注销受理 EXECUTE＋注销去身份 EXECUTE＋备份副本列级 DML）');
 
   pool = new pg.Pool({ connectionString: `postgresql://${runtimeRole}:${password}@127.0.0.1:${port}/${DB_NAME}`, max: 6 });
   const requestStore = createPostgresDeletionRequestStore({ pool });

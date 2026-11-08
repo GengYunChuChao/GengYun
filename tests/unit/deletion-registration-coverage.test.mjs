@@ -114,8 +114,14 @@ const DECLARED_UNREGISTERED = Object.freeze({
   community_media_grants: '社区素材授权，随社区域清理；阻塞 #19',
   consent_records: '授权/撤回**证据**必须保留（撤回不等于删除）；保留期归 #19',
   privacy_epochs: 'epoch 台账是「撤回可被验证」的前提，必须保留；保留期归 #19',
-  exports: '外发账本按契约保留（撤销只置 failed/CONSENT_WITHDRAWN，不删行）；保留期归 #19',
-  export_writebacks: '回写台账同上，作为「回写 0 行」的证据保留；保留期归 #19',
+  // 下面两条（`exports` / `export_writebacks`）自 `#19` 片1 起**不再是「保留期未定」**：
+  // PII 的清理者已点名到 `public.deidentify_account()`（迁移 0057，受理事务内执行）。
+  // 行仍然保留（F13 取证材料），但「谁在什么时候擦掉可反查到自然人的列」已有唯一答案，
+  // 所以 reason 必须写清清理者与擦除范围 —— 含糊的「归 #19」在片1 落盘后就变成谎话。
+  exports: '外发账本行保留（F13 取证材料），PII 由迁移 0057 的 public.deidentify_account() 在注销受理事务内'
+    + '擦除 provider_request_ref_cipher（recipient_id/object_id 保留为证据链）；不按日历删除 —— #19 片1',
+  export_writebacks: '回写台账行保留（作为「回写 0 行」的证据），本身无 PII 列 ⇒ 不参与擦除；'
+    + '「谁擦了什么」的唯一写路径是迁移 0057 的 public.deidentify_account() —— #19 片1',
   user_training_consents: '训练授权证据须保留，且首版不开启用户训练；归 #19',
   user_backup_copies: '备份副本由 `backup-copies-pg.ts` 的清除端口驱动，不属于模块闭集；7/30 日集成归 #19',
 });

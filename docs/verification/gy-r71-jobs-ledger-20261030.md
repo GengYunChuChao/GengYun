@@ -185,9 +185,9 @@ ON CONFLICT (id) DO UPDATE
 
 | 文件 | 改动 |
 |---|---|
-| `deploy/postgres-cvm/sql/20-login-roles.sql:980` | `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at)` —— 冲突目标 `id` + `DO UPDATE … WHERE` 读的 `state` + **`DO UPDATE` 的五个 SET 列**（本片修正，见下方 ⚠） |
-| `deploy/postgres-cvm/sql/20-login-roles.sql:981` | `GRANT INSERT (…15 列…)` |
-| `deploy/postgres-cvm/sql/20-login-roles.sql:984` | `GRANT UPDATE (state,revision,error_code,result_ref,updated_at)` |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:1004` | `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at)` —— 冲突目标 `id` + `DO UPDATE … WHERE` 读的 `state` + **`DO UPDATE` 的五个 SET 列**（本片修正，见下方 ⚠） |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:1005` | `GRANT INSERT (…15 列…)` |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:1008` | `GRANT UPDATE (state,revision,error_code,result_ref,updated_at)` |
 | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | `domain_manifest` 加一行 `('jobs','granted',true)`；`expected` 加一行逐列复述（58 号断言逐列核对）；`\echo` 同步 |
 | `tests/integration/egress-ledger-pg.mjs` | 抽 `deploy/**` 的 `gy-r71-jobs-ledger-grant` 区域原样执行（只替换受权角色），并逐列核对 15/5/6 ⇒ 两条供给路径同源 |
 | `deploy/postgres-cvm/sql/20-login-roles.sql`（`#region gy-r71-jobs-ledger-purge-grant`，**补片新增**） | `GRANT DELETE ON public.jobs` —— 注销清理面，单独成区（上面那个区被 `egress-ledger-pg.mjs` 抽取并断言「只含列级授权」） |

@@ -45,12 +45,12 @@
 
 | 域 | 入口（**既有**授权） | 读哪张表 / 删哪些行 | 幂等口径 |
 | --- | --- | --- | --- |
-| `recognitions` | `SELECT public.purge_owner_recognitions($1::uuid)`（`services/api/db/migrations/0034_r34_owner_content_purge.sql:67-107`，`SECURITY DEFINER`；EXECUTE 授权在 `deploy/postgres-cvm/sql/20-login-roles.sql:305-317`） | 所有权锚在 `recognition_records`：按该主体删 `recognition_selections` → `recognition_jobs` → `recognition_records` → `recognition_idempotency` | 函数自己返回 `{records, idempotency, …}` ⇒ `removed = records`、`idempotency` 同名透传；第二遍 `records = 0` ⇒ 驱动按请求级 `already_purged` 收敛 |
-| `speech` | `SELECT public.purge_owner_speech($1::uuid)`（同迁移 `services/api/db/migrations/0034_r34_owner_content_purge.sql:114-153`；EXECUTE 同上 `deploy/postgres-cvm/sql/20-login-roles.sql:305-317`） | `speech_jobs` → `transcriptions` → `speech_idempotency`（该主体） | 同上 |
-| `ocr` | 表级 `DELETE`（`deploy/postgres-cvm/sql/20-login-roles.sql:941`、`:953-954` 三张表），由 `services/api/src/ocr/store-pg.ts:531` `purgeOwnerRows` 执行 | `ocr_records` / `ocr_jobs` / `ocr_idempotency`（该主体） | 回 `{records, idempotency}`（另带逐表 `tableCounts`）；第二遍 0 行 |
+| `recognitions` | `SELECT public.purge_owner_recognitions($1::uuid)`（`services/api/db/migrations/0034_r34_owner_content_purge.sql:67-107`，`SECURITY DEFINER`；EXECUTE 授权在 `deploy/postgres-cvm/sql/20-login-roles.sql:329-341`） | 所有权锚在 `recognition_records`：按该主体删 `recognition_selections` → `recognition_jobs` → `recognition_records` → `recognition_idempotency` | 函数自己返回 `{records, idempotency, …}` ⇒ `removed = records`、`idempotency` 同名透传；第二遍 `records = 0` ⇒ 驱动按请求级 `already_purged` 收敛 |
+| `speech` | `SELECT public.purge_owner_speech($1::uuid)`（同迁移 `services/api/db/migrations/0034_r34_owner_content_purge.sql:114-153`；EXECUTE 同上 `deploy/postgres-cvm/sql/20-login-roles.sql:329-341`） | `speech_jobs` → `transcriptions` → `speech_idempotency`（该主体） | 同上 |
+| `ocr` | 表级 `DELETE`（`deploy/postgres-cvm/sql/20-login-roles.sql:965`、`:977-978` 三张表），由 `services/api/src/ocr/store-pg.ts:531` `purgeOwnerRows` 执行 | `ocr_records` / `ocr_jobs` / `ocr_idempotency`（该主体） | 回 `{records, idempotency}`（另带逐表 `tableCounts`）；第二遍 0 行 |
 | `jobs` | `JOB_LEDGER_PURGE_SQL`（`services/api/src/jobs/ledger.ts:387` `DELETE FROM public.jobs WHERE owner_id = $1::uuid`）经 `purgeJobLedgerByOwner`（同文件 `:396-411`，拿不到 `rowCount`/`rows.length` 就抛，⛔不把「不知道」报成 0） | `public.jobs` 里该主体的**全部**作业行（不按 `kind` 分刀：收敛目标就是「该主体零行」） | `idempotency: 0`（台账无幂等表）；幂等靠第二遍 `rowCount = 0` 收敛，与四域 `deleteAllByOwner` 同一范式 |
 
-四个入口的授权都是**出厂就有**的：识别/语音是迁移 0034 的 `SECURITY DEFINER` 函数 + `20-login-roles.sql:305-317` 的 `GRANT EXECUTE`；OCR 三表在 `:941`/`:953-954` 有表级 `DELETE`；`public.jobs` 在 `:997`（区 `gy-r71-jobs-ledger-purge-grant`）有表级 `DELETE`。**本片没有动 `deploy/**` 一个字符**（`git diff --numstat` 只含 `.mjs` / `.ts` / `.md`）。
+四个入口的授权都是**出厂就有**的：识别/语音是迁移 0034 的 `SECURITY DEFINER` 函数 + `20-login-roles.sql:329-341` 的 `GRANT EXECUTE`；OCR 三表在 `:965`/`:977-978` 有表级 `DELETE`；`public.jobs` 在 `:1021`（区 `gy-r71-jobs-ledger-purge-grant`）有表级 `DELETE`。**本片没有动 `deploy/**` 一个字符**（`git diff --numstat` 只含 `.mjs` / `.ts` / `.md`）。
 
 ### 2.3 CLI：选择集 + 报告，不再自带实现
 
@@ -104,7 +104,7 @@
 
 本片追加组 `[10]`（4 组 PASS），读数逐字：
 
-- `PASS 20: 端口可用性按角色如实：属主角色 8/8 可清（skipped=[]）；运行时角色 7/8（跳过 jobs:缺少列级 SELECT(owner_id)：DELETE … WHERE owner_id = $1 需要读该列，而出厂列清单（20-login-roles.sql:980）未含它 ⇒ 该域在真库上必然 42501）`
+- `PASS 20: 端口可用性按角色如实：属主角色 8/8 可清（skipped=[]）；运行时角色 7/8（跳过 jobs:缺少列级 SELECT(owner_id)：DELETE … WHERE owner_id = $1 需要读该列，而出厂列清单（20-login-roles.sql:1004）未含它 ⇒ 该域在真库上必然 42501）`
 - `PASS 21: CLI 闭集：--dry-run 打印 8 域（favorites、history、messages、conversations、recognitions、speech、ocr、jobs）、不含 community、可清 8/8`
 - `PASS 22: 扩集后自愈：recognitions 到期前 blocked/STORE_REJECTED（entries=0）⇒ 一轮清掉 1 行 + 落证据 ⇒ completed，8 域 overall=completed`
 - `PASS 23: 幂等不变：第二轮 rowsPurged=0、already_purged=4、exit=0、证据 8 条不变`
@@ -192,9 +192,9 @@
 
 - 实测读数（真库臂临时集群，运行时角色 `gengyun_api_runtime`）：`has_table_privilege(current_user,'public.jobs','DELETE') = true`、ACL 为 `{postgres=arwdDxtm/postgres,gengyun_api_runtime=d/postgres}`，但 `DELETE FROM public.jobs WHERE owner_id = $1::uuid` ⇒ **`42501 permission denied for table jobs`**（`aclcheck_error`）；而 `DELETE FROM public.jobs WHERE false` / `SELECT 1 FROM public.jobs LIMIT 1` 都成功。
 - 根因（已实证）：`has_column_privilege(...,'public.jobs','owner_id','SELECT') = false`；临时 `GRANT SELECT (owner_id) ON public.jobs TO gengyun_api_runtime` 后同一条 `DELETE` 立刻成功，`REVOKE` 后复现 ⇒ `DELETE … WHERE owner_id` 需要读该列，而出厂列清单里没有它。
-- 出厂授权原文：`deploy/postgres-cvm/sql/20-login-roles.sql:980` `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at) ON public.jobs …`（六列，**无 `owner_id`**）；`:997` 表级 `DELETE` 有（区 `gy-r71-jobs-ledger-purge-grant`）；`deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1337-1342` 把这份六列清单钉成**期望值**。
+- 出厂授权原文：`deploy/postgres-cvm/sql/20-login-roles.sql:1004` `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at) ON public.jobs …`（六列，**无 `owner_id`**）；`:1021` 表级 `DELETE` 有（区 `gy-r71-jobs-ledger-purge-grant`）；`deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1337-1342` 把这份六列清单钉成**期望值**。
 - 影响面：①**受理路径**（运行时角色）的 `jobs` 处理器必然失败 ⇒ 该域受理时就记 `blocked`（本片之前永远不自愈，本片之后由时钟补）；②**用运行时角色跑 CLI** 的部署里 `jobs` 一域装不上（端口会诚实跳过并点名）；③生产 cron 用**属主/运维角色**（`docs/verification/gy-r28-w6-deletion-clock-20261021.md:117`：`deletion_requests` 对运行时角色零表级零列级权限 ⇒ 到期枚举必须走属主）⇒ 属主下 8/8 可清，不受影响（`PASS 20` 两种角色都测了）。
-- 为什么本片不修：把 `owner_id` 加进列级 `SELECT` 是**授权面扩大**（同时要改 `90-assert` 的期望值与 `20-login-roles.sql:980`），本片红线是零新 GRANT。修法就两处：`:980` 的列清单加 `owner_id`、`90-assert:1338` 的期望数组加 `owner_id`；加完把真库臂 `PASS 20` 的运行时断言从 `['jobs']` 翻成 `[]` 即可（注释里已写明这一点）。
+- 为什么本片不修：把 `owner_id` 加进列级 `SELECT` 是**授权面扩大**（同时要改 `90-assert` 的期望值与 `20-login-roles.sql:1004`），本片红线是零新 GRANT。修法就两处：`:1004` 的列清单加 `owner_id`、`90-assert:1338` 的期望数组加 `owner_id`；加完把真库臂 `PASS 20` 的运行时断言从 `['jobs']` 翻成 `[]` 即可（注释里已写明这一点）。
 
 ### 6.2 其它边界
 

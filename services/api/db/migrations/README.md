@@ -50,7 +50,29 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 **保留不动**；更早的 53/52 与 52/51 同样保留。本段实测口径：直接数目录得正向 55 条、`rollback/` 54 条、
 最大号 `0056`、缺号只有 `0037`；`discoverMigrations()` 同样报 55 个文件、末项 `0056_post_media_attachments.sql`。）
 
+（2026-11-08 · GY-I19 `#19` 片1（注销去身份，`0057`）落盘后复测：
+`0001..0057`，缺号仍只有 `0037` ⇒ 目录现为 **56 个正向 `.sql`** ＋ `rollback/` **55 个**（`0001` 与 `0037` 无 down）；
+`count + 保留数 === max` ⇒ **56 + 1 === 57**。上一段那组 55/54 与 `55 + 1 === 56` 是 2026-11-07 GY-R83
+合流后的实测快照，**保留不动**；更早的 54/53、53/52 同样保留。本段实测口径：直接数目录得正向 56 条、
+`rollback/` 55 条、最大号 `0057`、缺号只有 `0037`；`discoverMigrations()` 同样报 56 个文件、末项
+`0057_deidentify_account_on_deletion.sql`。）
+
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0057_deidentify_account_on_deletion.sql`（GY-I19 `#19` 片1 · **注销去身份**：在**注销受理的同一事务**里把
+  `public.users` 的四列 PII（`nickname` / `avatar_media_id` / `wechat_subject_cipher` / `wechat_subject_lookup`）
+  与 `public.exports.provider_request_ref_cipher` 擦成 NULL）。
+  新增 `public.deidentify_account(p_user_id uuid) RETURNS jsonb`，`LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = pg_catalog SET TimeZone = 'UTC'`，属主＝迁移管理员（运行时角色对 `users` 的
+  `state` / `auth_epoch` / `revision` / 四列 PII **没有任何列权限**，只能经此函数擦）。
+  函数对 `state` / `auth_epoch` / `revision` **一个字都不写**（202 里的 `accountRevision` 不许被去身份顶掉），
+  只把 `deletion_generation` +1 作为「已擦除」的幂等读数；守卫：`p_user_id IS NULL` ⇒ `G0001`、
+  查无此用户 ⇒ `G0002`、`state <> 'deletion_pending'` ⇒ `G0015`（active 用户一律拒，fail-closed）。
+  只清 `exports.provider_request_ref_cipher` 一列：`recipient_id`（NOT NULL 证据链）与
+  `object_key`／`object_id` 的 `0015` 双向 XOR 约束、以及无 PII 列的 `export_writebacks` **一律不动**。
+  迁移内**零 GRANT**，只 `REVOKE ALL ON FUNCTION public.deidentify_account(uuid) FROM PUBLIC;`；
+  EXECUTE 由 `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `#region gy-i19-deidentify-grant` 单独授予
+  `gengyun_api_runtime`，并由 `90-assert-least-privilege.sql` 的 `deidentify_function_*` 五条断言钉死。
+  配对回滚 `rollback/0057_deidentify_account_on_deletion.down.sql`（只 `DROP FUNCTION`，已擦除的 PII 不恢复）。
 - `0056_post_media_attachments.sql`（GY-R83 #1030 · **帖子级媒体挂载表**：把「real 模式每帖 ≤3 张图」从
   owner 生命周期累计的计数近似改成**结构约束**）。
   依赖 `0022_community_persistence.sql` 的 `public.community_posts`；**只建一张新表**，不改既有列/CHECK、

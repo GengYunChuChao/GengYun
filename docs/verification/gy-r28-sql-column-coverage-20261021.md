@@ -40,7 +40,7 @@ gengyun_api_runtime, gengyun_auth_privacy, gengyun_consent_granter,
 gengyun_knowledge_runtime, gengyun_preview_reader, gengyun_profile_runtime
 ```
 
-`20-login-roles.sql:220-224` 只有这 5 条成员关系；`gengyun_egress_ledger` / `gengyun_source_operator` / `gengyun_staging_importer` **不在**闭包内（与文件里 :559 的 `\echo` 自述一致），因此它们授的表不进核对面。
+`20-login-roles.sql:220-224` 只有这 5 条成员关系；`gengyun_egress_ledger` / `gengyun_source_operator` / `gengyun_staging_importer` **不在**闭包内（与文件里 :583 的 `\echo` 自述一致），因此它们授的表不进核对面。
 
 解析器支持的形态（都实测存在，缺一条就会假红或漏判）：
 
@@ -81,7 +81,7 @@ gengyun_knowledge_runtime, gengyun_preview_reader, gengyun_profile_runtime
 - **列清单常量代入**：`const JOB_COLUMNS = 'id, revision, kind,' + ' status';` 这类跨行 `+` 拼接会被还原成完整列清单，再代入 `${JOB_COLUMNS}`。共 16 个常量（`messages:62`、`community:98/101/102/104`、`conversations:87/88/91`、`favorites:68/69`、`history:63/66`、`ocr:162/164`、`recognitions:177/179/181`、`speech:149/151`）。
 - 表名**限定与不限定都吃**：`INSERT INTO community_posts` 与 `INSERT INTO public.ocr_jobs` 等价处理（未限定默认 `public`）。
 - `INSERT … (a,b,c) VALUES/SELECT`、`UPDATE … SET a = …`、`SELECT a, b FROM …`、`DELETE FROM …`。
-- `RETURNING`（54 处）与 `ON CONFLICT (a,b) DO UPDATE SET …`（17 处）都计入。`ON CONFLICT` 的冲突目标列按 **SELECT** 计入 —— 依据是 `20-login-roles.sql:714-716` 的既有注释「`ON CONFLICT` 的 `(scope,key_hash)` 推断、`EXCLUDED` / `WHERE` / `RETURNING` 都要 SELECT 权」。
+- `RETURNING`（54 处）与 `ON CONFLICT (a,b) DO UPDATE SET …`（17 处）都计入。`ON CONFLICT` 的冲突目标列按 **SELECT** 计入 —— 依据是 `20-login-roles.sql:738-740` 的既有注释「`ON CONFLICT` 的 `(scope,key_hash)` 推断、`EXCLUDED` / `WHERE` / `RETURNING` 都要 SELECT 权」。
 - 特殊表达式：`(extract(epoch FROM expires_at) * 1000)::bigint AS expires_at_ms`（`messages:231`、`community:708`）—— `FROM` 在函数括号内，先剥 `extract(field FROM expr)` 再切子句，否则会把 `expires_at` 之后整段当表名。`count(*)::bigint AS count`、`answer_id = COALESCE($3::uuid, answer_id)` 同法处理。
 - `SELECT *`：实测 **0 处**，单独计数，出现也不展开（见 §8）。
 

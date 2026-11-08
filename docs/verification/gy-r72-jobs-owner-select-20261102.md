@@ -10,7 +10,7 @@
 
 1. **缺陷**：注销清理的删除语句是 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`
    （`services/api/src/jobs/ledger.ts:387`）。PostgreSQL 对 `DELETE` 的 **WHERE 里出现的列**另要 SELECT 权；
-   表级 `DELETE` 早已授予（`deploy/postgres-cvm/sql/20-login-roles.sql:997` 的 `gy-r71-jobs-ledger-purge-grant`），
+   表级 `DELETE` 早已授予（`deploy/postgres-cvm/sql/20-login-roles.sql:1021` 的 `gy-r71-jobs-ledger-purge-grant`），
    但列级 SELECT 的出厂清单只给了 upsert 需要的 6 列、**没有 `owner_id`**
    ⇒ 用运行时角色跑这条清理必然 `42501 permission denied for table jobs`。
 2. **修法**：那份列清单 6 → 7 列只加 `owner_id`（仍是**列级**，不升表级 SELECT），
@@ -31,8 +31,8 @@
 
 | 面 | 语句 / 授权 | 文件 |
 | --- | --- | --- |
-| 删除面（表级） | `GRANT DELETE ON public.jobs TO gengyun_api_runtime;` | `deploy/postgres-cvm/sql/20-login-roles.sql:997` |
-| 谓词列（列级 SELECT） | `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at) ON public.jobs …`（修前 6 列） | `deploy/postgres-cvm/sql/20-login-roles.sql:980` |
+| 删除面（表级） | `GRANT DELETE ON public.jobs TO gengyun_api_runtime;` | `deploy/postgres-cvm/sql/20-login-roles.sql:1021` |
+| 谓词列（列级 SELECT） | `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at) ON public.jobs …`（修前 6 列） | `deploy/postgres-cvm/sql/20-login-roles.sql:1004` |
 | 用它的语句 | `JOB_LEDGER_PURGE_SQL = 'DELETE FROM public.jobs WHERE owner_id = $1::uuid'` | `services/api/src/jobs/ledger.ts:387` |
 
 PG 的权限判定不是「有 DELETE 就能删」：`DELETE … WHERE <col>` 要先按 `<col>` 过滤行，
@@ -129,7 +129,7 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
 
 | 控制 | 改动 | 读数 | sha256（改前 / 还原后） |
 | --- | --- | --- | --- |
-| NC1 | 把 `deploy/postgres-cvm/sql/20-login-roles.sql:980` 的 `,owner_id` 删掉 | `tests 4 / pass 3 / fail 1`，红的只有 **T1** | `52AE32F77A9415E4B526176967A0EC307D5FCDDAE6D484977C78343547B7B698` / 同值 |
+| NC1 | 把 `deploy/postgres-cvm/sql/20-login-roles.sql:1004` 的 `,owner_id` 删掉 | `tests 4 / pass 3 / fail 1`，红的只有 **T1** | `52AE32F77A9415E4B526176967A0EC307D5FCDDAE6D484977C78343547B7B698` / 同值 |
 | NC2 | 只把 `90-assert:1356` 的 `'owner_id'` 删掉（`20-login-roles.sql` 保持修好态） | `tests 4 / pass 3 / fail 1`，红的只有 **T2** | `4801C875AA92F89C4387C078D2492C0D01A943AC36C74F83B79175B4A6F5FE95` / 同值 |
 | NC3 | 把 `JOB_LEDGER_PURGE_SQL` 改成 `DELETE FROM public.jobs` | `tests 4 / pass 3 / fail 1`，红的只有 **T4** | `B6B8C287C9392F2ABC5CDD98653AB4E061C2BF77FAEDD88B04A1143210820F44` / 同值 |
 
@@ -160,7 +160,7 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
 
 ### 5.3 与派单不符的仓库事实：`sql-column-coverage` 的读数**没有** +1
 
-派单预期「该文件的读数按 main 现值 +1」。实测**不改**：只把 `deploy/postgres-cvm/sql/20-login-roles.sql:980` 的 SELECT 列清单加上 `owner_id` 后，
+派单预期「该文件的读数按 main 现值 +1」。实测**不改**：只把 `deploy/postgres-cvm/sql/20-login-roles.sql:1004` 的 SELECT 列清单加上 `owner_id` 后，
 `tests/unit/sql-column-coverage.test.mjs` 的读数与改前**逐字相同**——
 基线面 25 表 / 列权限要求 1272 / 已覆盖 1272 / 缺 0；扩展面 52 表 / 2079 要求 / 1978 已覆盖 / 缺 0 / 豁免 63；
 覆盖来源 列级 1224 + 表级 48（扩展：1851 + 127）。
@@ -177,7 +177,7 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
   脚本自建角色），两个真库臂已在这套隔离环境里真跑通过；但**部署面**（真实迁移集、真实角色链与凭据、
   CI 上两个臂的串联时序）仍由 CI 的 `consent-grant-postgres-17.11` 判定。
 - 若将来收紧这条授权（例如把 `owner_id` 从列清单里拿掉），**三处必须同改**：
-  `20-login-roles.sql:980` 的列清单、`90-assert:1356` 的期望清单、`tests/integration/egress-ledger-pg.mjs:402` 的读数数组；
+  `20-login-roles.sql:1004` 的列清单、`90-assert:1356` 的期望清单、`tests/integration/egress-ledger-pg.mjs:402` 的读数数组；
   漏一处就会被 T1/T2 或真库臂抓住。
 - `owner_id` 进列级 SELECT 后，`public.jobs` 的**读面依旧为零**（T3 逐文件守）；
   `/admin/jobs` 仍只读三张域内表，R34 裁定 3 不变。

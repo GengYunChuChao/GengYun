@@ -14,10 +14,14 @@
  *
  * ## 事务边界
  * 函数内部三处写入由 PostgreSQL 保证原子；本层再显式用 `BEGIN` … `COMMIT` 包住
- * **唯一一条** `SELECT`，并把 `lock_timeout` 固定为 4s —— 与仓内既有事务原语
+ * **同一条连接上的两条** `SELECT`（① `public.request_account_deletion(...)` 受理、
+ * ② `public.deidentify_account(...)` 注销去身份，`#19` 片1 / 迁移 0057），并把 `lock_timeout`
+ * 固定为 4s —— 与仓内既有事务原语
  * `services/api/src/privacy/ledger-pg.ts` 的 `withTransaction()` 同口径，
  * 避免并发双受理时无限等待。任一失败 ⇒ `ROLLBACK` ⇒ **零写入**（不出现「半行」状态，
- * 也不会留下「epoch 已递增但请求没落库」这种把用户锁在门外的半成品）。
+ * 也不会留下「epoch 已递增但请求没落库」这种把用户锁在门外的半成品；同理不会出现
+ * 「受理已提交但身份没擦、外发引用还在」的假去身份）。
+ * ⛔ 去身份**必须**复用受理那条连接：受理函数已 `FOR UPDATE` 锁住该 `users` 行，另开连接会 55P03 自死锁。
  *
  * ## **不在**本层（也不在同一事务内）
  * 回执 bearer 的明文签发、`Idempotency-Key` 台账写入（沿用既有 24h 台账语义，
@@ -30,6 +34,8 @@
  *   - `G0002` ⇒ `NOT_FOUND`(404)          主体不存在
  *   - `G0003` ⇒ `REVISION_CONFLICT`(409)  该账号注销**已在受理中**（并发双受理的确定性失败面）
  *   - `G0004` ⇒ `ACCOUNT_INACTIVE`(403)   账号状态非 active（语义与 `auth/middleware.ts` 的状态门同码同义）
+ *   - `G0015` ⇒ `PROVIDER_UNAVAILABLE`(503, **retryable:false**) 去身份的状态门没通过（账号不在
+ *     deletion_pending）；只在受理事务内合法，出现即说明事务/接线缺陷，重试不会改善
  *   - `23505` ⇒ `REVISION_CONFLICT`(409)  回执摘要撞唯一索引（同一回执重复插入）
  *   - `42501`/`42883` ⇒ `PROVIDER_UNAVAILABLE`(503, **retryable:false**) **权限缺失/函数缺失绝不降级**：
  *     不换路径、不重试、不静默放行（需运维补权限或跑迁移，不是时间能解决的）
@@ -60,6 +66,17 @@ const CALL_FUNCTION_SQL = `SELECT public.request_account_deletion(
 
 /** 受理事务的锁等待上限（与 `privacy/ledger-pg.ts` 的 4s 同口径；常量不拼接用户输入）。 */
 const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '4s'";
+
+/**
+ * 受理事务的第 3 步（`#19` 片1 / 迁移 0057）：注销去身份 —— 擦除 `users` 的四列 PII
+ * （nickname / avatar_media_id / wechat_subject_cipher / wechat_subject_lookup）与
+ * 外发台账的第三方引用（`exports.provider_request_ref_cipher`）。
+ *
+ * ⛔ 必须复用受理用的**同一个** `client`：受理函数已 `SELECT ... FOR UPDATE` 锁住该 `users` 行，
+ * 另开连接写同一行会在 `lock_timeout='4s'` 之后 55P03 自死锁（同一事务内 `FOR UPDATE` 可重入）。
+ * 失败语义 fail-closed：任何异常都走下面的 `catch` ⇒ `ROLLBACK` ⇒ 零写入、**不**签发 202。
+ */
+const DEIDENTIFY_SQL = 'SELECT public.deidentify_account($1::uuid) AS result';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
@@ -104,6 +121,14 @@ export interface DeletionRequestRecord {
   authEpoch: number;
   accountRevision: number;
   revokedSessions: number;
+  /**
+   * `#19` 片1 的注销去身份**实测**读数（条数来自 `GET DIAGNOSTICS ROW_COUNT`，
+   * `generation` 来自 `UPDATE ... RETURNING`／回落的擦除前值）。
+   *
+   * ⛔ **不进 HTTP 体**：`packages/contracts/openapi.json:14739` 的 `DeletionReceipt` 是
+   * `additionalProperties: false`，202 的响应形状一字不动；这里只供服务端记录/证据核对。
+   */
+  deidentified?: { identity: number; exports: number; generation: number };
 }
 
 /** 注销请求的持久化端口（只暴露「受理」这一个动作）。 */
@@ -169,6 +194,22 @@ function toRecord(raw: unknown): DeletionRequestRecord {
   };
 }
 
+/**
+ * 去身份返回的 JSON 也必须是预期形状；形状不符同样**失败关闭**（在 `COMMIT` 之前解析，
+ * 因此会整笔回滚、不签发 202，而不是「受理成功但去身份读数读不懂」）。
+ */
+function toDeidentified(raw: unknown): { identity: number; exports: number; generation: number } {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '注销去身份返回不是对象', { retryable: false });
+  }
+  const row = raw as Record<string, unknown>;
+  return {
+    identity: asInteger(row['identity'], 'identity'),
+    exports: asInteger(row['exports'], 'exports'),
+    generation: asInteger(row['generation'], 'generation'),
+  };
+}
+
 /** PostgreSQL 错误 → 既有契约错误码（不透出驱动原文；权限缺失按「不可用」如实失败）。导出供 `third-party-deletion-pg.ts` 复用，码表只此一份。 */
 export function mapDeletionError(error: unknown): never {
   if (error instanceof ApiError) throw error;
@@ -178,6 +219,10 @@ export function mapDeletionError(error: unknown): never {
   if (sqlState === 'G0002') throw new ApiError('NOT_FOUND', '账号不存在');
   if (sqlState === 'G0003') throw new ApiError('REVISION_CONFLICT', '该账号的注销请求已在受理中');
   if (sqlState === 'G0004') throw new ApiError('ACCOUNT_INACTIVE', '账号不可用');
+  // G0015 = 去身份函数的状态门没通过（账号不在 deletion_pending）。它只在「受理事务里、
+  // 受理函数刚把账号改成 deletion_pending 之后」才合法 ⇒ 走到这里说明事务/接线出了缺陷，
+  // 重试不会改善（迁移或部署版本不匹配）⇒ 不可重试；整笔已 ROLLBACK，零写入。
+  if (sqlState === 'G0015') throw new ApiError('PROVIDER_UNAVAILABLE', '注销去身份暂不可用', { retryable: false });
   if (sqlState === '23505') throw new ApiError('REVISION_CONFLICT', '该注销请求回执摘要已存在');
   if (sqlState === '57014' || sqlState === '55P03') {
     throw new ApiError('PROVIDER_TIMEOUT', '注销受理事务超时', { retryable: true });
@@ -228,6 +273,7 @@ export function createPostgresDeletionRequestStore({ pool }: { pool: PgPool }): 
 
       let client: PoolClient | undefined;
       let raw: unknown;
+      let deidentified: { identity: number; exports: number; generation: number } | undefined;
       try {
         client = await pool.connect();
         await client.query('BEGIN');
@@ -259,6 +305,11 @@ export function createPostgresDeletionRequestStore({ pool }: { pool: PgPool }): 
             sources: input.sources,
           });
         }
+        // 受理事务的第 3 步（`#19` 片1）：注销去身份。位置固定在备份清单写入之后、`COMMIT` 之前，
+        // 且复用**同一个 client**（另开连接会 55P03 自死锁，见 `DEIDENTIFY_SQL` 的注释）。
+        // 读数在 `COMMIT` 之前解析：形状不符 ⇒ 整笔回滚 ⇒ 零写入、不签发 202（fail-closed）。
+        const deidentifyResult = await client.query(DEIDENTIFY_SQL, [input.userId]);
+        deidentified = toDeidentified(deidentifyResult.rows[0]?.['result']);
         await client.query('COMMIT');
       } catch (error) {
         if (client !== undefined) await client.query('ROLLBACK').catch(() => {});
@@ -266,8 +317,9 @@ export function createPostgresDeletionRequestStore({ pool }: { pool: PgPool }): 
       } finally {
         client?.release();
       }
-      // 解析放在事务之外：返回形状不符 ⇒ 失败关闭，但不影响已提交的事务（不会误发 ROLLBACK 警告）。
-      return toRecord(raw);
+      // 到这一步事务已提交：`deidentified` 在 `COMMIT` 之前就解析过了（形状不符已在上面整笔回滚），
+      // 这里只做合流；⛔ 不把这两个读数塞进 HTTP 体（`DeletionReceipt` 是 `additionalProperties:false`）。
+      return { ...toRecord(raw), deidentified };
     },
   };
 }

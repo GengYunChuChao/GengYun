@@ -30,8 +30,8 @@ const REPO_ROOT = resolve(HERE, '..', '..');
 const STRUCTURE_TEST = join(REPO_ROOT, 'tests', 'unit', 'ci-integration-chain-structure.test.mjs');
 const WORKFLOW_ROOT = join(REPO_ROOT, '.github', 'workflows');
 
-/** 白名单条目数：与 `ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 实读条数是同一个数（58 条：GY-R71 加了 jobs-ledger-pg.mjs；GY-R83 合流后 0055 侧加了 recognitions-provider-call-ledger-pg.mjs、0056 侧加了 post-media-attachments-pg.mjs，两条并存；GY-R87 加了 post-media-attach-http-pg.mjs；GY-R88 把它接进 job real-pg-http-17.11，条目数不变、只把 reason 前缀改成「已接线（workflow）」）。 */
-const ENTRY_COUNT = 58;
+/** 白名单条目数：与 `ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 实读条数是同一个数（59 条：GY-R71 加了 jobs-ledger-pg.mjs；GY-R83 合流后 0055 侧加了 recognitions-provider-call-ledger-pg.mjs、0056 侧加了 post-media-attachments-pg.mjs，两条并存；GY-R87 加了 post-media-attach-http-pg.mjs；GY-R88 把它接进 job real-pg-http-17.11，条目数不变、只把 reason 前缀改成「已接线（workflow）」；2026-11-08 `#19` 片1（迁移 0057）加了 deidentify-account-pg.mjs，前缀是「未接线（真缺口）」——该臂自起一次性集群、没接进无库的 `test:integration:http` 链，`.github/**` 的 workflow job 接线不在本片范围）。 */
+const ENTRY_COUNT = 59;
 
 const WIRED = '已接线（workflow）：';
 const NON_GATE = '非门禁入口：';
