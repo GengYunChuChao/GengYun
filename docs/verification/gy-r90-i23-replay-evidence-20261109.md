@@ -13,7 +13,7 @@
 1. **不声称 `#23` 已完成、不声称可关 `#23`**。`#23` 的提交证据里有真机项（`docs/initial-issues.md:392`：「Android／iOS真机音频及交互记录」），本页**一条真机读数都没有**（§4）。
 2. **不声称单测绿 = 真机通过**。本页全部判据跑在**注入的假端口**上：无 `wx`、无真实音频、无时钟（§3）；假端口能把「句柄计数」钉住，钉不住「耳朵听到几声」。
 3. **不声称重播在所有机型／所有音频格式下等价**。假端口没有解码、时长、采样率、平台中断；真机侧的差异（扬声器／蓝牙／系统静音／来电打断）本页 0 覆盖。
-4. **不声称 `#1112`／`#1118` 的 PR 正文与代码逐字一致**。本页只读 git 对象与工作树文本；PR 正文里若写 `play(plan.slice(index))`，那是 no-op（`stop()` 已把 `index` 归零），测试文件在 `tests/unit/miniprogram-voice-hardening.test.mjs:929-931` 的注释里已点明——但本页不复核 PR 正文措辞。
+4. **不声称 `#1112`／`#1118` 的 PR 正文与代码逐字一致**。本页只读 git 对象与工作树文本；PR 正文里若写 `play(plan.slice(index))`，那是 no-op——`stop()` 走 `teardown(false)`，`teardown` 在 `miniprogram/utils/audio-playback.js:358` 已把 `index` 归零，`play()` 在 `miniprogram/utils/audio-playback.js:343` 又归零一次——但本页不复核 PR 正文措辞。
 5. **不声称变异读数穷尽**。本页自己只做两处变异（M1 删先停、M2 接着播），另引用前一轮三处（A/B/C，见 §2 末表）；未做的变异一律写「未取」。
 6. **不代监工判定**。本页的「红／绿」只描述**断言在某个变异下会不会失败**，不等于「验收条款成立」。
 
@@ -185,6 +185,7 @@ bef0ba63 test(miniprogram): 修正 #1112 断言判别力 (#1118)
 - 闸门 2 必须**排在 commit 之后**：纯新增 docs 提交在提交前会让「base 与 HEAD 同一提交」这一条自证判红，提交后应显式 SKIP。
 - 闸门 2／6 的逐字输出里都带**由本页内容派生的 SHA**（2 是 `base..HEAD` 提交对，6 是树对象）。把它们抄进本页会改变本页内容、从而改变它们自己，故本表只登记**不变部分**（2 的 SKIP 判据文本 + 用例计数、6 的「无冲突行」形态）；带 SHA 的原文留在 PR 正文与对话记录里，可按上列命令复跑复现。
 - 本页是纯新增文档：`doc-anchor-relocation-identity` 的「旧锚点搬迁」面不适用；锚点闸门真正会判红的只有 BROKEN／OUT_OF_RANGE／SUSPECT（区间无实质行）／BARE_ORPHAN（裸 `:NNN`）／ANCHOR-COUNT 下降，本页**零裸锚点**、每条锚点都落在实质行上。
+- 影子闸门（**不在上面六道之内**，且本页基线树上还没有这个工具）：`origin/main` 在本页写作之后前进到 `7835bfe5ef5ff4a72ecaefacd5a49091214466e8`（`#1129` 引入 `tools/verify-verification-comment-anchors.mjs`，专判 `docs/verification/**` 里锚在**注释行**上的引用）。把本页放进那棵树实跑该工具：`VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，`EXIT=0`。本页先前有 1 条锚在注释区间上（测试文件 `tests/unit/miniprogram-voice-hardening.test.mjs` 的解释性注释），已按该闸门要求改锚到 `miniprogram/utils/audio-playback.js:358` 与 `miniprogram/utils/audio-playback.js:343` 两处实质行。
 
 ## 6 边界
 
