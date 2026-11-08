@@ -37,6 +37,7 @@ import { failureCodeOf, summarizeEgressOutcome } from './ledger-pg.ts';
 import type { ExportRecord, PostgresExportLedger } from './ledger-pg.ts';
 import type { InFlightGuard } from '../../../../packages/privacy/in-flight.mjs';
 import type { CheckedContentPort } from '../tts/content.ts';
+import { assertExecutableOrWithdrawn, saveResultOrWithdrawn } from './task-egress.ts';
 
 /** 0014 `exports.object_key` 的形状（与 `ledger-pg.ts` 的 `OBJECT_KEY` 逐字同源，1..80 字符）。 */
 const OBJECT_KEY = /^[a-z0-9](?:[a-z0-9_.:-]{0,78}[a-z0-9])?$/;
@@ -309,7 +310,9 @@ export function createSynthesisEgress(deps: {
       }
       // 任务标识已在入口校验为非空字符串 ⇒ 直接登记（不重复判空）。
       await ledger.linkJob({ exportId: record.id, jobId });
-      await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
+      // 撤回感知（与媒体域同一组共享 helper）：守卫抛 `OBJECT_UNAVAILABLE` 时读一次账本终态，
+      // 只有账本自己写着 `CONSENT_WITHDRAWN` 才翻成 `CONSENT_WITHDRAWN`，其余原样抛。
+      await assertExecutableOrWithdrawn(inFlight, ledger, record);
       const sent = await ledger.markSent(record.id);
       let outcome: unknown;
       try {
@@ -325,7 +328,9 @@ export function createSynthesisEgress(deps: {
         return outcome;
       }
       // 保存前重查 + 结果写入（与校验同事务）；被拒 ⇒ 抛错 ⇒ 域服务不保存结果（零写入）。
-      await inFlight.saveResult({
+      // 同样撤回感知：撤回把它置 failed/CONSENT_WITHDRAWN 之后，这里抛的 `OBJECT_UNAVAILABLE`
+      // 必须翻译成撤回原因，否则 TTS 任务的终态又会被折成 `PROVIDER_OUTCOME_UNKNOWN`。
+      await saveResultOrWithdrawn(inFlight, ledger, {
         exportId: record.id,
         userId: sent.userId,
         objectVersion: sent.objectRevision,

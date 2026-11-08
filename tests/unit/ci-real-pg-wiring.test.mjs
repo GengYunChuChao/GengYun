@@ -234,6 +234,10 @@ const MANAGED_SCRIPTS = Object.freeze([
   // R87（`#29` 的最后一块）：provider 调用记账臂住**独立 job** `real-pg-ledger-17.11`（它要建库 + 建全局角色，
   // 而 `real-pg-17-11` 里多条臂对「集群里有没有同名角色」有顺序依赖），故在清单与顺序表里都排最后。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
+  // R88：jobs 台账臂同样住**独立 job** `real-pg-jobs-ledger-17.11`（它要求一个**全新空库**：脚本先断言
+  // `public` 下 0 个关系，再跑全链迁移），与 `real-pg-17-11` 的「先跑过多条臂的库」互不相容，
+  // 故排在 `real-pg-17-11` 之后、HTTP 臂之前（两者互不相容，各占一个 job）。
+  'tests/integration/jobs-ledger-pg.mjs',
   // R88（`GY-I30` 的尾巴）：媒体挂载的**真 HTTP 端到端**（8 组 PASS：路由层 + 信封层复验 0056 的
   // 「每帖 ≤3 张」）住独立 job `real-pg-http-17.11`；它要一条能建库的超管连接，故与其它臂
   // 无状态依赖，清单与顺序表都排最后。
@@ -295,6 +299,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/media-row-purge-pg.mjs',
   // R87（`#29`）：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
+  // R88：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/jobs-ledger-pg.mjs',
   // R88：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/post-media-attach-http-pg.mjs',
 ]);
@@ -586,7 +592,11 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //     `20-login-roles.sql` 的授权区）⇒ 住独立 job `real-pg-ledger-17.11`，在文件里排最后，
   //     故这里也排最后；它与上面 23 条之间**没有任何状态依赖**（不同集群）。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
-  // 25. `post-media-attach-http-pg`：**不吃 `services.postgres` 之外的任何前置**（job 先
+  // 25. `jobs-ledger-pg`：**要求全新空库**（脚本先断言 `public` 下 0 个关系，再跑全链迁移），
+  //     所以它不能与上面任何一条共享库 ⇒ 住独立 job `real-pg-jobs-ledger-17.11`，在文件里排在
+  //     HTTP 臂之前；它与上面 24 条之间**没有任何状态依赖**（不同集群）。
+  'tests/integration/jobs-ledger-pg.mjs',
+  // 26. `post-media-attach-http-pg`：**不吃 `services.postgres` 之外的任何前置**（job 先
   //     `CREATE DATABASE gengyun_post_media_http_test`，连接串走 `argv[2]`），住独立 job
   //     `real-pg-http-17.11`，在文件里排最后，故这里也排最后；与其它臂之间**没有状态依赖**。
   'tests/integration/post-media-attach-http-pg.mjs',

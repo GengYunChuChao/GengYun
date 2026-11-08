@@ -26,7 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
-import { ApiError } from '../errors.ts';
+import { ApiError, terminalFailureCodeOf } from '../errors.ts';
 import {
   BRANCH_DESCRIPTORS,
   FAILURE_BRANCHES,
@@ -482,7 +482,7 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
       return;
     }
     if (outcome.kind === 'threw') {
-      await commitTerminal(jobId, running, { state: 'failed', errorCode: 'PROVIDER_OUTCOME_UNKNOWN' }, null);
+      await commitTerminal(jobId, running, { state: 'failed', errorCode: terminalFailureCodeOf(outcome.error) }, null);
       return;
     }
     if (outcome.value.kind === 'failed') {
@@ -529,7 +529,7 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
 
   async function runProviderWithDeadline(job: JobRow): Promise<
     | { kind: 'timeout' }
-    | { kind: 'threw' }
+    | { kind: 'threw'; error: unknown }
     | { kind: 'value'; value: Awaited<ReturnType<RecognitionProvider['recognize']>> }
   > {
     const remaining = Math.max(0, job.deadlineAt.getTime() - now().getTime());
@@ -540,7 +540,7 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     const call = provider
       .recognize({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision })
       .then((value) => ({ kind: 'value' as const, value }))
-      .catch(() => ({ kind: 'threw' as const }));
+      .catch((error: unknown) => ({ kind: 'threw' as const, error }));
     try {
       return await Promise.race([call, timeout]);
     } finally {

@@ -144,9 +144,9 @@
   - []
 ```
 
-根因是判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（`readChainEntries()` 在
-`tests/unit/ci-integration-chain-structure.test.mjs:653` 从 `package.json` 真值解析，`:737` 的过滤式
-`!wired.has(path) && !declared.has(path)`，失败消息在 `:741-742`）：**真库臂永远不在那条链里**（回环链里既没有真 PG、
+根因是判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链：`readChainEntries()` 在
+`tests/unit/ci-integration-chain-structure.test.mjs:658` 解析真值（过滤式在 `:742`），判据 4 拿
+`!wired.has(path) && !declared.has(path)` 过滤，失败消息把漏声明的脚本逐个列名。**真库臂永远不在那条链里**（回环链里既没有真 PG、
 也没有 `initdb`/`pg_ctl`），所以「接进真库 job」与「从本白名单移除」在现有断言下互斥。
 
 处置（指挥裁定 B 方案）：**保留条目、只把 reason 改成当时态**，条数仍 53；「workflow 真的跑它」这件事改由

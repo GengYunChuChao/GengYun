@@ -118,6 +118,7 @@
     "403": [
       "SCOPE_DENIED",
       "CONSENT_REQUIRED",
+      "CONSENT_WITHDRAWN",
       "ACCOUNT_INACTIVE",
       "SELF_SCOPE_GRANT_DENIED"
     ],
