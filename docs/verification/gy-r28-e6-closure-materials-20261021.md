@@ -11,7 +11,7 @@
 | 工作树 | `E:\GengYunCommander\wt-e6-closure` |
 | 分支 | `docs/gy-r28-e6-closure-materials` |
 | 基点 | `origin/main = ee46eb1`（`git log --oneline -1` 实读；`git merge-base --is-ancestor origin/main HEAD` 退出码 0） |
-| 本页改动面 | 只新增本文件 + 在旧索引页**末尾追加**一节；`.ts`／`.js`／`.mjs`／SQL／JSON 零改动（含 `openapi.json`、`contract-status.json`） |
+| 本页改动面 | **建立时**只新增本文件 + 在旧索引页**末尾追加**一节（此后本页自身已被改过，最近一次 `ae92e56f`／`#987`）；`.ts`／`.js`／`.mjs`／SQL／JSON 零改动（含 `openapi.json`、`contract-status.json`） |
 | 依赖 | 工作树无 `node_modules`（`Test-Path node_modules` ⇒ `False`）⇒ 本片**未跑任何 `node --test`**，只跑文档校验 |
 | issue 状态 | #7 OPEN、#8 OPEN、#16 OPEN、#17 OPEN（`gh issue view … --json state` 只读读取，未评论、未关闭） |
 | 前置状态 | #3 CLOSED；#4／#9／#10／#14／#15／#28／#29 均 OPEN（同一只读读取） |

@@ -43,7 +43,7 @@
 
 | # | 一句话现状 | 阻断项类型 | 证据锚点 | 还缺什么（由谁提供） |
 | --- | --- | --- | --- | --- |
-| #4 | 微信登录路由与登录态在仓内可跑 | 外部条件 | `services/api/src/routes/auth.ts:43`（登录路由注册点）、`project.config.json:5`（现用 AppID 仍是开发号） | 正式小程序 AppID 与主体资质（用户/业主） |
+| #4 | 微信登录路由与登录态在仓内可跑 | 外部条件 | `services/api/src/routes/auth.ts:43`（登录路由注册点）、`project.config.json:5`（appid 已是正式形态 `wx4407a4b908a69a54`，`tools/check-wechat-project.mjs:15` 冻结该值） | 主体资质/类目/隐私指引（用户/业主） |
 | #5 | 单作物地区档案的形状已有（三项必填、`region_code` 限 `^33[0-9]{4}$`） | 依赖未清 | `services/api/src/routes/profile.ts:30-31` | 先清 #4、#28、#29 |
 | #6 | 私有媒体上传路由在位，帖子级挂载迁移已落 main | 外部条件 | `services/api/src/routes/media.ts:219`、`services/api/db/migrations/0056_post_media_attachments.sql:63` | 真实对象存储桶与密钥（用户/业主）；另需清 #4、#29 |
 | #7 | 科普/除草剂查询与详情排序在仓内可跑 | 依赖未清 | `packages/reference/query.mjs:513`（按登记号排序） | 先清 #4 |
@@ -59,13 +59,13 @@
 | #22 | 权限面失败矩阵真库臂 180 条同源，ETag 期望真库侧也判 | 依赖未清 | `docs/verification/gy-r87-etag-parity-20261107.md:64`（七列合计 180 / 180 / 25 / 30 / 125 / 0 / 0） | 先清 #5、#9、#10、#12、#14、#15、#19 |
 | #23 | 真机端到端只成立在一台 Android 上，样本不足 | 外部条件 | `docs/verification/gy-r79-device-walkthrough-20261106.md:70`（单机成立）、`docs/verification/gy-r79-device-walkthrough-20261106.md:74`（不能证明分布） | Android + iOS 多机型矩阵与测试微信号（用户/业主） |
 | #24 | 比赛版部署、备份恢复与交付材料未有正式环境读数 | 外部条件 | `docs/verification/gy-r79-demo-readiness-20261106.md:18`（预览/体验版不可用）、`docs/verification/gy-r79-demo-readiness-20261106.md:47`（正式 HTTPS 基址未提供） | 域名与备案、服务器与备份目标、材料口径（用户/业主） |
-| #27 | 正式 AppID、真机域名与外部服务接入一项都没落地 | 外部条件 | `project.config.json:5`、`docs/verification/gy-r79-demo-readiness-20261106.md:45`（主体/类目/隐私指引/备案未核对） | 微信 AppID 与主体类目、隐私指引、备案，腾讯云审核（用户/业主） |
+| #27 | 正式主体资质与类目、真机域名与外部服务接入一项都没落地 | 外部条件 | `project.config.json:5`（appid 已是正式形态，非开发号）、`docs/verification/gy-r79-demo-readiness-20261106.md:45`（主体/类目/隐私指引/备案未核对） | 微信主体类目与资质、隐私指引、备案，腾讯云审核（用户/业主） |
 | #28 | 五 Tab 骨架与台账闸门都硬了：状态闭集 + 证据归一化 | 外部条件 | `tests/reference/i26-tabbar-skeleton.test.mjs:462`（同一条证据不得跨行复用）、`docs/verification/gy-i26-demo-align-20261014.md:783`（已知限制同步句） | 真机截图与原 demo 并排、Android/iOS 各一台（用户/业主） |
 | #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户/跨用途负控制，走真实 HTTP 触发面）、`services/api/src/privacy/ledger-pg.ts:765`（生产侧 `guardWriteback`） | 「终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`」是否算必须修的缺口，需裁定；修法在 `a4eb4400` |
 | #1003 | 识别协议适配层已在仓内（`openai-vision-v1` + 真实 fetch） | 外部条件 | `services/api/src/recognitions/openai-vision-adapter.ts:46`、`services/api/src/recognitions/openai-vision-adapter.ts:271` | 真实厂商端点与密钥、一次真调用读数（用户/业主） |
 | #1030 | real 模式每帖 ≤3 已是结构约束，并发与计数负控制有测试钉住；但 ⑩/⑪ 目前无 CI 计数闸门覆盖（`tests/integration/post-media-attachments-pg.mjs:506` 自述） | 代码在飞 | `services/api/db/migrations/0056_post_media_attachments.sql:70`、`services/api/src/community/store-pg.ts:397`、`tests/integration/post-media-attachments-pg.mjs:600` | real+PG 的 **HTTP** 端到端仍缺（现有用例是 store 层直连）：`feat/gy-r87-i30-http-e2e` @ `b0513fb4` 未推（指挥）→ 2026-11-08 05:20 校正：已补上，`#1071`（`ecbe343c`）把 `tests/integration/post-media-attach-http-pg.mjs` 合入 main（建 app、走 HTTP 面，真库 + 503 信封 + 待用池释放），读数在 `docs/verification/gy-r87-i30-http-e2e-20261107.md`；仓内仍剩两处缺口：24h 自衰减未测（`docs/verification/gy-r87-i30-http-e2e-20261107.md:163`）与上传完成 ⇒ ready 的 `/complete` 状态迁移未覆盖（`docs/verification/gy-r87-i30-http-e2e-20261107.md:161`） |
 
-> 上表 `#1030` 行的「24h 自衰减未测 / 不走 `/complete`」已失效：24h 自衰减由 PASS 9 覆盖（`tests/integration/post-media-attach-http-pg.mjs:786` 的时间穿越 SQL `UPDATE public.media SET created_at = now() - interval '25 hours'`，PASS 9 块首在 `tests/integration/post-media-attach-http-pg.mjs:767`），`/complete` 状态迁移由 PASS 11 覆盖（`tests/integration/post-media-attach-http-pg.mjs:893` 的 `POST /media/uploads/:id/complete`，PASS 11 块首在 `tests/integration/post-media-attach-http-pg.mjs:877`）；读数见 `docs/verification/gy-r88-i30-pool-decay-20261108.md`。原文保留以便追溯。
+> 上表 `#1030` 行的「24h 自衰减未测 / 不走 `/complete`」已失效：24h 自衰减由 PASS 9 覆盖（`tests/integration/post-media-attach-http-pg.mjs:786` 的时间穿越 SQL `UPDATE public.media SET created_at = now() - interval '25 hours'`；「3 行都拨到 25h 前 ⇒ 待用池读数必须 0」的断言在 `tests/integration/post-media-attach-http-pg.mjs:792-796`），`/complete` 状态迁移由 PASS 11 覆盖（`tests/integration/post-media-attach-http-pg.mjs:893` 的 `POST /media/uploads/:id/complete`；202、`state=ready`、`revision=2`、ETag `"2"` 这几条断言在 `tests/integration/post-media-attach-http-pg.mjs:897-901`）；读数见 `docs/verification/gy-r88-i30-pool-decay-20261108.md`。原文保留以便追溯。
 
 ## 三、依赖墙：今天可关 = 0 张
 
@@ -94,13 +94,13 @@
 
 最长链 9 节，共两条，链头分别是 `#27` 与 `#29`：`#27 → #4 → #6 → #14 → #15 → #19 → #22 → #23 → #24`、`#29 → #4 → #6 → #14 → #15 → #19 → #22 → #23 → #24`。两条只在第 1 节不同——`#4` 的未清依赖同时含 `#27` 与 `#29`（见上表 `#4` 行），第 2 节起完全重合。8 节另有 17 条、7 节 74 条，三种链头（`#27`/`#28`/`#29`）展开的依赖链总共 261 条。链头两个分别是外部条件与待裁定，链尾是 `#24`（比赛版交付），中间任何一节卡住，后面 6 节都动不了。
 
-今天可关 = 0 张。三张「无未清依赖」的也不等于能关：`#27` 卡外部条件（AppID/备案），`#28` 卡真机目视（截图与设备），`#29` 卡裁定加 `#1058` 的 `CONFLICTING`。其余 16 张都在等链头，或等各自的证据页落 main。
+今天可关 = 0 张。三张「无未清依赖」的也不等于能关：`#27` 卡外部条件（主体资质/类目/备案），`#28` 卡真机目视（截图与设备），`#29` 卡裁定加 `#1058` 的 `CONFLICTING`。其余 16 张都在等链头，或等各自的证据页落 main。
 
 ## 四、外部条件清单（必须由用户/业主提供，我们不能自造）
 
 | 要什么 | 卡住谁 | 现状（本页读到的） |
 | --- | --- | --- |
-| 正式小程序 AppID + 主体类目 | #4、#27 | 仓里仍是开发号（`project.config.json:5`） |
+| 正式小程序主体与类目 + 隐私指引 | #4、#27 | 仓内 appid 已是正式形态（`project.config.json:5`），缺的是主体资质/类目/隐私指引 |
 | 隐私指引与备案号 | #27、#24 | 未核对（`docs/verification/gy-r79-demo-readiness-20261106.md:45`） |
 | 正式 HTTPS 域名与证书 | #24、#23 | 基址未提供（`docs/verification/gy-r79-demo-readiness-20261106.md:47`） |
 | 腾讯云审核 BizType 与各服务密钥（OCR/ASR/TTS/视觉/内容安全） | #9、#10、#11、#13、#14、#21、#1003 | 只有候选矩阵，无开通读数（`docs/verification/provider-matrix.md:43`） |
@@ -123,7 +123,7 @@
 - `gengyun-supervisor.2026-10-23.private-key.pem`：服务器登录私钥（#24 部署与备份）。
 - `github-pat.txt`：带 workflows 权限的 PAT（B 档 PR 代合要它，今天 #1060 就是这样合的）。
 
-这些文件只是「备着」，不等于条件满足：把 #27 的 AppID、#21 的开通读数、#23 的真机矩阵变成读数，仍要人拿着它们去平台上操作一遍。
+这些文件只是「备着」，不等于条件满足：把 #27 的主体资质与类目、#21 的开通读数、#23 的真机矩阵变成读数，仍要人拿着它们去平台上操作一遍。
 
 ## 五、在飞 PR 清单
 
