@@ -826,7 +826,8 @@ jobs:
           RECOGNITION_CHAIN_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognition_chain_test
           PGCLIENTENCODING: UTF8
       # 帖子级媒体挂载（#1030 / 迁移 0056，PR #1037 第三轮审查 P1）：库名硬钉 `gengyun_post_media_test`，
-      # 脚本自己断言 public 下 0 张表，只 apply 0001/0022/0030/0032/0045/0056 六段。
+      # 脚本自己断言 public 下 0 张表，只 apply 0001/0022/0030/0032/0045/0056 六段（`post-media-attachments-pg.mjs:152` 的 `filter`），另在第 5 节用 `discoverMigrations()` 单补 `0008`（`:633`）⇒ ⚠️ 本臂**不是「全链迁移」**。
+      # 迁移目录 `services/api/db/migrations/` 在 base `2aa5d433` 有 **55** 个上行 `.sql`（`git ls-tree` 实测 109 个 `.sql`，其中 54 个 `*.down.sql`）；「全链」是 #1071 新臂 `tests/integration/post-media-attach-http-pg.mjs` 跑的，不是这里。提交 `ba37aef9` 的信息写「全链 48 个迁移真跑」因此不准，以此处为准（后续提交的信息已作更正）。
       # 为什么必须接：0056 的 `UNIQUE (post_id, ordinal)` / `CHECK (ordinal BETWEEN 1 AND 3)` 是「每帖 ≤3 张」
       # 的**唯一**结构闸——应用路径传 4 张先被 `0022_community_persistence.sql` 的数组 CHECK 挡住（400
       # `post_image_limit`），即便 DROP/放宽 0056，`insertPost` 的读数照样不变；只有本脚本第 8 节的**直插探针**
@@ -835,9 +836,17 @@ jobs:
       # 位置：与相邻各臂同形（专用空库 + 库 owner + 不建组角色）⇒ 对前后 step 零耦合。
       # 读数闸门（#1037 第五轮审查 P2-b）：本臂此前只有 `exit 0` + 脚本自报 `OK n 项`，
       # 把第 5 节的断言组删空、只留建库与迁移，step 照样绿 —— 而它正是唯一能抓 0056 约束变异的臂。
-      # 故与相邻各臂同形：冻结「该臂当前稳定产出的 PASS 读数条数」（真跑 PG 17.11 一遍，13 条），
-      # `readings < 13` 即红。数字与计数式都登记在 `tests/unit/ci-real-pg-readings-gates.test.mjs`
+      # 故与相邻各臂同形：冻结「该臂当前稳定产出的 PASS 读数条数」（真跑 PG 17.11 一遍，19 条），
+      # `readings < 19` 即红 —— 语义是「PASS 读数不得少于 19 条」。（本行与上一行的数字是**散文**：`ci-real-pg-readings-gates.test.mjs` 的判据⑥ 只校 `::error::` 文案里的阈值，**不看注释** ⇒ 把「19 条」改成「20 条」不会红；基线只有两个落点：本段的 `-lt N` 与读数表的 `baseline: N`，⛔ 别拿注释里的数字当基线。）
+      # 19 = `tests/integration/post-media-attachments-pg.mjs` **当前**打出的 PASS 条数（19 个**可执行** `say(`
+      # 调用点；另有 3 处 `say(` 只出现在注释里 ⇒ 裸 grep 会数出 22，别拿裸 grep 当基线；
+      # 其中第 17–19 条是 #1030 新增的两节：⑩ 同帖并发 1 条、⑪ owner_id / state 2 条）。删掉任一节
+      # 读数必然掉到 < 19 ⇒ 这一步当场红。旧基线 13 时删掉 ⑩/⑪ 仍剩 16 ≥ 13、step 照样绿，那两节等于没有闸门 —— 抬到 19 就是为了堵这个洞。
+      # 数字与计数式都登记在 `tests/unit/ci-real-pg-readings-gates.test.mjs`
       # 的 `READING_GATE_BASELINES`（守卫逐条比对「表 ↔ 本文件」，只改一边就红）。
+      # 另一层静态守卫（A 档）是 `tests/unit/post-media-attachments-say-floor.test.mjs`（已在 main 上）：它数臂脚本里
+      # 的**可执行** `say(` 调用点（下限同样是 19）。本处是 workflow 侧的「真跑 PASS 读数」下限（B 档），两者互补：
+      # 删节 ⇒ 静态守卫先红；静态守卫被绕（例如把两条 `say(` 合成一行）⇒ 这里的读数照样掉到 < 19。
       - name: 帖子级媒体挂载（R83 / 迁移子集六段 / 约束直插探针 / 并发 advisory lock）
         timeout-minutes: 5
         run: |
@@ -856,8 +865,8 @@ jobs:
           fi
           readings=$(awk '/^PASS [0-9]+:/{n++} END{print n+0}' "$log")
           echo "PASS 读数：${readings} 条"
-          if [ "$readings" -lt 13 ]; then
-            echo "::error::帖子级媒体挂载臂 exit 0 但 PASS 读数只有 ${readings} 条（基线 13）⇒ 断言组被删减；0 条断言不是通过。"
+          if [ "$readings" -lt 19 ]; then
+            echo "::error::帖子级媒体挂载臂 exit 0 但 PASS 读数只有 ${readings} 条（基线 19）⇒ 断言组被删减；0 条断言不是通过。"
             exit 1
           fi
         env:
@@ -870,7 +879,7 @@ jobs:
       # 零政策矩阵（R69）：`consent_policies` **0 行**时每个入口返回什么 —— 只读侦察
       # （`.pg17/tmp/r69-consent-gate/RECON.md` §7.1）给出了一张全矩阵，但**全部是读码推定**，侦察方自己把
       # 「无注入 + 真 PG + 零政策行 + 生产装配」列为最大的未核实项。本臂就是那份矩阵的第一份真库读数：
-      #   ① 全链迁移（现场 48 个 `NNNN_*.sql`）后断言 `consent_policies` = 0 行（前提，不是结论），
+      #   ① 全链迁移（当时现场 48 个 `NNNN_*.sql`；R88 时已 55，现以运行打印为准）后断言 `consent_policies` = 0 行（前提，不是结论），
       #      并读出 `admin_accounts` = 0 行（=「造一行政策前有没有合法 `reviewed_by` 主体」的实测答案）；
       #   ② **生产装配** `buildApp({config,pool,wechat})`：零 `privacyInjection`、零假 gate、
       #      零 `consentGrantTestOptions`；`APP_EXECUTION_MODE=stub` + 真 `DATABASE_URL` + 两个临时密钥；
