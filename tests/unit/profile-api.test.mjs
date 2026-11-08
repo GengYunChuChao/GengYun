@@ -486,3 +486,164 @@ test('档案库瞬时故障 ⇒ retryable:true；权限/表缺失/库不存在/�
     });
   }
 });
+
+// ---------------------------------------------------------------- 手选不依赖定位（GY-R90 / #5）
+
+/**
+ * **AC**：「定位仅即时选择地区，服务端不接收原始坐标；拒绝／取消／超时／省外与手选能继续」。
+ *
+ * 这一条在代码上本来就有防线（`routes/profile.ts` 的 body 与 querystring 都是 `additionalProperties:false`，
+ * `region_code` 带 `^33[0-9]{4}$` 的 pattern）。既有用例只断言「状态码 ∈ {400,401,409,428} 且错误码是字符串」，
+ * 于是两道防线被钉住的程度并不一样（2026-11-08 逐条实测，读数见 PR 的变异自证）：
+ *   · 把 body 的 `additionalProperties` 改成 `true`：既有用例红 5 条（它们塞多余字段并期望 400，却收到 200），
+ *     这道防线本来就有人看着；
+ *   · 删掉 `region_code` 的 pattern：既有 17 条**全绿** —— 省外码退化成服务层字典校验，仍是
+ *     400 `INVALID_REQUEST`，只是 `details` 从「精确到 `/region_code`」变成空数组。**这一段此前没有任何断言钉住。**
+ * 本用例把两道防线的**契约形状**都钉死，使上述两种变异各自在下面对应的断言上转红。
+ *
+ * 本用例钉四件事：
+ *   ① 坐标字段（`latitude`／`longitude`／`lng`／`coordinates`／嵌套 `location`）进 body ⇒ 400，且封套 `details`
+ *      **逐字**等于 `[{field:'/', code:'must NOT have additional properties'}]`；query 串（读面与两个目录面）同理。
+ *      ⚠ 实测：根级违例的 ajv `instancePath` 是空串，`app.ts` 的错误映射只取 `instancePath` ⇒ 封套里 `field` 是 `/`，
+ *      **不点名字段**。所以本用例不冒充「details[0].field 指向该字段」——那是契约没做到的事；判别力改在 ④
+ *      用同一份契约 + 同一个运行期校验器取 `params.additionalProperty` 来钉。
+ *   ② 省外／形状不符的地区码 ⇒ 400，且 `details` 逐字等于
+ *      `[{field:'/region_code', code:'must match pattern "^33[0-9]{4}$"'}]`；省内但不存在的码（`330999`）走服务层
+ *      字典校验，同样 400 但 `details: []` —— 这两者可区分，正是「删掉 pattern 就转红」的分辨率所在
+ *      （只断言状态码的话两臂都是 400，等于没钉住）。
+ *   ③ 正例：**零坐标输入**，只传 `crop_id`／`region_code`／`region_catalog_version` ⇒ 200；响应任意层级都没有坐标键，
+ *      落库那行只有契约列，档案表也没有坐标列；换地区码（手选）同样成立 ⇒ 手选不依赖定位。
+ *   ④ 判别力自证：`schema-validator.ts` 的 `createJsonSchema2020ValidatorCompiler()` 编译契约里的 `ProfileInput`，
+ *      `validate.errors[0].params.additionalProperty` 必须精确等于被塞进去的那个键。
+ *
+ * ⛔ 本用例**不**证明真机四路径（授权／拒绝／取消／超时），只证明契约拒收坐标与服务端不落坐标。
+ */
+const COORDINATE_KEY = /^(?:latitude|longitude|lat|lng|lon|coords?|coordinates?|geocode|geohash|location)$/i;
+/** 递归找出任意层级上的坐标键，返回 `$.data.latitude` 形状的路径（空数组 = 一处都没有）。 */
+const coordinateKeys = (value, at = '$', found = []) => {
+  if (Array.isArray(value)) value.forEach((item, index) => coordinateKeys(item, `${at}[${index}]`, found));
+  else if (value !== null && typeof value === 'object')
+    for (const [key, item] of Object.entries(value)) {
+      if (COORDINATE_KEY.test(key)) found.push(`${at}.${key}`);
+      coordinateKeys(item, `${at}.${key}`, found);
+    }
+  return found;
+};
+
+test('GY-R90 / #5 手选不依赖定位：坐标字段是契约外属性必被拒且零落库，省外地区码被拒，只给地区码即成功且响应无坐标', async t => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const { app, db, a, headers, put } = f;
+  const revision = async () => (await app.inject({ url: route, headers: headers(a) })).json().data.revision;
+  const profileRows = async () => (await db.query(
+    'SELECT crop_id, region_code, region_catalog_version, revision FROM single_profiles ORDER BY region_code')).rows;
+
+  // ④-预备：契约 artifact 自己先钉闭集 —— 输入/输出两个 schema 都闭集，属性名里没有坐标位。
+  const profileInput = contractOpenapi.components.schemas.ProfileInput;
+  const profileOut = contractOpenapi.components.schemas.Profile;
+  assert.equal(profileInput.additionalProperties, false, '契约 ProfileInput 必须闭集，否则坐标字段在契约上就是合法的');
+  assert.equal(profileOut.additionalProperties, false, '契约 Profile 必须闭集，否则响应可以夹带坐标');
+  assert.deepEqual(Object.keys(profileInput.properties).sort(), ['crop_id', 'region_catalog_version', 'region_code']);
+  assert.deepEqual(Object.keys(profileOut.properties).sort(), ['crop_id', 'region_catalog_version', 'region_code', 'revision']);
+  assert.equal(profileInput.properties.region_code.pattern, '^33[0-9]{4}$', '契约的地区码只认浙江（33 开头）');
+  assert.deepEqual(coordinateKeys(profileInput.properties), [], '档案输入契约出现坐标属性');
+  assert.deepEqual(coordinateKeys(profileOut.properties), [], '档案输出契约出现坐标属性');
+
+  // 空档案 revision=1 是起点；下面所有被拒请求都不得改写它，也不得落库。
+  assert.equal(await revision(), 1, '空档案 revision 必须是 1');
+
+  // ① 坐标进 body：闭集外属性必须被 schema 拒，且错误封套形状逐字钉住。
+  const coordinateBodies = [
+    ['经纬度齐全', { latitude: 30.28, longitude: 120.15 }],
+    ['只给纬度', { latitude: 30.28 }],
+    ['只给经度', { longitude: 120.15 }],
+    ['lng 别名', { lng: 120.15 }],
+    ['坐标数组', { coordinates: [30.28, 120.15] }],
+    ['嵌套定位对象', { location: { lat: 30.28, lng: 120.15 } }],
+  ];
+  for (const [index, [label, extra]] of coordinateBodies.entries()) {
+    const response = await put(a, { ...input, ...extra }, `r90-coordinate-${index}`, '"1"');
+    assert.equal(response.statusCode, 400, `${label}：坐标必须在 schema 层被拒（实际 ${response.statusCode} ${response.body}）`);
+    const body = response.json();
+    assert.equal(body.data, undefined, `${label}：被拒绝却同时返回成功 data`);
+    assert.equal(body.error.code, 'INVALID_REQUEST', label);
+    assert.equal(body.error.message, '请求校验失败', label);
+    assert.deepEqual(body.error.details, [{ field: '/', code: 'must NOT have additional properties' }],
+      `${label}：additionalProperties 违例的封套形状（根级 instancePath 为空 ⇒ field 是 /，不点名字段）`);
+  }
+  // 读面与两个目录面同样拒收坐标（querystring 也是闭集）。
+  for (const url of [`${route}?latitude=30&longitude=120`, `${route}?lat=30&lng=120`,
+    '/api/v1/catalog/crops?latitude=30', '/api/v1/catalog/regions?lng=120']) {
+    const response = await app.inject({ url, headers: headers(a) });
+    assert.equal(response.statusCode, 400, `${url}：query 串带坐标必须被拒（实际 ${response.statusCode} ${response.body}）`);
+    const body = response.json();
+    assert.equal(body.data, undefined, url);
+    assert.equal(body.error.code, 'INVALID_REQUEST', url);
+    assert.equal(body.error.message, '请求校验失败', url);
+    assert.deepEqual(body.error.details, [{ field: '/', code: 'must NOT have additional properties' }],
+      `${url}：query 串的 additionalProperties 封套形状`);
+  }
+
+  // ② 省外／形状不符的地区码：pattern 层拒并给出精确到字段的明细。
+  for (const [label, code] of [['广东', '440100'], ['北京', '110101'], ['江苏', '320102'],
+    ['位数不足', '33010'], ['位数超出', '3301000']]) {
+    const response = await put(a, { ...input, region_code: code }, `r90-region-${code}`, '"1"');
+    assert.equal(response.statusCode, 400, `${label} ${code}：省外/形状不符的地区码必须被拒（实际 ${response.statusCode} ${response.body}）`);
+    const body = response.json();
+    assert.equal(body.data, undefined, code);
+    assert.equal(body.error.code, 'INVALID_REQUEST', code);
+    assert.deepEqual(body.error.details, [{ field: '/region_code', code: 'must match pattern "^33[0-9]{4}$"' }],
+      `${label} ${code}：地区码必须由 schema 的 pattern 拒（明细精确到 /region_code）`);
+  }
+  // 对照臂：省内但不存在的码走服务层字典校验 —— 仍是 400，但**没有**字段明细。
+  // 这是 ② 的分辨率：删掉 pattern 后省外码会退化成这一臂的形状，故 ② 必须逐字断言 details。
+  const dictionaryMiss = await put(a, { ...input, region_code: '330999' }, 'r90-region-dictionary', '"1"');
+  assert.equal(dictionaryMiss.statusCode, 400, '省内但不存在的地区码仍必须 400');
+  assert.equal(dictionaryMiss.json().error.code, 'INVALID_REQUEST');
+  assert.deepEqual(dictionaryMiss.json().error.details, [],
+    '字典层拒绝没有字段明细；如果这里也有明细，② 就失去分辨率（变异后无法转红）');
+
+  // 被拒的坐标/省外请求一条都没落库。
+  assert.deepEqual(await profileRows(), [], '被拒的坐标请求不得落库');
+  assert.equal(await revision(), 1, '被拒请求不得改写档案 revision');
+
+  // ③ 正例：零坐标输入，只三字段 ⇒ 成功；响应任意层级都没有坐标键。
+  const created = await put(a, input, 'r90-manual-only', '"1"');
+  assert.equal(created.statusCode, 200, `只传地区码的手选必须成功（实际 ${created.statusCode} ${created.body}）`);
+  assert.equal(created.json().data.revision, 2, '手选保存必须把 revision 推到 2');
+  assert.deepEqual(Object.keys(created.json().data).sort(), ['crop_id', 'region_catalog_version', 'region_code', 'revision'],
+    '手选成功响应的 data 只能有契约里那四栏');
+  assert.deepEqual(coordinateKeys(created.json()), [], '手选成功响应出现坐标键');
+  assert.equal(JSON.stringify(created.json()).includes('latitude'), false, '手选成功响应夹带 latitude');
+  assert.equal(JSON.stringify(created.json()).includes('longitude'), false, '手选成功响应夹带 longitude');
+
+  // 手选换地区码同样不依赖定位。
+  const changed = await put(a, { ...input, region_code: '330100' }, 'r90-manual-change', '"2"');
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.equal(changed.json().data.region_code, '330100', '手选换地区必须生效');
+  assert.equal(changed.json().data.revision, 3, '手选换地区必须自增 revision');
+  const readBack = await app.inject({ url: route, headers: headers(a) });
+  assert.equal(readBack.statusCode, 200, readBack.body);
+  assert.deepEqual(Object.keys(readBack.json().data).sort(), ['crop_id', 'region_catalog_version', 'region_code', 'revision']);
+  assert.deepEqual(coordinateKeys(readBack.json()), [], '读档案响应出现坐标键');
+
+  // 服务端不落坐标：落库那行只有契约列，档案表也没有任何坐标列。
+  assert.deepEqual(await profileRows(),
+    [{ crop_id: 'crop_rice', region_code: '330100', region_catalog_version: 'mca-xzqh-2023', revision: 3 }],
+    '手选落库那行必须是三字段 + revision，不带坐标');
+  const coordinateColumns = (await db.query(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'single_profiles'"
+    + " AND column_name ~* '^(latitude|longitude|lat|lng|lon|coords?|coordinates?|geocode|geohash|location)$'")).rows;
+  assert.deepEqual(coordinateColumns, [], '档案表出现坐标列 —— 服务端开始存原始定位');
+
+  // ④ 判别力在 schema 层：用运行期**同一个**校验器编译契约里的 ProfileInput，违例必须点名字段。
+  const { createJsonSchema2020ValidatorCompiler } = await import('../../services/api/src/schema-validator.ts');
+  const validate = createJsonSchema2020ValidatorCompiler()({ schema: profileInput });
+  assert.equal(validate(input), true, '合法三字段必须通过同一份契约校验器（否则上面的 400 可能全是别的错）');
+  for (const key of ['latitude', 'longitude']) {
+    assert.equal(validate({ ...input, [key]: 30.28 }), false, `${key} 必须被判为契约外属性`);
+    assert.equal(validate.errors.length, 1, `${key}：allErrors:false ⇒ 只报一条`);
+    assert.equal(validate.errors[0].keyword, 'additionalProperties', key);
+    assert.equal(validate.errors[0].params.additionalProperty, key, `${key}：判别力必须精确点名该字段`);
+  }
+});
