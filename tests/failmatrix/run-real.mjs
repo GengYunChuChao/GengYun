@@ -29,7 +29,7 @@
  *   0   真库起得来、矩阵权限面在真 PG 上取得逐条读数，且如实记录差异（不是「全绿」才算 0）；
  *   77  没设 GY_PG_BIN ⇒ **未取得**（POSIX skipped），不是通过；`--allow-skip`/`GY_ALLOW_SKIP=1` 才降级 0（仅本机开发，⛔ 不得接门禁）；
  *   其它非 0（通常 1）真失败（集群起不来 / 迁移失败 / 装配抛错）。
- *   --require-no-not-runnable  打开后：not_runnable > 0 也算 exit 1（「没跑」不等于通过；CI 用它把 13→0 钉住）。
+ *   --require-no-not-runnable  打开后：not_runnable > 0 也算 exit 1（「没跑」不等于通过；CI 用它把 13→0 钉住）。另有 --require-no-different：different > 0 也算 exit 1（语义见文件末尾 `shouldFailOnDifferent`；CI 尚未接它）。
  */
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -962,14 +962,14 @@ async function armFeatureFlags(pool) {
 // 主流程
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { json: null, requireNoNotRunnable: false };
+  const out = { json: null, requireNoNotRunnable: false, requireNoDifferent: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--allow-skip') continue; // 已在闸门处消费
-    if (arg === '--require-no-not-runnable') { out.requireNoNotRunnable = true; continue; }
+    if (arg === '--require-no-not-runnable' || arg === '--require-no-different') { out[requireFlagField(arg)] = true; continue; }
     if (arg.startsWith('--json=')) out.json = arg.slice('--json='.length);
     else if (arg === '--json') out.json = argv[++i] ?? '';
-    else throw new Error(`未知参数：${arg}（只支持 --json= / --allow-skip / --require-no-not-runnable）`);
+    else throw new Error(`未知参数：${arg}（只支持 --json= / --allow-skip / --require-no-not-runnable / --require-no-different）`);
   }
   return out;
 }
@@ -1480,7 +1480,7 @@ async function main() {
       return 1;
     }
 
-    return 0;
+    return shouldFailOnDifferent(opts, tally, rows);
   } catch (error) {
     const elapsed = Date.now() - startedAt;
     console.error(`\n真 PG 臂 FAIL：${error?.stack ?? error}（耗时 ${elapsed} ms）`);
@@ -1516,3 +1516,15 @@ async function main() {
 }
 
 process.exitCode = await main();
+
+// ---------------------------------------------------------------------------
+// R89 · `--require-no-different`（本文件的新增内容一律**追加**在这里，既有行号一格不动）
+//
+// 为什么这个 import 写在文件末尾：ESM 的 import 会被**提升**到模块顶部，与写在第一行完全等价
+// —— `parseArgs()` 里的 `requireFlagField` 与 `main()` 里的 `shouldFailOnDifferent` 照常可用；
+// 而写在第一行会把下面每一行都往下推一格，牵动 `docs/verification/` 里一批
+// `run-real.mjs:<行号>` 锚点（同一理由见 `docs/verification/gy-r87-etag-parity-20261107.md` §2）。
+// ⛔ 不要为了「看起来顺眼」把它挪上去；要挪就同时按 `tests/unit/doc-anchor-relocations.json`
+// 的既有格式登记全部位移。
+// ---------------------------------------------------------------------------
+import { requireFlagField, shouldFailOnDifferent } from './require-no-different.mjs';
