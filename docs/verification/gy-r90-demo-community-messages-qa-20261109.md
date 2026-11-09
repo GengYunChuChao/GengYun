@@ -67,9 +67,9 @@ rule_version=unimplemented:no-real-rule/cjk-bigram+word-match/1+dose/gy-i08/1.2.
 
 ## 5. `tools/demo-stack.mjs --demo` 接线
 
-- 常量：`tools/demo-stack.mjs:746` `const seedFile = join(REPO_ROOT, 'db', 'seeds', 'demo_community_messages.sql');`（在 `--demo` 档内声明，避免上移模块常量时把别的文档锚点整体推移）
-- 执行：`tools/demo-stack.mjs:747`（`--demo` 档内、`applyDemoProfile` 之后；只在 `mode === 'real'` 跑，`stub` 打印跳过原因）
-- 日志：`tools/demo-stack.mjs:756` `✓ 灌入演示数据（非生产）：db/seeds/demo_community_messages.sql（社区 3 帖 + 消息 3 条系统通知，幂等）`
+- 常量：`tools/demo-stack.mjs:812` `const seedFile = join(REPO_ROOT, 'db', 'seeds', 'demo_community_messages.sql');`（在 `--demo` 档内声明，避免上移模块常量时把别的文档锚点整体推移）
+- 执行：`tools/demo-stack.mjs:813`（`--demo` 档内、`applyDemoProfile` 之后；只在 `mode === 'real'` 跑，`stub` 打印跳过原因）
+- 日志：`tools/demo-stack.mjs:822` `✓ 灌入演示数据（非生产）：db/seeds/demo_community_messages.sql（社区 3 帖 + 消息 3 条系统通知，幂等）`
 
 既有 `--seed-demo`（`demo_catalog_verified.sql`）与 `--demo`（三个 feature flag）逻辑未改。本机一次 `up` 的相关日志原文：
 
@@ -233,7 +233,7 @@ node tools/verify-verification-comment-anchors.mjs
 VERIFICATION-COMMENT-ANCHOR-PASS: 基线内 1421 条注释锚点只告警，没有基线外新增   # exit 0
 ```
 
-**为什么 services 改动是"行号中性"的**：本轮 `retrieval.ts` / `guard.ts` / `service.ts` 的改动都是**等行数替换**（`git diff --numstat` = 3/3、3/3、2/2），`tools/demo-stack.mjs` 的新增全部落在 `--demo` 档内（第 737 行以后），文件前 736 行与 main 逐字节一致。这样既不动 5 份架构/历史取证文档的行号锚点，也不改任何锚点基线 JSON——第一道闸门在**没有 reanchor、没有 `--write-baseline`** 的情况下 PASS。
+**为什么 services 改动是"行号中性"的**：本轮 `retrieval.ts` / `guard.ts` / `service.ts` 的改动都是**等行数替换**（`git diff --numstat` = 3/3、3/3、2/2），`tools/demo-stack.mjs` 相对 `origin/main` 只有一处新增（`--demo` 档内，第 802 行以后；`git diff --numstat origin/main` = 22/0），其余行逐字节一致。这样既不动 5 份架构/历史取证文档的行号锚点，也不改任何锚点基线 JSON——第一道闸门在**没有 reanchor、没有 `--write-baseline`** 的情况下 PASS。
 
 ## 9. 不声称项
 
