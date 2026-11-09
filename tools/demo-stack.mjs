@@ -20,21 +20,21 @@ import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 
 import {
-  DEFAULT_PORTS, DEMO_FLAG_KEYS,
+  DEFAULT_PORTS, DEMO_FLAG_KEYS, DEMO_REGION_SEED_FILE,
   ENV_FILE_TEMPLATE,
   GENERATED_KEYS,
   INSTANCE_FLAG,
   UsageError,
-  assembleApiEnv, buildDemoFlagSql,
+  assembleApiEnv, buildDemoCatalogCountSql, buildDemoFlagSql,
   buildPidRecord,
   buildPsqlFileArgs,
   classifyFailure,
-  commandHasInstance,
+  commandHasInstance, demoRegionSeedPlan,
   describeEnvSources,
   healthVerdict,
   nextPollDelay,
   nextStepsLines,
-  parseArgs,
+  parseArgs, parseDemoCatalogCounts,
   parsePidRecord,
   readEnvFile,
   readSecretsFile,
@@ -412,6 +412,51 @@ function printPlan(context) {
 }
 
 /**
+ * 演示档附带：补「我的档案」的**支持目录**（`public.regions` / `public.crops`）。
+ *
+ * 为什么放在 `--demo` 里：那三个开关只决定「能不能提交识别 / 出具体药剂」，档案页的
+ * 作物与省市县选择器读的是 `public.regions` 与 `public.crops`（页面链路见种子的头注）。
+ * 库被重建、换了库、或只跑了迁移而 state 仍记「已 seed 过」时，`--demo` 起来的栈里
+ * 这两张表是空的，档案页就写「支持目录为空，暂时不能选择档案。」。
+ *
+ * 种子自身幂等（`ON CONFLICT ... DO UPDATE` + 末尾自检），重复 `up --demo` 不会新增行、
+ * 也不会删掉别人灌的数据：这里只做 INSERT/UPSERT，没有 DELETE/TRUNCATE。
+ */
+function applyDemoCatalog({ options, pgBin }) {
+  const plan = demoRegionSeedPlan({ demo: true, mode: options.mode });
+  if (!plan.run) {
+    say('[8/9] 演示目录：跳过（stub 模式不写业务资料）');
+    return EXIT.OK;
+  }
+
+  const file = join(REPO_ROOT, DEMO_REGION_SEED_FILE);
+  const result = psql(pgBin, buildPsqlFileArgs({ port: options.pgPort, database: DATABASE_NAME, file }), 120_000);
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (result.status !== 0) {
+    failWith({ stage: 'seed', output }, [
+      `  失败的种子：${DEMO_REGION_SEED_FILE}`,
+      '  档案页的省市县目录没补上（种子失败会整组回滚，不会留下半套目录）；',
+      '  先按上面 psql 报错修，再重跑 `up --demo`（幂等，可重复跑）。',
+      '  输出（最后 15 行）：',
+      ...tailLines(output, 15).split('\n').map((line) => `    ${line}`),
+    ]);
+    return EXIT.SEED;
+  }
+
+  const counts = parseDemoCatalogCounts(
+    psql(pgBin, buildPsqlArgs({ port: options.pgPort, database: DATABASE_NAME, sql: buildDemoCatalogCountSql() }), 30_000).stdout,
+  );
+  say('[8/9] 演示目录：已补齐「我的档案」的支持目录（演示数据·非生产）');
+  say(
+    counts
+      ? `  库内读数：省 ${counts.province} / 市 ${counts.city} / 县区 ${counts.county} / 作物 ${counts.crop}`
+      : '  库内读数：未读到（不影响后续步骤，可用 `status` 与 psql 复查）',
+  );
+  say(`  种子：${DEMO_REGION_SEED_FILE}（幂等；只覆盖演示路径，不是完整行政区划）`);
+  return EXIT.OK;
+}
+
+/**
  * 演示档：迁移完成后把三个契约开关置为开启。
  *
  * 只走 psql 的**一个** `-c`：三条 UPDATE 在同一个 simple query 里，失败整组回滚；
@@ -521,7 +566,13 @@ async function commandUp(options) {
       return EXIT.HEALTH;
     }
     say(`  ✓ /health → ${health.last.reason}（${health.elapsedMs}ms）`);
-    for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo })) say(line);
+    // 栈已就绪时不做迁移/不重启 API，但 `--demo` 对「档案页支持目录」的承诺仍要兑现：
+    // 种子幂等（ON CONFLICT + 自检），补一次不会新增行、也不会删别人的数据。
+    if (options.demo) {
+      const catalogCode = applyDemoCatalog({ options, pgBin });
+      if (catalogCode !== EXIT.OK) return catalogCode;
+    }
+    for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo, demo: options.demo })) say(line);
     return EXIT.OK;
   }
 
@@ -732,6 +783,8 @@ async function commandUp(options) {
   // ---- ⑧b 演示档（可选）：迁移完成后再动 feature_flags
   say('');
   if (options.demo) {
+    const catalogCode = applyDemoCatalog({ options, pgBin });
+    if (catalogCode !== EXIT.OK) return catalogCode;
     const demoCode = applyDemoProfile({ options, pgBin });
     if (demoCode !== EXIT.OK) return demoCode;
   } else {
@@ -809,7 +862,7 @@ async function commandUp(options) {
   say(`  ✓ /health → ${health.last.reason}（${health.elapsedMs}ms，探测 ${health.attempts} 次）`);
   say('');
   say(`演示栈已就绪：API http://127.0.0.1:${options.apiPort}（${options.mode}），PG 127.0.0.1:${options.pgPort}`);
-  for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo })) say(line);
+  for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo, demo: options.demo })) say(line);
   if (options.mode === 'real') {
     say('');
     if (options.seedDemo) {

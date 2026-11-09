@@ -226,6 +226,9 @@ export function usage() {
     '  --timeout-ms <n>   等 /health 200 的上限，默认 90000',
     '  --lines <n>        logs 打印行数，默认 40',
     '  --demo             演示档：把三个 feature flag 置为开启（仅本机演示；幂等）',
+    '                     并（real）补齐「我的档案」的支持目录：',
+    '                     db/seeds/seed_demo_regions.sql —— 浙江省 → 3 个市 → 6 个县区 + 4 类作物；',
+    '                     灌的是**演示数据（非生产）**，不是完整行政区划',
     '  --reset            up 前先重来一遍（停栈 + 删数据目录）',
     '  --seed-demo        （real）额外导入演示资料种子 db/seeds/demo_catalog_verified.sql；',
     '                     默认不开。灌入的是**演示用资料**（非生产数据），不代表第三方审核',
@@ -491,6 +494,46 @@ export function buildDemoFlagSql(options = {}) {
   return statements.length === 0 ? null : statements.join('\n');
 }
 
+/** `--demo` 顺带补的「支持目录」种子（相对仓库根；`--seed-demo` 走的是另一个文件，两者不互相替代）。 */
+export const DEMO_REGION_SEED_FILE = 'db/seeds/seed_demo_regions.sql';
+
+/**
+ * `--demo` 要不要顺带补「支持目录」（`public.regions` / `public.crops`）。纯函数：不读库、不读环境变量。
+ *
+ * 规则与 `--seed-demo` 的既有约定对齐：**stub 模式不写业务资料**，所以只有 real 才跑；
+ * 不带 `--demo` 时完全不碰这两张表（`--demo` 之外的行为一个字没变）。
+ */
+export function demoRegionSeedPlan({ demo = false, mode = 'real' } = {}) {
+  if (!demo) return { run: false, reason: 'no-demo' };
+  if (mode !== 'real') return { run: false, reason: 'stub' };
+  return { run: true, reason: 'demo' };
+}
+
+/**
+ * 读「演示目录就绪了吗」的一条 SQL：psql 用 `-tA` 执行 ⇒ 恰好一行 `省|市|县区|作物`。
+ *
+ * 只数**演示路径**要的那几行（与 `db/seeds/seed_demo_regions.sql` 的自检同集合），
+ * 不拿全库行数冒充「目录完整」。
+ */
+export function buildDemoCatalogCountSql() {
+  return [
+    'SELECT',
+    "  (SELECT count(*) FROM regions WHERE supported AND parent_code IS NULL AND code = '330000') AS province,",
+    "  (SELECT count(*) FROM regions WHERE supported AND parent_code = '330000' AND code IN ('330100', '330200', '330300')) AS city,",
+    "  (SELECT count(*) FROM regions WHERE supported AND parent_code IN ('330100', '330200', '330300') AND code IN ('330102', '330106', '330203', '330205', '330302', '330304')) AS county,",
+    "  (SELECT count(*) FROM crops WHERE active AND id IN ('crop_rice', 'crop_corn', 'crop_soybean', 'crop_rapeseed')) AS crop;",
+  ].join('\n');
+}
+
+/** 解析 `buildDemoCatalogCountSql` 的读数；形状不对返回 null（当作「没读到」，不猜）。 */
+export function parseDemoCatalogCounts(text) {
+  const fields = String(text ?? '').trim().split('|');
+  if (fields.length !== 4) return null;
+  const [province, city, county, crop] = fields.map((value) => Number(value.trim()));
+  if (![province, city, county, crop].every((value) => Number.isInteger(value) && value >= 0)) return null;
+  return { province, city, county, crop };
+}
+
 /** pid 文件内容：带上实例标记与端口，`down`/`status` 靠它判断「这是不是本工具起的」。 */
 export function buildPidRecord({ pid, port, mode, instanceId, startedAt, logFile }) {
   return {
@@ -544,7 +587,7 @@ export function statusLines({ api, port, health }) {
 }
 
 /** `up`/`status` 之后给用户看的「下一步」：开发者工具里要做什么。 */
-export function nextStepsLines({ mode, apiPort, seedDemo = false }) {
+export function nextStepsLines({ mode, apiPort, seedDemo = false, demo = false }) {
   const base = `http://127.0.0.1:${apiPort}`;
   return [
     '',
@@ -559,6 +602,9 @@ export function nextStepsLines({ mode, apiPort, seedDemo = false }) {
       : seedDemo
         ? '  4) 本次带 --seed-demo：首页应显示演示卡片（文字标了「演示资料·非生产数据」，不是生产数据）'
         : '  4) 首页可能显示「暂无资料」：库内已核对来源为 0 条，属资料接入缺项（见运行手册「首页为什么是空的」）',
+    ...(demo && mode === 'real'
+      ? ['  5) 本次带 --demo：「我的档案」→「手选作物与市县」应能选到 浙江省 → 杭州/宁波/温州 → 县区（演示目录，非生产）']
+      : []),
     '',
     `本机自检：curl.exe -s -o NUL -w "%{http_code}" ${base}/health     （应输出 200；/api/v1/health 是 404）`,
   ];
