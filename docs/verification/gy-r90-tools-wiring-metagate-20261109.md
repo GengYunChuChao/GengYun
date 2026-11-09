@@ -377,12 +377,13 @@ CI 里也只有语法检查 ⇒ 记 `syntax-only`，`witness` 写 `--check` 那�
 
 ## 七、七道闸门（本片实跑）
 
-下列读数在**本页与判据定稿后的提交**上实跑（②⑥ 需要提交后的 HEAD，故它们与 ①③④⑤⑦ 分两次跑；
-两次之间只改这张表与 §八 的文字，不改判据、白名单或 §三/§四的读数）。逐行注明了跑它的提交。
+下列读数全部跑在 **`0bad1cbd`**（`test(meta): tools 接线元闸门 v4：node --check 不算执行，7 条改判 syntax-only`，
+本页与判据、白名单都在这个提交里定稿）。②⑥ 是「提交后才能跑」的两道，故在同一提交上补跑；
+跑完之后只改这张表与 §八 的文字（不改判据、白名单、§三/§四 的读数），因此下表与代码同一 HEAD。
 
 | # | 闸门 | 命令 | EXIT | 尾行摘录 |
 | --- | --- | --- | --- | --- |
-| ① | 四连 strict anchors | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `本次：不在区间 44、UNDECLARED 259、配成对 1328`（基线 44 / 265 / 1051）；`PASS: --strict 下没有基线之外的新增` |
+| ① | 四连 strict anchors | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `本次：不在区间 44、UNDECLARED 259、配成对 1329`（基线 44 / 265 / 1051）；`PASS: --strict 下没有基线之外的新增` |
 | ② | 锚点搬迁身份单测 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ tests 37 / ℹ pass 36 / ℹ fail 0 / ℹ skipped 1`（提交前跑会红：`base == HEAD` 时拒绝静默通过） |
 | ③ | 契约状态 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 行号区间 324 条…`；`PASS: 中文表格一致`；`PASS: 状态为人工判定…` |
 | ④ | 文档闸门 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 369 页（扫描面 374 页：docs/verification）——读数七条判据全部自洽` |
