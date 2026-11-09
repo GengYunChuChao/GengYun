@@ -128,11 +128,11 @@ test('the result area keeps one WXML sibling chain: every state renders exactly 
     return rendered.filter(isStatusBlock);
   };
   for (const stateKind of ['idle', 'ready', 'loading', 'empty', 'error', 'out-of-coverage', 'uncollected']) {
-    const blocks = count({ gatePassed: true, status: '合成状态文案', stateKind, items: [], nextCursor: null, profileNote: '', advanced: false });
+    const blocks = count({ gatePassed: true, status: '合成状态文案', stateKind, items: [], nextCursor: null, profileNote: '', fallbackNote: '', advanced: false });
     assert.equal(blocks.length, 1, `stateKind=${stateKind} 必须恰渲染 1 个 .status 块（多个 ⇒ 独立 wx:if 与回退 wx:else 并列）`);
     assert.equal(blocks.filter(paintsStatus).length, 1, `stateKind=${stateKind} 必须恰打印 1 次 status 文案（不得重复）`);
   }
-  assert.equal(count({ gatePassed: false, status: '合成状态文案', stateKind: 'idle', items: [], nextCursor: null, profileNote: '', advanced: false }).length, 1, '游客门禁态也必须恰 1 个 .status 块');
+  assert.equal(count({ gatePassed: false, status: '合成状态文案', stateKind: 'idle', items: [], nextCursor: null, profileNote: '', fallbackNote: '', advanced: false }).length, 1, '游客门禁态也必须恰 1 个 .status 块');
   assert.deepEqual(dangling.map(e => e.tag + '[' + (e.attrs['wx:elif'] || e.attrs['wx:else'] || '') + ']'), [], '不得有悬空的 wx:elif / wx:else（没有同链 wx:if 前驱）');
 });
 // 返修 B：INVALID_RESPONSE 是 validProfile 的**通用**失败码。反例：档案 region_code='330102'

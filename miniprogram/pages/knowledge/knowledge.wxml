@@ -22,7 +22,7 @@
       <view class="field-label">搜索科普资料</view>
       <view class="search-input"><image class="search-icon" src="/assets/knowledge/search.png" aria-hidden="true" /><input class="query-input" placeholder="输入药名或科普关键词" maxlength="80" value="{{q}}" data-field="q" bindinput="input" /></view>
     </view>
-    <view class="notice profile-note" wx:if="{{profileNote}}">{{profileNote}}</view>
+    <view class="notice profile-note" wx:if="{{profileNote || fallbackNote}}">{{profileNote || fallbackNote}}</view>
     <view class="filter-panel">
       <view class="field-label">筛选条件</view>
       <view class="chips">

@@ -48,7 +48,7 @@ Page({
     stateKind: 'idle',
     // 档案预置（GY-I05/07）：profileState = idle 未读／applied 已按档案预置／none 档案为空／
     // unread 读不到档案／out-of-coverage 档案响应核不出（通用 INVALID_RESPONSE；不按 330000 代查）。
-    profileState: 'idle', profileNote: '',
+    profileState: 'idle', profileNote: '', fallbackNote: '',
     q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '', advanced: false,
     crops: [{ name: '全部作物', id: '' }].concat(cropDoc.crops), species: [{ name: '全部杂草', id: '' }].concat(speciesDoc.species),
     regions: [{ name: '全部地区', code: '' }].concat(regionDoc.regions),
@@ -63,7 +63,7 @@ Page({
     this._readOperation = (this._readOperation || 0) + 1
     // 任何一次用户操作都作废在途的档案预置：迟到的档案结果不得覆盖手选条件。
     this._prepareOperation = (this._prepareOperation || 0) + 1
-    this.setData({ busy: false, items: [], nextCursor: null, modeNote: api.modeNote(), status: '', stateKind: 'idle' })
+    this.setData({ busy: false, items: [], nextCursor: null, modeNote: api.modeNote(), status: '', stateKind: 'idle', fallbackNote: '' })
   },
   checkGate: function () {
     pageGate.start(this, ok => { this.clear(); this.setData({ gatePassed: ok }); if (ok) this.prepare() })
@@ -156,11 +156,8 @@ Page({
       growth_stage: d.growth_stage.trim(), planting_method: d.planting_method.trim(), use_scene: d.use_scene.trim() }
     Object.keys(values).forEach(k => { if (values[k]) q[k] = values[k] }); return api.filters(q, true)
   },
-  /**
-   * 本次查询里被"未采集"的维度名（生育期／种植方式／使用场景）。入参可以是页面 `data`（手选值）或
-   * 已发出的查询串（`_applied`／`q`，`conditions()` 只为非空值建键）——非空即视为用户填了该条件。
-   * 返回空数组 ⇒ 三个条件都没填，走既有泛化空态（不得把"真的没有"说成"未采集"）。
-   */
+  /** 本次查询里被"未采集"的维度名（生育期／种植方式／使用场景）。入参可以是页面 `data`（手选值）或
+   * 已发出的查询串（`_applied`／`q`，`conditions()` 只为非空值建键）——非空即视为用户填了该条件；返回空数组 ⇒ 三个条件都没填，走既有泛化空态（不得把"真的没有"说成"未采集"）。 */
   uncollectedConditions: function (source) {
     const s = source || this.data
     return CONDITION_FIELDS.filter(f => String(s[f[0]] || '').trim() !== '').map(f => f[1])
@@ -171,15 +168,18 @@ Page({
   },
   search: function () { if (this.data.gatePassed) this.read(); else this.checkGate() },
   reset: function () { this.setData({ q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '' }); this.syncProfileNote(); this.search() },
-  /**
-   * 未采集条件的出口：只清空生育期／种植方式／使用场景（作物／杂草／地区／关键词保持不变）后重查。
-   * 与 `reset`（清空全部条件）区分：用户只是想绕开"资料没采集"的维度，不必丢掉已选的作物与地区。
-   * 展开「更多条件」让用户看得见这三个输入框确实已被清空。
-   */
-  clearUncollected: function () {
-    this.clear(); api.clearSelection()
+  /** 未采集条件的出口：只清空生育期／种植方式／使用场景（作物／杂草／地区／关键词保持不变）后重查。
+   * 与 `reset`（清空全部条件）区分：用户只是想绕开"资料没采集"的维度，不必丢掉已选的作物与地区；展开「更多条件」让用户看得见这三个输入框确实已被清空。 */
+  clearUncollected: function () { this.clear(); api.clearSelection()
     this.setData({ growth_stage: '', planting_method: '', use_scene: '', advanced: true })
-    this.search()
+    this.search() },
+  /** 预置筛选命空的回退：只有「页面按档案自动预置、用户没改过作物／地区、也没另填条件」的首屏查询
+   * 才允许回退成「全部作物＋全部地区」重查一次；用户手选过就不动他的条件（否则等于筛选失灵）。 */
+  presetFallback: function (r, cursor) {
+    const d = this.data, q = this._applied || {}
+    if (cursor || r.items.length || d.profileState !== 'applied' || !this._preset || d.cropIndex !== this._preset.cropIndex || d.regionIndex !== this._preset.regionIndex) return null
+    if ((!q.crop_id && !q.region_code) || q.q || q.species_id || this.uncollectedConditions(q).length) return null
+    const next = Object.assign({}, q); delete next.crop_id; delete next.region_code; return next
   },
   next: function () { if (!this.data.busy && this.data.nextCursor) this.read(this.data.nextCursor) },
   read: async function (cursor) {
@@ -190,22 +190,22 @@ Page({
     let q
     try {
       q = cursor ? Object.assign({}, this._applied, { cursor }) : this.conditions()
-      if (!cursor) this._cursors = []
+      if (!cursor) { this._cursors = []; this._fallback = false }
       if (cursor && this._cursors.indexOf(cursor) !== -1) throw { code: 'INVALID_RESPONSE' }
       this._applied = Object.assign({}, q); delete this._applied.cursor
       this.setData({ busy: true, status: '正在核对当前资料…', stateKind: 'loading' })
       const r = await api.list(q)
       if (!current()) return
-      if (r.nextCursor && (this._cursors.indexOf(r.nextCursor) !== -1 || this._cursors.length >= 100)) throw { code: 'INVALID_RESPONSE' }
-      if (cursor) this._cursors.push(cursor)
+      if (r.nextCursor && (this._cursors.indexOf(r.nextCursor) !== -1 || this._cursors.length >= 100)) throw { code: 'INVALID_RESPONSE' }; if (cursor) this._cursors.push(cursor)
       this._displayBinding = b
-      // 空结果要分清两种原因：条件维度非空 ⇒ **资料未采集该维度**（服务端必然返回空，给出明确原因与
-      // 清空出口）；三个条件都为空 ⇒ 才是既有泛化空态"没有符合条件的资料"。
+      // 预置筛选命空 ⇒ 去掉预置的作物／地区回退成「全部作物＋全部地区」重查一次（判定边界见 presetFallback）；用户手选过就不回退。
+      const fb = this.presetFallback(r, cursor), res = fb ? await api.list(fb) : r
+      if (fb) { if (!current()) return; if (res.items.length) { this._fallback = true; this._applied = fb; this.setData({ cropIndex: 0, regionIndex: 0, profileNote: '' }) } }
+      // 空结果要分清两种原因：条件维度非空 ⇒ **资料未采集该维度**（服务端必然返回空，给出明确原因与清空出口）；三个条件都为空 ⇒ 才是既有泛化空态"没有符合条件的资料"。
       const uncollected = this.uncollectedConditions(this._applied)
-      this.setData({ busy: false, nextCursor: r.nextCursor, modeNote: api.modeNote(r.mode),
-        items: r.items.map(item => ({ id: item.id, item, labels: api.labels(item), sourceDate: require('../../utils/time-format').formatDate(item.source && item.source.updated_at), conditionNote: item.conditions ? '适用条件需逐项核对，不能据此推定用量可用。' : '条件资料不足，不能据此确定适用性或用量。' })),
-        stateKind: r.items.length ? 'ready' : (uncollected.length ? 'uncollected' : 'empty'),
-        status: r.items.length ? '已读取当前页资料；详情会重新核对来源。' : (uncollected.length ? this.uncollectedNote(uncollected) : '没有符合条件的资料，请调整条件继续查询。') })
+      this.setData({ busy: false, nextCursor: res.nextCursor, modeNote: api.modeNote(res.mode), fallbackNote: this._fallback ? '演示资料未标注适用作物与地区，已按全部范围显示。' : '',
+        items: res.items.map(item => ({ id: item.id, item, labels: api.labels(item), sourceDate: require('../../utils/time-format').formatDate(item.source && item.source.updated_at), conditionNote: item.conditions ? '适用条件需逐项核对，不能据此推定用量可用。' : '条件资料不足，不能据此确定适用性或用量。' })),
+        stateKind: res.items.length ? 'ready' : (uncollected.length ? 'uncollected' : 'empty'), status: res.items.length ? '已读取当前页资料；详情会重新核对来源。' : (uncollected.length ? this.uncollectedNote(uncollected) : '没有符合条件的资料，请调整条件继续查询。') })
     } catch (e) {
       if (!current()) { if (this._gateActive === true && this._readOperation === operation) { this.clear(); this.setData({ gatePassed: false, status: api.message(e) }) }; return }
       this.setData({ busy: false, items: [], nextCursor: null, status: api.message(e), stateKind: 'error' })
