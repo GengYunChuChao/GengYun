@@ -10,8 +10,8 @@
 | --- | --- |
 | 仓库 / 基线 | `GengYunChuChao/GengYun` · `origin/main` = `3ea57925`（本页证据即在该提交的工作树上取的） |
 | 切片档位 | B 档：改 `tools/**` 与 `tests/**`，另加本页与 `docs/release/release-gate.md`；**不碰** `.github/**` |
-| 取证方式 | 真跑：临时 git 仓库夹具 ×4 组、改前/改后两份 `release-gate.mjs`、`node --test`、六道闸门 |
-| 改前工具 | `git show origin/main:tools/release-gate.mjs`（1010 行）另存后对拍；改后 1052 行 |
+| 取证方式 | 真跑：临时 git 仓库夹具 ×4 组、改前/改后两份 `release-gate.mjs`、`node --test`、七道闸门 |
+| 改前工具 | `git show origin/main:tools/release-gate.mjs`（1009 行）另存后对拍；改后 1051 行 |
 | 结论性质 | 「这两条假绿通道已被堵上」＝已证；「release-gate 已进 CI」「覆盖 pg 臂」「能扫历史泄漏」＝**未**证（见 §6） |
 
 ## 1 两个补丁改了什么
@@ -81,10 +81,44 @@ node tools/release-gate.mjs --root <夹具B> --only artifacts --max-file-bytes 5
    `stat` + 前 8 KiB，阈值与 NUL 判据一字未改。改名不会凭空造出 `sk-` 形状的文本或 NUL 字节。
 4. **口径上「只收紧」**：唯一的失败面增量是「原本 0 行 ⇒ 现在有行」。任何一条在 `AM` 下 `passed` 的夹具，
    在 `AMR` 下要么 `passed`（新增的 R 行没命中），要么 `failed`（新增的 R 行命中）——后者正是要修的漏扫。
-5. **不碰删除**：`D` 没有被加进 filter。删掉的代码不进入待发布版本，扫它只会制造与发布无关的红。
+5. **不碰删除**：`D` 没有被加进 filter。这不是口味问题——`AMRD` 是**错的**，实测见 §2.2
+   （`git rm --cached` 会假红、`scannedFiles` 被删除项污染）。
 
 反向自证（原本就红的情况改后仍然红，见 §3 夹具 C 与 §4 负控制）：`--base HEAD~1` 的真泄漏在改前后都是
 退出码 1；`AM`/`AMR` 都包含它所在的 `A` 条目。
+
+### 2.2 为什么是 `AMR` 而不是 `AMRD`（双夹具对照）
+
+独立审查（`88170f24`）提出、本片**自己复跑复现**：`D` 不能进 filter，否则会把「文件已不在待发布树里」的
+形状当成待发布内容。对照做法是把 `--diff-filter=AMR` 机械替换成 `AMRD`（两处）另存为
+`release-gate-amrd.mjs`，同一夹具、同一参数各跑一遍。
+
+夹具 G——`git rm --cached ghost.bin`（git 记成 `D`，但文件仍在工作树里，并不进入待发布版本）：
+
+```text
+git -C <夹具G> --name-status HEAD~1 HEAD   ⇒ D	ghost.bin     (工作树里 ghost.bin 仍在)
+
+# AMR（本片实现）
+node tools/release-gate.mjs --root <夹具G> --base HEAD~1 --only artifacts
+⇒ EXIT 0    verdict=pass  scannedFiles=0  findings=[]
+
+# AMRD（对照，仅把两处 filter 换成 AMRD）
+node release-gate-amrd.mjs --root <夹具G> --base HEAD~1 --only artifacts
+⇒ EXIT 1    verdict=fail  scannedFiles=1  findings=["ghost.bin:binary"]   ← 假红
+```
+
+夹具 F——同一提交里真删除两个二进制（`D` + `D`，没有 A/M/R）：
+
+```text
+git -C <夹具F> --name-status HEAD~1 HEAD   ⇒ D	a.bin / D	b.bin
+
+AMR  ⇒ EXIT 0  verdict=pass  scannedFiles=0  findings=[]
+AMRD ⇒ EXIT 0  verdict=pass  scannedFiles=2  findings=[]      ← 不红，但 scannedFiles 被删除项污染（0 → 2）
+```
+
+两条结论：① `D` 会在「文件还在、只是不跟踪了」的形状上制造**假红**，而 `AMR` 判 `passed` 才是对的；
+② 即便不假红，`D` 也会把删除项算进 `scannedFiles`，而该字段语义是「扫过的**待发布**文件数」——多算等于
+报告自己在说谎，也会破坏新增用例②对 `scannedFiles === 2` 的语义。所以边界停在 `AMR`。
 
 ## 3 补丁 2 的读数（改前 / 改后）
 
@@ -129,7 +163,7 @@ HEAD 上有一个真泄漏文件 `leak.txt`。HEAD = `ebcbdd47`，HEAD~1 = `67d8
 
 ## 4 新增用例与红/绿原文
 
-`tests/unit/release-gate.test.mjs`：394 行 → 543 行；用例 10 条 → **13 条**（原有 10 条一字未改、名字与顺序不变）。
+`tests/unit/release-gate.test.mjs`：394 行 → 545 行（+151）；用例 10 条 → **13 条**（原有 10 条一字未改、名字与顺序不变）。
 另把夹具 helper 扩成 `makeGitFixture(files, branch = 'main')`，以便造出「没有 `main` 分支」的仓库
 （否则 `--require-base` 测不到「默认 fallback 落到 HEAD」那条路径）；既有 10 条的调用点不受影响。
 
@@ -196,7 +230,7 @@ node --test --test-name-pattern="AMR|R100|require-base" tests/unit/release-gate.
 `tools/release-gate.mjs:542` / `tools/release-gate.mjs:484-495` / `tools/release-gate.mjs:1014-1022`），
 重跑为 0。没有用 `--write-baseline` 登记，也没有改判据。
 
-另外跑过（不属六道闸门，但与本片直接相关）：`node --test tests/unit/release-gate.test.mjs` ⇒ 13/13 绿（§4.1），
+另外跑过（不属七道闸门，但与本片直接相关）：`node --test tests/unit/release-gate.test.mjs` ⇒ 13/13 绿（§4.1），
 `node --check` 两个改动文件均通过。
 
 **没跑全量 `npm run test:unit`**：取证机当时 `Get-Process node` 有 60 个进程（派单阈值 >6 即不跑），
@@ -225,6 +259,22 @@ node --test --test-name-pattern="AMR|R100|require-base" tests/unit/release-gate.
 - 派单预写的读数（夹具 A：改前 0 行 / 改后 `moved.txt:21`；夹具 C：默认 0 / `--require-base` 2 /
   `--base HEAD~1` 1）与实测**逐条吻合**，无需修正。
 - 派单未提、实测补上的一条：`docs/release/release-gate.md` 的「参数一览」在 §1（不是单独小节），
-  加行后整页 183 → 194 行；该页**本提交内被改**，按仓库规矩不需要登记
+  加行后整页 183 → 203 行；该页**本提交内被改**，按仓库规矩不需要登记
   `tests/unit/doc-anchor-relocations.json`（登记只针对「目标文件本次未改」的漂移，本页 692 条登记里
   没有一条指向它）。
+
+## 8 审查后修订（P2，追加提交）
+
+独立审查（`88170f24`）带 nit 通过（P0/P1 均为 0），四条 P2 已在本分支追加提交里修掉；改动只在文档与证据页，
+`tools/**` 与 `tests/**` 的代码一字未动（因此 §2–§4 的读数无需重跑，仍对应 `4c7cb2d7` 与之前的实现）。
+
+| # | 位置 | 改前 | 改后 |
+| --- | --- | --- | --- |
+| P2-1 | 本页元信息表与 §4 | `1010 行` / `1052 行`；`394 行 → 543 行` | `1009 行` / `1051 行`；`394 行 → 545 行（+151）`——原先按 `split('\n')` 的尾部空串少算/多算，现按 `wc -l` 口径 |
+| P2-2 | 本页元信息表、§5 末句 | 「六道闸门」 | 「七道闸门」——§5 表里本来就是 7 行（四连 strict、identity、contract-status、test:docs、g-drill、merge-tree、verification-comment-anchors） |
+| P2-3 | `docs/release/release-gate.md` §7 | 只写「`push` 落到 HEAD ⇒ 空 diff 假绿」 | 显式写明「`--require-base` 仅适用 `pull_request`（或其它 `origin/main != HEAD`）事件；`push` 到 `main` 时 `origin/main` 就是 `HEAD`，照抄会**恒退出 2**，属按设计行为」 |
+| P2-4 | `docs/release/release-gate.md` §3.1 退出码表 | 退出码 `2` 的典型场景里没有 `--require-base` | 补「`--require-base` 下基线解析不到或解析结果就是 `HEAD`」 |
+| P2-5 | `docs/release/release-gate.md` §8 | 「纯删除（`D`）仍不扫，因为删掉的代码不进入待发布版本」 | 换成实测理由（§2.2 的夹具 F/G）：`git rm --cached` 假红 + `scannedFiles` 语义污染 |
+
+跳过 P2-6（用例③ 里 `/HEAD/` 冗余断言）：它不影响判别力，且已被更强的
+`/--require-base 要求基线不是 HEAD/` 覆盖；删它要重跑全套用例，收益为零。
