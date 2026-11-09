@@ -93,6 +93,8 @@ $lines = foreach ($k in $map.Keys) { "$k=$(& $get $map[$k])" }
 node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file E:\GengYunPrivate\demo-real.env
 ```
 
+要开演示档就再加 `--demo`（见 §3.1）。
+
 它按九步走，每一步都会说自己在干什么：
 
 | 步骤 | 你会看到 | 这一步实际做了什么 |
@@ -104,7 +106,7 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | `[5/9] 数据目录与 initdb` | 第一次 `✓ 新建簇`，之后 `✓ 已有簇，复用` | 只在第一次初始化 |
 | `[6/9] 启动 PG 簇` | `✓ 已启动（日志 …\pg.log）` | 只监听 127.0.0.1 |
 | `[7/9] 建库与迁移` | `✓ 数据库 gengyun 已存在` / `✓ 迁移完成（应用 N 个）` | 建库 + 跑迁移 |
-| `[8/9] 种子数据` | `✓ seed_reference.sql` / `✓ 已导入过…跳过` | 只在 real 模式灌演示资料 |
+| `[8/9] 种子数据` | `✓ seed_reference.sql` / `✓ 已导入过…跳过`；带 `--demo` 时还会看到 `[8/9] 演示开关：已开启 …` | real 模式灌演示资料；`--demo` 另外把三个开关置为开启 |
 | `[9/9] 启动 API` | `已启动：pid …` → `✓ /health → 200 ok（database=ok, mode=real）` | 后台起 API，轮询健康检查 |
 
 成功的判据是**最后这几行**（原文摘自一次真跑）：
@@ -132,6 +134,38 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | 5 | 种子失败 | 屏幕上的最后 15 行 |
 | 6 | API 启动即退出 | 自动打印的 API 日志尾 30 行 |
 | 7 | 健康检查超时（进程还活着但没 200） | 自动打印的 API 日志尾 30 行 |
+| 8 | 演示开关写入失败（`--demo`） | 屏幕上的 psql 报错原文；确认迁移已完成 |
+| 8 | 演示开关写入失败（`--demo`） | 屏幕上的 psql 报错原文；确认迁移已完成 |
+
+### 3.1 演示档 `--demo` 做什么、不做什么
+
+`--demo` 是给**本机演示**用的一次性便利开关。它只做一件事：在迁移完成、种子处理完之后，用**一次** `psql -c` 把 `public.feature_flags` 的三行更新成演示档：
+
+- `enabled = true`
+- `revision = revision + 1`
+- `reason = 'demo-stack local demo profile (non-production)'`
+- `changed_at = now()`
+
+三个键与它们的语义：
+
+| 开关 | 开启时 | 关掉时 |
+| --- | --- | --- |
+| `submissions_enabled` | 社区投稿与评论可受理 | 社区投稿不可用（`POST /posts`、`POST /posts/:id/comments` 拒绝） |
+| `specific_herbicide_output_enabled` | `/herbicides` 与登记核对可输出制剂信息 | `/herbicides` 返回 409，错误详情里的 `code` 是 `FLAG_CLOSED` |
+| `ai_enabled` | 识别、OCR、转写、合成、文字问答的**任务受理面**可用 | 这些受理面返回 409（任务不会被受理） |
+
+幂等策略：每条 `UPDATE` 都带「当前还不是演示档」的条件；已经是 `enabled = true` 且 `reason` 一致的行不会再次 `revision + 1`。所以 `down` 后再 `up --demo`，revision 不会越加越大；第一次真正写入时每个键只加一次。
+
+它**不**做这些：
+
+- 不新增迁移，不改 `services/api/**`，也不改开关的默认值、后台写入口或权限模型；
+- 不改种子里已有的业务资料，不建演示账号，不补首页的 `verified` 来源；
+- 不碰生产环境、不改 `.env` 或凭据，也不把开关值写回任何模板；
+- 不是「安全建议」。这是**本机演示配置**：生产环境该开哪个、什么时候开，要按实际审核与合规要求决定，不能照抄这里的三个 `true`。
+
+不带 `--demo` 时只打印「演示开关：未开（默认）」，不执行任何 `UPDATE`，`public.feature_flags` 保持迁移后的原值。
+
+> 这是本机演示配置，不是生产建议。
 
 ## 4 看一眼：`status`
 
@@ -196,9 +230,22 @@ node tools/demo-stack.mjs logs --lines 50
 | 11 | 首页 503（stub 模式） | **正常契约**：非 real 模式首页必 503（数据库未接入） | 要演示首页就用 `--mode real`；stub 只用来验证「进程/端口/健康」链路 |
 | 12 | 首页 200 但列表空的 | 资料接入缺项，不是栈坏了 | 见 §7 |
 
-## 7 首页为什么是空的
+## 7 首页为什么是空的 / 怎么灌演示资料
 
-`real` 模式下首页读的是数据库里的 `catalog_read.home_species` 视图；**当前种子数据里没有一条"已核对"的资料**，所以接口是 **200 + 空列表**（`{"previews":[],"human_review_state":"under_construction"}`），页面显示「暂无资料」。
+### 7.1 先分清是「栈坏了」还是「资料缺项」
+
+`real` 模式下首页读的是数据库里的 `catalog_read.home_species` 视图，接口本身没问题：返回 **200 + 空列表**（`{"previews":[],"human_review_state":"under_construction"}`）的唯一原因是**视图里 0 行**。
+
+视图不是「有知识就上」，它同时要求：
+
+- 知识是 `type = 'species'`、`visibility = 'published'`，且是该 `knowledge_id` 的最大 revision；
+- 它的来源版本 `review_status = 'verified'`、`reviewed_by` 与 `reviewed_at` 非空、`validity = 'valid'` 且在有效期内；
+- 该来源版本就是所属 `sources.current_version_id`；
+- 数据集配置 `active_mode = 'real'` 且 `database_connected = 'true'`。
+
+仓库里现有的种子（`db/seeds/seed_reference.sql`、`db/seeds/seed_zhejiang_materials.sql`）来源版本**全是 `unverified`**——开发侧不是法定审核责任人，这是**对的**，不该为了首页好看去改那一行。
+
+所以裸 `up` 之后列表空是**资料缺项**，不是本栈故障，也不该在工具里用假数据兜底。
 
 自己核一遍（只读，不改数据）：
 
@@ -206,7 +253,31 @@ node tools/demo-stack.mjs logs --lines 50
 & 'E:\GengYunCommander\.pg17\pgsql\bin\psql.exe' -h 127.0.0.1 -p 55510 -U postgres -d gengyun -c "select count(*) from catalog_read.home_species;"
 ```
 
-期望 `0`。这属于**资料侧缺项**（要有已核对来源才会出现在首页），不是本栈故障，也不该在工具里用假数据兜底。需要"首页有点东西"时，去找负责资料入库的同事补 `verified` 来源。
+没灌过演示资料时，期望 `0`。
+
+### 7.2 要首页有卡片：显式加 `--seed-demo`
+
+```powershell
+node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file E:\GengYunPrivate\demo-real.env --seed-demo
+```
+
+- **默认不开**。不带这个参数时行为与以前完全一致（首页空列表）；带了 `--seed-demo` 却给了 `--mode stub` 会直接报错退出，不会静默忽略。
+- 打开后额外灌一份 `db/seeds/demo_catalog_verified.sql`，成功时打印 `✓ 已灌演示资料（非生产数据）：…`；已灌过则打印「已灌过，跳过」（state 记 `demo:gengyun`，重灌用 `up --reset --seed-demo`）。
+- 灌进去的是**演示用资料**：标题/学名/别名只取自 `db/seeds/seed_reference.sql` 里已有的 8 个物种行，正文带「【演示资料·非生产数据】」前缀；`reviewed_by` 指向一个**登录不进去的占位账号**，**不是真人审核、不是第三方审核**，也不构成识别结论、防治建议或用药建议。它只影响本机这台机器的这个演示库。
+- 幂等：写入全部是 `INSERT … ON CONFLICT DO UPDATE`；重复执行不新增行、不抬高 `sources.revision`、不改 `knowledge_versions.created_at`。若 `public.species` 参考行缺失，文件末尾的自检会 `RAISE EXCEPTION` 直接失败——不会「看起来灌了、其实 0 行」。
+- 撤回：文件末尾有注释掉的逐条回滚 SQL；最省事的是 `up --reset`（或 `reset --yes` 删整个状态目录）。
+
+灌完自检：
+
+```powershell
+curl.exe -s -w "`n%{http_code}`n" http://127.0.0.1:38110/api/v1/public/home
+```
+
+期望 **200** 且 `previews` 有 8 条，每条 `"content_type":"knowledge"`、`"source_kind":"verified_seed"`。
+
+仍是空列表时按这个顺序看：返回 503 ⇒ 不是 `real` 模式；200 但 0 条 ⇒ 先跑 7.1 的 psql，再确认 `up` 的输出里有没有「已灌演示资料（非生产数据）」。
+
+完整的实跑读数、为什么它不算生产数据、以及**不声称**清单见[演示资料种子证据页](../verification/gy-r90-demo-seed-20261109.md)。
 
 ## 8 和微信开发者工具接上（`prepare-wechat` 衔接）
 
@@ -263,6 +334,8 @@ node tools/demo-stack.mjs reset --yes
 | --- | --- |
 | 在哪跑 | `cd E:\GengYunCommander\.pg17\wt-demo-stack` |
 | 起来 | `node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file E:\GengYunPrivate\demo-real.env` |
+| 演示档 | 在上面的 `up` 末尾加 `--demo`（三个开关置为开启；幂等，仅本机演示） |
+| 首页要卡片（演示资料） | 上面那条加 `--seed-demo`（默认不开；灌的是非生产数据，见 §7.2） |
 | 状态 | `node tools/demo-stack.mjs status --port 38110 --pg-port 55510` |
 | 日志 | `node tools/demo-stack.mjs logs --lines 50` |
 | 收工 | `node tools/demo-stack.mjs down --port 38110 --pg-port 55510` |

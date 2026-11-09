@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_PORTS,
+  DEMO_FLAG_KEYS,
+  DEMO_FLAG_REASON,
   DEMO_SCHEMA,
   ENV_FILE_TEMPLATE,
   EXTERNAL_KEYS,
@@ -18,6 +20,8 @@ import {
   REQUIRED_REAL_ENV,
   UsageError,
   assembleApiEnv,
+  buildDemoFlagSql,
+  buildDemoFlagStatements,
   buildPidRecord,
   buildPsqlFileArgs,
   classifyFailure,
@@ -61,6 +65,8 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
   assert.equal(defaults.pgPort, DEFAULT_PORTS.pg);
   assert.equal(defaults.envFile, null);
   assert.equal(defaults.reset, false);
+  assert.equal(defaults.demo, false);
+  assert.equal(defaults.seedDemo, false);
   assert.equal(defaults.timeoutMs, 90_000);
 
   const custom = parseArgs([
@@ -80,6 +86,7 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
     '12',
     '--reset',
     '--yes',
+    '--demo',
   ]);
   assert.equal(custom.mode, 'stub');
   assert.equal(custom.apiPort, 3111);
@@ -90,6 +97,17 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
   assert.equal(custom.lines, 12);
   assert.equal(custom.reset, true);
   assert.equal(custom.yes, true);
+  assert.equal(custom.demo, true);
+  assert.equal(custom.seedDemo, false);
+});
+
+test('parseArgs：--seed-demo 是显式开关，默认不开，且只配 real', () => {
+  assert.equal(parseArgs(['up', '--seed-demo']).seedDemo, true);
+  assert.equal(parseArgs(['up', '--seed-demo', '--reset']).seedDemo, true);
+  assert.equal(parseArgs(['up']).seedDemo, false);
+  // 配错模式要报错，不能静默忽略（否则用户以为灌了演示资料，实际没灌）
+  assert.throws(() => parseArgs(['up', '--mode', 'stub', '--seed-demo']), UsageError);
+  assert.throws(() => parseArgs(['up', '--seed-demo', '--mode=stub']), /--seed-demo 只在 real 模式生效/u);
 });
 
 test('parseArgs：子命令与 --help', () => {
@@ -100,6 +118,7 @@ test('parseArgs：子命令与 --help', () => {
   assert.equal(parseArgs(['--help']).help, true);
   assert.match(usage(), /node tools\/demo-stack\.mjs <up\|down\|status\|logs\|reset>/u);
   assert.match(usage(), /--pg-port/u);
+  assert.match(usage(), /--demo/u);
 });
 
 test('parseArgs：非法输入必须报错（不静默 fallback）', () => {
@@ -303,6 +322,31 @@ test('buildPsqlFileArgs：种子用 -f 且失败即停', () => {
   assert.equal(args[args.indexOf('-d') + 1], 'gengyun');
 });
 
+test('buildDemoFlagStatements：--demo 才拼 3 条 UPDATE，不带时 0 条', () => {
+  assert.deepEqual(buildDemoFlagStatements(), []);
+  assert.deepEqual(buildDemoFlagStatements({ demo: false }), []);
+  assert.equal(buildDemoFlagSql({ demo: false }), null);
+
+  assert.deepEqual(DEMO_FLAG_KEYS, ['submissions_enabled', 'specific_herbicide_output_enabled', 'ai_enabled']);
+  const statements = buildDemoFlagStatements({ demo: true });
+  assert.equal(statements.length, 3);
+  for (const [index, key] of DEMO_FLAG_KEYS.entries()) {
+    const statement = statements[index];
+    assert.ok(statement.startsWith('UPDATE public.feature_flags'));
+    assert.ok(statement.includes(`WHERE key = '${key}'`));
+    assert.ok(statement.includes('SET enabled = true'));
+    assert.ok(statement.includes('revision = revision + 1'));
+    assert.ok(statement.includes(`reason = '${DEMO_FLAG_REASON}'`));
+    assert.ok(statement.includes('changed_at = now()'));
+    assert.ok(statement.includes('enabled IS DISTINCT FROM true'));
+    assert.ok(statement.endsWith('RETURNING key;'));
+  }
+
+  const sql = buildDemoFlagSql({ demo: true });
+  assert.equal(sql.split('UPDATE public.feature_flags').length - 1, 3);
+  assert.match(sql, /non-production/u);
+});
+
 test('pid 记录：往返一致，格式不对就当作没有（不猜 pid）', () => {
   const record = buildPidRecord({ pid: 4321, port: 3000, mode: 'real', instanceId: 'abc-123', startedAt: '2026-11-09T10:00:00.000Z', logFile: 'E:/state/api.log' });
   assert.equal(record.schema, DEMO_SCHEMA);
@@ -354,6 +398,20 @@ test('nextStepsLines：指向根路径 /health，并说清 apiBaseUrl 与 prepar
   const stub = nextStepsLines({ mode: 'stub', apiPort: 3100 }).join('\n');
   assert.match(stub, /503/u);
   assert.match(stub, /3100/u);
+});
+
+test('nextStepsLines：带 --seed-demo 时改说「演示卡片」，不再说「暂无资料」', () => {
+  const seeded = nextStepsLines({ mode: 'real', apiPort: 3000, seedDemo: true }).join('\n');
+  assert.match(seeded, /--seed-demo/u);
+  assert.match(seeded, /演示/u);
+  assert.match(seeded, /非生产数据/u);
+  assert.ok(!/暂无资料/u.test(seeded), '带 --seed-demo 还提示「暂无资料」会把用户引回空首页');
+
+  // 默认（不传 seedDemo）保持原文案：不能因为新参数把老行为改了
+  const plain = nextStepsLines({ mode: 'real', apiPort: 3000 }).join('\n');
+  assert.match(plain, /暂无资料/u);
+  // stub 分支不受影响
+  assert.match(nextStepsLines({ mode: 'stub', apiPort: 3100, seedDemo: false }).join('\n'), /503/u);
 });
 
 test('resolvePaths：日志/pid/数据目录都挂在一个状态根下', () => {

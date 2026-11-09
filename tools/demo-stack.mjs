@@ -20,12 +20,12 @@ import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 
 import {
-  DEFAULT_PORTS,
+  DEFAULT_PORTS, DEMO_FLAG_KEYS,
   ENV_FILE_TEMPLATE,
   GENERATED_KEYS,
   INSTANCE_FLAG,
   UsageError,
-  assembleApiEnv,
+  assembleApiEnv, buildDemoFlagSql,
   buildPidRecord,
   buildPsqlFileArgs,
   classifyFailure,
@@ -61,10 +61,13 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const API_ENTRY = join(REPO_ROOT, 'services', 'api', 'src', 'server.ts');
 const MIGRATE_ENTRY = join(REPO_ROOT, 'services', 'api', 'src', 'db', 'migrate.ts');
 const SEED_FILES = ['seed_reference.sql', 'seed_herbicides_verified.sql'].map((name) => join(REPO_ROOT, 'db', 'seeds', name));
+// 演示资料种子：只有 `--seed-demo` 显式打开才跑。灌进去的是**演示用资料**，
+// 不是生产数据、也不代表第三方审核（文件头与 docs/demo 运行手册都写明了）。
+const DEMO_SEED_FILE = join(REPO_ROOT, 'db', 'seeds', 'demo_catalog_verified.sql');
 const DATABASE_NAME = 'gengyun';
 
 /** 退出码：不同阶段不同码，脚本与人都能据此判断卡在哪。 */
-const EXIT = { OK: 0, USAGE: 1, PORT: 2, PG: 3, MIGRATE: 4, SEED: 5, API: 6, HEALTH: 7 };
+const EXIT = { OK: 0, USAGE: 1, PORT: 2, PG: 3, MIGRATE: 4, SEED: 5, API: 6, HEALTH: 7, DEMO: 8 };
 
 const WIN = process.platform === 'win32';
 
@@ -408,6 +411,35 @@ function printPlan(context) {
   say(`  PG bin：${pgBin}`);
 }
 
+/**
+ * 演示档：迁移完成后把三个契约开关置为开启。
+ *
+ * 只走 psql 的**一个** `-c`：三条 UPDATE 在同一个 simple query 里，失败整组回滚；
+ * SQL 自带幂等条件，重复 `up --demo` 不会再次累加 revision。这里不改迁移、不碰 `services/**`。
+ */
+function applyDemoProfile({ options, pgBin }) {
+  const result = psql(pgBin, buildPsqlArgs({ port: options.pgPort, database: DATABASE_NAME, sql: buildDemoFlagSql({ demo: true }) }), 60_000);
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (result.status !== 0) {
+    failWith({ stage: 'demo-profile', output }, [
+      '  栈的其它部分已就绪，但三个开关没有写成演示档；先修 psql 报错，再重跑 `up --demo`。',
+    ]);
+    return EXIT.DEMO;
+  }
+
+  const updated = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => DEMO_FLAG_KEYS.includes(line));
+  say('[8/9] 演示开关：已开启 submissions_enabled / specific_herbicide_output_enabled / ai_enabled（非生产）');
+  if (updated.length === 0) {
+    say('  已是演示档：3 个开关均已开启且 reason 一致，revision 未重复累加（幂等）');
+  } else {
+    say(`  本次更新 ${updated.length}/3 个开关（revision +1）：${updated.join(' / ')}`);
+  }
+  return EXIT.OK;
+}
+
 async function teardown(context, { keepData = true } = {}) {
   const { options, paths, pgBin } = context;
   const stopped = { api: '未运行', pg: '未运行' };
@@ -489,7 +521,7 @@ async function commandUp(options) {
       return EXIT.HEALTH;
     }
     say(`  ✓ /health → ${health.last.reason}（${health.elapsedMs}ms）`);
-    for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort })) say(line);
+    for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo })) say(line);
     return EXIT.OK;
   }
 
@@ -646,26 +678,64 @@ async function commandUp(options) {
   say('[8/9] 种子数据');
   const stateBefore = readState(paths);
   const seedKey = `${options.mode}:${DATABASE_NAME}`;
+  const demoSeedKey = `demo:${DATABASE_NAME}`;
   const alreadySeeded = Array.isArray(stateBefore.seeded) && stateBefore.seeded.includes(seedKey);
+  const demoAlreadySeeded = Array.isArray(stateBefore.seeded) && stateBefore.seeded.includes(demoSeedKey);
   if (options.mode !== 'real') {
     say('  stub 模式：跳过种子（stub 只是链路自检，不写业务资料）');
-  } else if (alreadySeeded && !options.reset) {
-    say(`  ✓ 已导入过（state 记录 ${seedKey}），跳过；要重灌用 \`up --reset\``);
   } else {
-    for (const file of SEED_FILES) {
-      const name = file.split(/[\\/]/u).pop();
-      const result = psql(pgBin, buildPsqlFileArgs({ port: options.pgPort, database: DATABASE_NAME, file }), 180_000);
+    if (alreadySeeded && !options.reset) {
+      say(`  ✓ 参考数据已导入过（state 记录 ${seedKey}），跳过；要重灌用 \`up --reset\``);
+    } else {
+      for (const file of SEED_FILES) {
+        const name = file.split(/[\\/]/u).pop();
+        const result = psql(pgBin, buildPsqlFileArgs({ port: options.pgPort, database: DATABASE_NAME, file }), 180_000);
+        if (result.status !== 0) {
+          failWith({ stage: 'seed', output: `${result.stdout ?? ''}\n${result.stderr ?? ''}` }, [
+            `  失败的种子：${name}`,
+            `  输出（最后 15 行）：`,
+            ...tailLines(`${result.stdout ?? ''}\n${result.stderr ?? ''}`, 15).split('\n').map((line) => `    ${line}`),
+          ]);
+          return EXIT.SEED;
+        }
+        say(`  ✓ ${name}`);
+      }
+      writeState(paths, { seeded: [...new Set([...(stateBefore.seeded ?? []), seedKey])] });
+    }
+
+    // --seed-demo 是**显式**开关：默认不开。不开时首页自然是空列表，
+    // 这不是故障；要卡片就得自己带上这个参数（并在报告里写明是演示资料）。
+    if (!options.seedDemo) {
+      say(
+        demoAlreadySeeded
+          ? '  · 演示资料：库内已有（本次未带 --seed-demo，不重复灌）'
+          : '  · 演示资料：未灌（默认不开）⇒ 首页会返回 200 但列表为空；要卡片请加 --seed-demo',
+      );
+    } else if (demoAlreadySeeded && !options.reset) {
+      say(`  ✓ 演示资料已灌过（state 记录 ${demoSeedKey}），跳过；要重灌用 \`up --reset\``);
+    } else {
+      const result = psql(pgBin, buildPsqlFileArgs({ port: options.pgPort, database: DATABASE_NAME, file: DEMO_SEED_FILE }), 180_000);
       if (result.status !== 0) {
         failWith({ stage: 'seed', output: `${result.stdout ?? ''}\n${result.stderr ?? ''}` }, [
-          `  失败的种子：${name}`,
-          `  输出（最后 15 行）：`,
+          '  失败的种子：demo_catalog_verified.sql',
+          '  输出（最后 15 行）：',
           ...tailLines(`${result.stdout ?? ''}\n${result.stderr ?? ''}`, 15).split('\n').map((line) => `    ${line}`),
         ]);
         return EXIT.SEED;
       }
-      say(`  ✓ ${name}`);
+      writeState(paths, { seeded: [...new Set([...(readState(paths).seeded ?? []), demoSeedKey])] });
+      say('  ✓ 已灌演示资料（非生产数据）：db/seeds/demo_catalog_verified.sql');
+      say('    卡片文字取自 db/seeds/seed_reference.sql 的物种参考行；不是生产数据，也不代表第三方审核。');
     }
-    writeState(paths, { seeded: [...new Set([...(stateBefore.seeded ?? []), seedKey])] });
+  }
+
+  // ---- ⑧b 演示档（可选）：迁移完成后再动 feature_flags
+  say('');
+  if (options.demo) {
+    const demoCode = applyDemoProfile({ options, pgBin });
+    if (demoCode !== EXIT.OK) return demoCode;
+  } else {
+    say('演示开关：未开（默认）');
   }
 
   // ---- ⑨ 起 API
@@ -739,10 +809,16 @@ async function commandUp(options) {
   say(`  ✓ /health → ${health.last.reason}（${health.elapsedMs}ms，探测 ${health.attempts} 次）`);
   say('');
   say(`演示栈已就绪：API http://127.0.0.1:${options.apiPort}（${options.mode}），PG 127.0.0.1:${options.pgPort}`);
-  for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort })) say(line);
+  for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo })) say(line);
   if (options.mode === 'real') {
     say('');
-    say('资料侧说明：库内已核对（verified）来源为 0 条 ⇒ 首页 200 但列表可能为空；这是资料接入缺项，不是栈故障。');
+    if (options.seedDemo) {
+      say('资料侧说明：本次带 --seed-demo，已灌**演示资料（非生产数据）**；首页卡片文字来自仓库既有物种参考行，');
+      say('  不代表任何第三方审核，也不构成识别结论或防治/用药建议。重灌见 `up --reset --seed-demo`。');
+    } else {
+      say('资料侧说明：库内已核对（verified）来源为 0 条 ⇒ 首页 200 但列表可能为空；这是资料接入缺项，不是栈故障。');
+      say('  要本机演示卡片：`node tools/demo-stack.mjs up --mode real --seed-demo`（灌的是演示资料，非生产数据）。');
+    }
   }
   return EXIT.OK;
 }
