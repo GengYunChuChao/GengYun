@@ -30,27 +30,22 @@
       "path": "tools/local-debug-server.mjs",
       "kind": "in-process",
       "exercisedBy": "tests/local-debug.test.mjs",
-      "reason": "本机调试 HTTP 服务（startLocalServer）：由 tests/local-debug.test.mjs:9 import 后起在回环端口上驱动，该测试被 local-wechat.yml:57 直接点名；常驻服务没有一次性退出码，接不进 run: 判定面。"
-    },
-    {
-      "path": "tools/i22-failmatrix-evidence-table.mjs",
-      "kind": "by-design",
-      "reason": "证据页生成器：读 tests/failmatrix/.artifacts/matrix.json 与 negative-control.json（由 tests/failmatrix/run.mjs 现场生成、不入库，git ls-files 里没有），没有这两个文件裸跑只会 ENOENT；它只输出 Markdown、无判定面，唯一守卫是夹具副本加归档页保护（tests/unit/i22-failmatrix-evidence-table-guard.test.mjs）。"
+      "reason": "本机调试 HTTP 服务（startLocalServer）：由 tests/local-debug.test.mjs:10 import 后起在回环端口上驱动，该测试被 local-wechat.yml:57 直接点名；常驻服务没有一次性退出码，接不进 run: 判定面。"
     },
     {
       "path": "tools/i22-failmatrix-negative-control.mjs",
       "kind": "by-design",
-      "reason": "人工变异执行器（27 条负控制，需人读输出判读），依赖同一批未入库的 .artifacts 产物，且要故意把注入的缺陷跑出来才叫成功；tests/failmatrix/README.md:22 写明由人工执行，进 CI 会把「负控制全部按预期失败」误报成红。"
+      "reason": "人工变异执行器（27 条负控制，需人读输出判读），依赖同一批未入库的 .artifacts 产物，且要故意把注入的缺陷跑出来才叫成功；tests/failmatrix/README.md 的命令清单（第 22-23 行）与工具表（第 75 行）都把它列为人工执行的手工步骤，进 CI 会把「负控制全部按预期失败」误报成红。"
     },
     {
       "path": "tools/local-env.mjs",
       "kind": "by-design",
-      "reason": "本机开发栈编排（local:up/down/status：起真 PG17 与 API、占了固定端口、读 gitignored 的 .env）；CI 上没有这套宿主环境，也不能为了测它去拉数据库；本机使用路径已被 tests/unit/local-env.test.mjs 以 import 方式覆盖（test:unit 里跑）。"
+      "reason": "本机开发栈编排（local:up/down/status：起真 PG17 与 API、占了固定端口、读 gitignored 的 .env）；CI 上没有这套宿主环境，也不能为了测它去拉数据库；tests/unit/local-env.test.mjs:809 只 import 了其中一个辅助函数 stopSpawnedApi（进程内清理用），不构成接线。"
     },
     {
       "path": "tools/openapi-route-inventory.mjs",
       "kind": "by-design",
-      "reason": "一次性盘点脚本：`node tools/openapi-route-inventory.mjs <root>` 打印已挂载路由表 JSON，没有断言、没有退出码语义（判定在同目录的 openapi-route-parity.mjs，已由 tools-repo-run-smoke 在真仓跑），接进 CI 等于只证明「能打印」。"
+      "reason": "一次性盘点脚本（只被宿主调起）：`node tools/openapi-route-inventory.mjs <root>` 打印已挂载路由表 JSON，没有断言、没有退出码语义，唯一调用方是 tools/openapi-route-parity.mjs:82 的子进程（那个宿主已由 tools-repo-run-smoke 在真仓跑）；接进 CI 等于只证明「能打印」。"
     },
     {
       "path": "tools/prepare-wechat.mjs",
@@ -65,7 +60,7 @@
     {
       "path": "tools/verify-provider-live-r28.mjs",
       "kind": "by-design",
-      "reason": "文件头第 17-18 行明写「⛔ 本工具不得被任何 workflow 引用，也不得进任何 test:* 套件」——它是靠人工触发的真实供应商连通性抽查，接进 CI 会直接违背工具自己的使用边界。"
+      "reason": "文件头第 19 行明写「⛔ 本工具不得被任何 workflow 引用，也不得进任何 test:* 套件」——它是靠人工触发的真实供应商连通性抽查，接进 CI 会直接违背工具自己的使用边界。"
     },
     {
       "path": "tools/verify-production-provisioning.mjs",

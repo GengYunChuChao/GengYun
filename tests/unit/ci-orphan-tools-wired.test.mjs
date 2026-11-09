@@ -1,4 +1,4 @@
-﻿/**
+/**
  * tools/** 接线面元闸门：**每个 `tools/*.mjs` 要么被常跑 workflow 的 `run:` 点名，要么被某个
  * 在真仓上运行它并断言退出码的测试覆盖**；两者都不是，就必须进白名单并写明理由。
  *
@@ -44,11 +44,12 @@
  *      （没有 CLI 入口，被某个**CI 真的会跑**的测试在进程内驱动）/ `gap`（本该接线，本片接不了）；
  *      `reason` 必须写清楚；`library` 的 host 必须存在且最终接到一个已接线脚本；`in-process`
  *      的 `exercisedBy` 必须是真测试文件且该文件被某份 workflow 的 `run:`（含 `npm run` 转接）点名。
- *   ⑤ 反向控制：把合成文本喂给同一批判据函数，钉住 14 条边（YAML 注释 run 不算、块标量里的 shell
+ *   ⑤ 反向控制：把合成文本喂给同一批判据函数，钉住 20 条边（YAML 注释 run 不算、块标量里的 shell
  *      注释不算、`echo` 之后的路径不算、`node --check` 算、整词才算、`paths:` 不造 run 步、仅 import
  *      ⇒ 0 站点、夹具 cwd 不算、`--root` 改指夹具不算、真仓 spawn + `.status` 算、无 `.status` 断言不算、
  *      默认参数是仓库根算、同文件里只有一站断言 ⇒ 另一站仍不算、cpSync 副本 ⇒ 0 站点、裸相对字面量
- *      有/无 cwd 的两种结果）。
+ *      有/无 cwd 的两种结果、参数位/重定向目标/`bash -c` 内层/npm 参数位不算执行、`'--root=' + tmp`
+ *      拼接算改指、helper 的调用点站（真仓臂算 / 夹具臂不算）、同文件同名 `const result` 不串号）。
  *   ⑥ `gap` 台账：登记为「本该接线」的条目逐条打印（不判红），并打印一份读数（已接线各档 / 白名单
  *      各档）供证据页对账。`gap` 是本片留给后续片的待办清单，不是「已经没问题了」的证明。
  *
@@ -222,32 +223,56 @@ function globToRegExp(glob) {
 }
 
 /**
- * 命令文本里是否**执行**了某个仓内路径：路径 token 必须落在命令位（同一段命令里它前面出现过
- * 解释器/运行器词，或它自己就是可执行脚本），且该段命令的首词不是 `echo` / `printf` / `cat` 等
- * 只把路径当数据打印的命令。行尾 `# ...` 注释与块标量里的注释行在切段之前就被剥掉。
+ * 命令文本里是否**执行**了某个仓内路径（P1-4：只认执行位，不认「同段里出现过」）。
  *
- * ⚠️ 这里**不做**完整 shell 语义解析：它只回答「路径是否出现在明显的执行位置」，判不出来时
- * 宁可判成「没接线」（低估），并在证据页的「不声称」里写明这个降级。
+ * 判据：切段 → 段首不是 `echo` / `cat` 这类只打印不执行的命令 → 找到该段的**执行脚本位**：
+ * - `npm/pnpm/yarn run <script>`：只有 script 名可能算（路径出现在这之后都是参数位）；
+ * - 解释器（`node` / `python` / `bash` …）后面跳过 `--flag`，**第一个非 flag 参数**才是被执行脚本；
+ * - 段首本身就是可执行脚本（`./tools/x.mjs`、`tools/x.mjs`）时，它自己就是执行位；
+ * - shell 的 `-c "…"` 内层字符串再切一次递归判；
+ * - `>` / `>>` 之后的重定向目标位不算执行。
+ *
+ * ⚠️ 降级说明（写进证据页「不声称」）：不做完整 shell 解析。`node --import ./pre.mjs tools/x.mjs`
+ * 这种「flag 带值」会被判成**没接线**（宁可低估），而不是放宽成「同段任意 token 都算执行位」。
  */
 function namesPathInCommand(text, relPath) {
   const target = toPosix(relPath);
+  const matches = (token) => token === target
+    || token.endsWith(`/${target}`)
+    || (token.includes('*') && globToRegExp(token).test(target));
+
   for (const segment of commandSegments(text)) {
     const tokens = commandTokens(segment);
     if (tokens.length === 0) continue;
-    if (NON_EXEC.has(tokens[0])) continue;
-    const firstIsExecutableScript = /\.(mjs|cjs|js|py|sh|ps1)$/.test(tokens[0]);
-    let runnerSeen = false;
-    for (const token of tokens) {
-      const hit = token === target
-        || token.endsWith(`/${target}`)
-        || (token.includes('*') && globToRegExp(token).test(target));
-      if (hit) {
-        if (runnerSeen || firstIsExecutableScript || RUNNERS.has(tokens[0])) return true;
-        return false;
-      }
-      const word = token.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
-      if (RUNNERS.has(word)) runnerSeen = true;
+    const head = tokens[0].replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
+    if (NON_EXEC.has(tokens[0]) || NON_EXEC.has(head)) continue;
+
+    // `bash -c "node tools/x.mjs"`：内层字符串另切一次再判。
+    const inlineAt = tokens.findIndex((token) => token === '-c' || token === '/c' || token === '-Command');
+    if (inlineAt >= 0 && ['bash', 'sh', 'pwsh', 'powershell', 'cmd'].includes(head)) {
+      const inner = tokens.slice(inlineAt + 1).join(' ');
+      if (inner && namesPathInCommand(inner, relPath)) return true;
+      continue;
     }
+
+    // `npm run <script>`：路径不会出现在 script 名位置上，后面的一律是参数。
+    if (['npm', 'pnpm', 'yarn'].includes(head)) continue;
+
+    const redirectAt = tokens.findIndex((token) => token === '>' || token === '>>' || /^>>?[^\s>]/.test(token));
+    const limit = redirectAt === -1 ? tokens.length : redirectAt;
+
+    let scriptAt = -1;
+    if (/\.(mjs|cjs|js|py|sh|ps1)$/.test(head) && !RUNNERS.has(head)) {
+      scriptAt = 0;
+    } else if (RUNNERS.has(head)) {
+      for (let i = 1; i < limit; i += 1) {
+        if (tokens[i].startsWith('-')) continue;
+        scriptAt = i;
+        break;
+      }
+    }
+    if (scriptAt < 0 || scriptAt >= limit) continue;
+    if (matches(tokens[scriptAt])) return true;
   }
   return false;
 }
@@ -496,33 +521,137 @@ function readValue(source, from) {
  * `redirected`（`--root` 等被指向夹具）。`isRealRepoRun()` 才是一条 B 证据。
  */
 /**
- * 从一个 spawn 窗口里抓出它指向的 `tools/x.mjs`：别名标识符，或就地写的内联 `join/resolve/new URL`。
- *
- * ⚠️ **不再**用 `/tools\/(x\.mjs)/` 这样的裸正则去窗口里捞路径：那样 `join(project, 'tools/x.mjs')`
- * 与 `cpSync(join(root,'tools'), join(tmp,'tools'))` 之类**夹具副本**也会被当成「跑了仓里的脚本」。
- * 只认锚在仓库根上的路径（P1-B 的反向控制钉住这条）。
+ * 把一段源码按**顶层逗号**切成参数 / 数组元素（跳过字符串与成对括号）。
+ * `spawnSync(process.execPath, [TOOL, '--check'], {cwd: ROOT})` → 2 个参数，第 2 个是数组字面量。
  */
-function toolPathsInWindow(window, context, aliases) {
-  const found = new Set();
-  for (const match of window.matchAll(/((?:path\.)?(?:join|resolve)|new URL)\s*\(/g)) {
-    const inner = callWindow(window, match.index + match[0].length); // 含右括号
-    const tool = toolPathOfExpression(`${match[1]}(${inner}`, context, aliases);
-    if (tool) found.add(tool);
+function splitArguments(text) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const ch = text[index];
+    if (quote) {
+      if (ch === '\\') { index += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    else if (ch === ',' && depth === 0) {
+      parts.push(text.slice(start, index).trim());
+      start = index + 1;
+    }
   }
-  for (const [ident, tool] of aliases) {
-    if (new RegExp(`\\b${ident.replace(/\$/g, '\\$')}\\b`).test(window)) found.add(tool);
-  }
-  return found;
+  parts.push(text.slice(start).trim());
+  return parts.filter(Boolean);
 }
 
-/** 文件里被 `assert.*(...)` **直接**断言过 `.status` 的标识符（`assert.equal(r.status, 0)` → r）。 */
-function assertedStatusIdents(source) {
-  const idents = new Set();
+/**
+ * spawn 调用里**被执行的那个脚本位**（子进程 argv[0]）：`spawnSync(node, [X, …], opts)` → `X`。
+ *
+ * ⚠️ P1-2：只认 argv[0]，而且必须是「被 spawn 的那个元素本身」。窗口里别处出现
+ * `'tools/x.mjs'`（参数位、比较位、`cpSync` 源路径）一律不算——否则
+ * `spawnSync(node, [copy, '--compare', 'tools/zzz.mjs'], {cwd: ROOT})` 会把「跑了 tmp 副本」
+ * 判成「跑了仓里那份」。解析不出来就判没接线（宁可低估）。
+ */
+function spawnArgvZero(window) {
+  const args = splitArguments(window.replace(/\)\s*$/, ''));
+  if (args.length < 2) return null;
+  const argv = args[1].trim();
+  if (!argv.startsWith('[')) return null;
+  const close = argv.lastIndexOf(']');
+  if (close < 0) return null;
+  const elements = splitArguments(argv.slice(1, close));
+  return elements.length > 0 ? elements[0] : null;
+}
+
+/** 函数形参名：`function f(a, b = 1)` 与 `const f = (a, b) => …` 两种写法。 */
+function functionParams(source, name) {
+  const decl = new RegExp(
+    `function\\s+${name}\\s*\\(([^)]*)\\)|(?:const|let|var)\\s+${name}\\s*=\\s*(?:\\(([^)]*)\\)|[A-Za-z_$][\\w$]*)\\s*=>`,
+  ).exec(source);
+  if (!decl) return [];
+  return (decl[1] ?? decl[2] ?? '').split(',').map((one) => one.split('=')[0].trim()).filter(Boolean);
+}
+
+/** 调用了某个 helper 的所有位置（跳过它的声明本身），带实参列表与调用结束位置。 */
+function helperCallSites(source, name) {
+  const calls = [];
+  for (const match of source.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))) {
+    const before = source.slice(Math.max(0, match.index - 16), match.index);
+    if (/function\s*$/.test(before)) continue;
+    const at = match.index + match[0].length;
+    const window = callWindow(source, at);
+    calls.push({index: match.index, end: at + window.length, args: splitArguments(window.replace(/\)\s*$/, ''))});
+  }
+  return calls;
+}
+
+/**
+ * 解析一个「脚本位表达式」到 `tools/x.mjs`：
+ * - 锚在仓库根上的 `join(ROOT,'tools',…)` / `new URL('../tools/…', import.meta.url)` / 别名标识符；
+ * - **裸相对字面量** `'tools/x.mjs'` 只有 cwd 已被核实为仓库根时才算（否则可能是夹具里的副本）。
+ */
+function scriptToolOf(element, cwdType, context, aliases) {
+  if (!element) return null;
+  const expr = element.trim();
+  const bare = /^['"`](tools\/[A-Za-z0-9_.-]+\.mjs)['"`]$/.exec(expr);
+  if (bare) return cwdType === 'root' ? bare[1] : null;
+  return toolPathOfExpression(expr, context, aliases);
+}
+
+/**
+ * 断言里被断 `.status` 的标识符 → **断言所在位置**（`assert.equal(r.status, 0)` → r@index）。
+ * 带位置是为了做作用域比对（P1-3）：不按名字跨作用域串号。
+ */
+function statusAssertions(source) {
+  const map = new Map();
   for (const match of source.matchAll(/assert\.[A-Za-z_$][\w$]*\s*\(/g)) {
     const window = callWindow(source, match.index + match[0].length);
-    for (const inner of window.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*status\b/g)) idents.add(inner[1]);
+    for (const inner of window.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*status\b/g)) {
+      if (!map.has(inner[1])) map.set(inner[1], []);
+      map.get(inner[1]).push(match.index);
+    }
   }
-  return idents;
+  return map;
+}
+
+/** `index` 所在的**最内层 `{}` 块**（[开始, 结束]）；不在任何块里时返回整个文件。 */
+function enclosingBlock(source, index) {
+  const stack = [];
+  let quote = null;
+  for (let at = 0; at < index; at += 1) {
+    const ch = source[at];
+    if (quote) {
+      if (ch === '\\') { at += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '{') stack.push(at);
+    else if (ch === '}') stack.pop();
+  }
+  if (stack.length === 0) return [0, source.length];
+  const start = stack[stack.length - 1];
+  let depth = 0;
+  quote = null;
+  for (let at = start; at < source.length; at += 1) {
+    const ch = source[at];
+    if (quote) {
+      if (ch === '\\') { at += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return [start, at];
+    }
+  }
+  return [start, source.length];
 }
 
 /** spawn 调用所在的最内层具名函数（`function gate(...) {}` 或 `const gate = (...) => {}`），没有就 null。 */
@@ -549,50 +678,58 @@ function enclosingFunctionName(source, callIndex) {
   return best ? best.name : null;
 }
 
-/** 「谁的返回值是从谁那儿来的」：provider → 接收它返回值的标识符（含箭头包装）。 */
+/** 「谁的返回值是从谁那儿来的」：provider → (接收它返回值的标识符 → 该绑定的位置)。 */
 function valueConsumers(source) {
   const map = new Map();
-  const add = (provider, consumer) => {
-    if (!map.has(provider)) map.set(provider, new Set());
-    map.get(provider).add(consumer);
+  const add = (provider, consumer, at) => {
+    if (!map.has(provider)) map.set(provider, new Map());
+    if (!map.get(provider).has(consumer)) map.get(provider).set(consumer, at);
   };
   for (const match of source.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/g)) {
-    add(match[2], match[1]);
+    add(match[2], match[1], match.index);
   }
   for (const match of source.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*([A-Za-z_$][\w$]*)\s*\(/g)) {
-    add(match[2], match[1]);
+    add(match[2], match[1], match.index);
   }
   return map;
 }
 
 /**
- * 这次 spawn 的退出码是否被断言：只看**这一个站点**的返回值（P1-1）。
- * 认三种形态：① `assert.equal(spawnSync(...).status, 0)` 内联；② `const r = spawnSync(...)` + `r.status`；
- * ③ spawn 在 helper 里，helper 的返回值一路被赋给某个标识符再 `X.status`（`gate()` / `runCli()` 这类）。
- * 同一文件里**别处**断言了别的返回值，不再算这一站点的证据。
+ * 这次 spawn 的退出码是否被断言：只看**这一个站点**的返回值（P1-1），且断言必须与这条返回值绑定
+ * 在**同一个块**里（P1-3：不按标识符名字跨作用域串号）。
+ *
+ * 反例（审查给的）：test a 里 `const result = spawnSync(...)` 只断言 `.stdout`；test b 里
+ * `const result = compute(); assert.equal(result.status, 0)` —— 名字相同，但断言不在 a 的块里，
+ * 所以 a 这站必须仍判**未接线**。
  */
-function statusAssertForSite(source, callIndex, windowEnd, asserted, consumers) {
+function statusAssertForSite(source, callIndex, windowEnd, assertions, consumers) {
   if (/^\s*\.\s*status\b/.test(source.slice(windowEnd))) return true;
   const prefix = source.slice(0, callIndex);
-  const idents = new Set();
-  const assign = /(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?$/.exec(prefix);
-  if (assign) idents.add(assign[1]);
+  /** 「这条 spawn 的返回值绑到了哪个标识符、绑在哪条语句」。 */
+  const bindings = [];
+  const assign = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?$/.exec(prefix);
+  if (assign) bindings.push({ident: assign[1], at: callIndex});
   // 表达式体箭头函数（`const run = (args) => spawnSync(...)`）：provider 是这个箭头自己的名字。
   const arrow = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*$/.exec(prefix);
-  if (arrow) idents.add(arrow[1]);
+  if (arrow) bindings.push({ident: arrow[1], at: callIndex});
   const provider = enclosingFunctionName(source, callIndex);
-  if (provider) idents.add(provider);
-  const seen = new Set(idents);
+  if (provider) bindings.push({ident: provider, at: callIndex});
+  const resolved = [...bindings];
   for (let hop = 0; hop < 4; hop += 1) {
     const batch = [];
-    for (const ident of seen) for (const consumer of consumers.get(ident) ?? []) if (!seen.has(consumer)) batch.push(consumer);
-    if (batch.length === 0) break;
-    for (const ident of batch) {
-      seen.add(ident);
-      idents.add(ident);
+    for (const one of resolved) {
+      for (const [consumer, at] of consumers.get(one.ident) ?? new Map()) {
+        if (!resolved.some((seen) => seen.ident === consumer)) batch.push({ident: consumer, at});
+      }
     }
+    if (batch.length === 0) break;
+    resolved.push(...batch);
   }
-  for (const ident of idents) if (asserted.has(ident)) return true;
+  for (const one of resolved) {
+    const hits = assertions.get(one.ident) ?? [];
+    const [start, end] = enclosingBlock(source, one.at);
+    if (hits.some((hit) => hit > start && hit < end)) return true;
+  }
   return false;
 }
 
@@ -600,44 +737,76 @@ function analyzeTestSource(source, fileRel) {
   const rootIdents = new Set([...repoRootIdents(source, fileRel), ...importedRootIdents(source, fileRel)]);
   const context = {rootIdents, rootParams: rootDefaultParams(source, rootIdents), fileRel};
   const aliases = toolAliases(source, context);
-  const asserted = assertedStatusIdents(source);
+  const assertions = statusAssertions(source);
   const consumers = valueConsumers(source);
   const sites = [];
+
+  /** 窗口里的 cwd：`cwd: X` 或 `{cwd, …}` 简写（只有默认值就是仓库根才算 root）。 */
+  const cwdOfWindow = (window) => {
+    const assign = /\bcwd\s*:\s*/.exec(window);
+    if (assign) {
+      const value = readValue(window, assign.index + assign[0].length);
+      return isRepoRootExpression(value, context) ? 'root' : 'fixture';
+    }
+    const shorthand = /[{,]\s*cwd\s*[,}]/.test(window);
+    if (shorthand) {
+      return context.rootParams.has('cwd') || context.rootIdents.has('cwd') ? 'root' : 'unknown';
+    }
+    return 'inherit';
+  };
+
+  /** `--root` / `--dir` 等被指向夹具 ⇒ 这一站点不是真仓。 */
+  const redirectedOf = (text) => {
+    for (const flag of ROOT_FLAGS) {
+      const spaced = new RegExp(`['"]${flag}['"]\\s*,\\s*`).exec(text);
+      if (spaced && !isRepoRootExpression(readValue(text, spaced.index + spaced[0].length), context)) return true;
+      const inline = new RegExp(`${flag}=([^\\s'"]+)`).exec(text);
+      if (inline && !isRepoRootExpression(`'${inline[1]}'`, context)) return true;
+      // `'--root=' + tmp` 这种拼接写法（P2：原来被引号截断，识别不出来）
+      const concat = new RegExp(`['"]${flag}=['"]\\s*\\+\\s*([A-Za-z_$][\\w$]*)`).exec(text);
+      if (concat && !context.rootIdents.has(concat[1]) && !context.rootParams.has(concat[1])) return true;
+    }
+    return false;
+  };
+
   const pattern = new RegExp(`\\b(${SPAWN_FNS.join('|')})\\s*\\(`, 'g');
   for (const match of source.matchAll(pattern)) {
     const window = callWindow(source, match.index + match[0].length);
-    const tools = toolPathsInWindow(window, context, aliases);
     const windowEnd = match.index + match[0].length + window.length;
-    let cwdType = 'inherit';
-    const cwdAssign = /\bcwd\s*:\s*/.exec(window);
-    if (cwdAssign) {
-      const value = readValue(window, cwdAssign.index + cwdAssign[0].length);
-      cwdType = isRepoRootExpression(value, context) ? 'root' : 'fixture';
-    } else {
-      // `{cwd, ...}` 简写：只有 cwd 的默认值就是仓库根（`function gate(args, cwd = ROOT)`）才算 root。
-      const shorthand = /[{,]\s*([A-Za-z_$][\w$]*)\s*[,}]/.exec(window);
-      if (shorthand && shorthand[1] === 'cwd') {
-        cwdType = context.rootParams.has(shorthand[1]) || context.rootIdents.has(shorthand[1]) ? 'root' : 'unknown';
-      }
+    const cwdType = cwdOfWindow(window);
+    const redirected = redirectedOf(window);
+    const argvZero = spawnArgvZero(window);
+    const tool = scriptToolOf(argvZero, cwdType, context, aliases);
+    if (tool) {
+      sites.push({file: fileRel, line: lineOf(source, match.index), tools: [tool], cwdType, redirected,
+        statusAssert: statusAssertForSite(source, match.index, windowEnd, assertions, consumers)});
+      continue;
     }
-    let redirected = false;
-    for (const flag of ROOT_FLAGS) {
-      const spaced = new RegExp(`['"]${flag}['"]\\s*,\\s*`).exec(window);
-      if (spaced && !isRepoRootExpression(readValue(window, spaced.index + spaced[0].length), context)) redirected = true;
-      const inline = new RegExp(`${flag}=([^\\s'"]+)`).exec(window);
-      if (inline && !isRepoRootExpression(`'${inline[1]}'`, context)) redirected = true;
-    }
-    const statusAssert = statusAssertForSite(source, match.index, windowEnd, asserted, consumers);
     /**
-     * argv 里的裸相对字面量（`spawnSync(node, ['tools/x.mjs', ...], {cwd: ROOT})`）只有在 **cwd 已被
-     * 核实为仓库根** 时才算：那时子进程的相对路径就是仓里那份。cwd 不明（缺省 inherit）时一律不计——
-     * 宁可低估，也不把「可能是夹具」的站点算成接线。
+     * helper 站点（P1-1）：`function runTool(toolPath, args, cwd) { … spawnSync(node, [toolPath, …], {cwd}) }`
+     * 这种形态里被跑的脚本是**形参**，真路径与 cwd 在**调用点**的实参里。把站点建到调用点上：
+     * 脚本位实参必须是仓库根锚定的 `tools/x.mjs`、cwd 实参必须是仓库根，退出码断言落在该调用点的块里。
+     * 这样既认得 `runTool(TOOL, [...], ROOT)` 这种真仓臂，也不会把 `runTool(tree.tool, [...], tree.root)`
+     * （夹具副本）算成接线。
      */
-    if (tools.size === 0 && cwdType === 'root') {
-      for (const literal of window.matchAll(/['"`](tools\/[A-Za-z0-9_.-]+\.mjs)['"`]/g)) tools.add(literal[1]);
+    const paramName = argvZero?.trim();
+    if (!paramName || !/^[A-Za-z_$][\w$]*$/.test(paramName)) continue;
+    const provider = enclosingFunctionName(source, match.index);
+    if (!provider) continue;
+    const params = functionParams(source, provider);
+    const toolParam = params.indexOf(paramName);
+    if (toolParam < 0) continue;
+    const cwdParam = /\bcwd\b/.test(window) ? params.indexOf('cwd') : -1;
+    for (const call of helperCallSites(source, provider)) {
+      const callCwd = cwdParam >= 0 && cwdParam < call.args.length
+        ? (isRepoRootExpression(call.args[cwdParam], context) ? 'root' : 'fixture')
+        : 'inherit';
+      const callTool = scriptToolOf(call.args[toolParam], callCwd, context, aliases);
+      if (!callTool) continue;
+      sites.push({file: fileRel, line: lineOf(source, call.index), tools: [callTool], cwdType: callCwd,
+        redirected: redirectedOf(call.args.join(',')),
+        statusAssert: statusAssertForSite(source, call.index, call.end, assertions, consumers)});
     }
-    if (tools.size === 0) continue;
-    sites.push({file: fileRel, line: lineOf(source, match.index), tools: [...tools], cwdType, redirected, statusAssert});
   }
   return sites;
 }
@@ -896,6 +1065,89 @@ assert.equal(result.status, 0);
     'tests/unit/synthetic.test.mjs',
   );
   assert.equal(bareNoCwd.length, 0, '没有 cwd 时裸相对路径不算——无法静态证明跑的是仓里那份');
+
+  // o) P1-2 反例：spawn 的是 tmp 副本，窗口里**别处**有 'tools/x.mjs' 字面量（参数位 / cpSync 源）
+  //    ⇒ 一个站点都不该算出（只看 argv[0]，不看窗口里任意位置）。
+  const copyWithLiteralArg = analyzeTestSource(
+    `${rootPrelude}const copy = join(mkdtempSync('x'), 'tools', 'verify-demo.mjs');
+cpSync(join(ROOT, 'tools', 'verify-demo.mjs'), copy);
+const result = spawnSync(process.execPath, [copy, '--compare', 'tools/verify-demo.mjs'], {cwd: ROOT});
+assert.equal(result.status, 0);
+`,
+    'tests/unit/synthetic.test.mjs',
+  );
+  assert.equal(copyWithLiteralArg.length, 0, '跑的是副本，参数位里的仓内路径不能算接线');
+  // p) P1-2 变体：argv[0] 是**另一个**仓内脚本，被检路径出现在参数位（`--compare tools/x.mjs`）⇒ 只算 argv[0] 那个
+  const otherThenPath = analyzeTestSource(
+    `${rootPrelude}const other = join(ROOT, 'tools', 'verify-other.mjs');
+const result = spawnSync(process.execPath, [other, 'tools/verify-demo.mjs'], {cwd: ROOT});
+assert.equal(result.status, 0);
+`,
+    'tests/unit/synthetic.test.mjs',
+  );
+  assert.equal(otherThenPath.length, 1, '一次 spawn 只有一个被执行对象（argv[0]）');
+  assert.equal(otherThenPath[0].tools[0], 'tools/verify-other.mjs', '参数位里的 tools 路径不算接线');
+  assert.equal(isRealRepoRun(otherThenPath[0]), true);
+
+  // q) P1-3 反例：同文件两个 `result`，只断言后一个（前者只断言 .stdout）⇒ 前者必须仍判未接线
+  const shadowed = analyzeTestSource(
+    `${rootPrelude}const TOOL = join(ROOT, 'tools', 'verify-demo.mjs');
+test('a', () => {
+  const result = spawnSync(process.execPath, [TOOL, '--check'], {cwd: ROOT, encoding: 'utf8'});
+  assert.equal(result.stdout, '');
+});
+test('b', () => {
+  const result = compute();
+  assert.equal(result.status, 0);
+});
+`,
+    'tests/unit/synthetic.test.mjs',
+  );
+  assert.equal(shadowed.length, 1);
+  assert.equal(shadowed[0].statusAssert, false, '同名的 result 在别的块里被断言，不能算这一站的证据');
+
+  // r) P1-4：只有执行位算，参数位 / 重定向目标 / bash -c 内层 / npm 参数位都不算
+  assert.equal(namesPathInCommand('node tools/build.mjs --target tools/verify-demo.mjs', tool), false, '参数位不算执行');
+  assert.equal(namesPathInCommand('node tools/gen.mjs > tools/verify-demo.mjs', tool), false, '重定向目标位不算执行');
+  assert.equal(namesPathInCommand('npm run test:unit -- tools/verify-demo.mjs', tool), false, 'npm 的 script 名之后是参数位');
+  assert.equal(namesPathInCommand('bash -c "node tools/build.mjs tools/verify-demo.mjs"', tool), false, 'bash -c 内层还是参数位');
+  assert.equal(namesPathInCommand('bash -c "node tools/verify-demo.mjs"', tool), true, 'bash -c 内层真在执行时必须认出来');
+
+  // s) P1-1 helper 站点：脚本位是形参时，站点建到**调用点**上（真仓臂算，夹具臂不算）
+  const helperPrelude = `${rootPrelude}const TOOL = join(ROOT, 'tools', 'verify-demo.mjs');
+function runTool(toolPath, args, cwd) {
+  const result = spawnSync(process.execPath, [toolPath, ...args], {cwd, encoding: 'utf8'});
+  return {status: result.status, stdout: result.stdout ?? ''};
+}
+`;
+  const helperReal = analyzeTestSource(
+    `${helperPrelude}const result = runTool(TOOL, ['--check'], ROOT);
+assert.equal(result.status, 0);
+`,
+    'tests/unit/synthetic.test.mjs',
+  );
+  assert.equal(helperReal.length, 1, 'helper 的真仓调用点必须被认成一个站点');
+  assert.equal(helperReal[0].tools[0], tool);
+  assert.equal(isRealRepoRun(helperReal[0]), true, 'helper 真仓臂 + .status 断言 ⇒ 算 B（i22 证据表生成器就是这种形状）');
+  const helperFixture = analyzeTestSource(
+    `${helperPrelude}const tree = {tool: join(mkdtempSync('x'), 'tools', 'verify-demo.mjs'), root: mkdtempSync('y')};
+const result = runTool(tree.tool, ['--check'], tree.root);
+assert.equal(result.status, 0);
+`,
+    'tests/unit/synthetic.test.mjs',
+  );
+  assert.equal(helperFixture.filter(isRealRepoRun).length, 0, 'helper 调用点传的是夹具副本/夹具根 ⇒ 不算接线');
+
+  // t) P2：`'--root=' + tmp` 拼接也要算改指夹具（正则曾在引号处截断）
+  const concatRedirect = analyzeTestSource(
+    `${rootPrelude}const tmp = mkdtempSync('x');
+const result = spawnSync(process.execPath, [join(ROOT, 'tools', 'verify-demo.mjs'), '--root=' + tmp], {cwd: ROOT});
+assert.equal(result.status, 0);
+`,
+    'tests/unit/synthetic.test.mjs',
+  );
+  assert.equal(concatRedirect.length, 1);
+  assert.equal(isRealRepoRun(concatRedirect[0]), false, "`'--root=' + tmp` 这种拼接也必须被识别成改指夹具");
 });
 
 test('⑥ gap 台账：登记为「本该接线」的条目逐条打印', (t) => {
