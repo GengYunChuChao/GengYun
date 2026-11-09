@@ -6,7 +6,7 @@
       "path": "tools/collect-g-drill.mjs",
       "kind": "library",
       "host": "tools/verify-g-drill-readings.mjs",
-      "reason": "纯函数库（runDrillPlan / readSha / readDirty）：只被 tools/verify-g-drill-readings.mjs 与 tests/unit/g-drill-readings.test.mjs import，没有自己的 CLI 入口；接线由 host verify-g-drill-readings 负责（tests/unit/g-drill-readings.test.mjs:1018 在真仓上跑它并断言退出码）。"
+      "reason": "纯函数库（runDrillPlan / readSha / readDirty）：只被 tools/verify-g-drill-readings.mjs 与 tests/unit/g-drill-readings.test.mjs import，没有自己的 CLI 入口；接线由 host verify-g-drill-readings 承担（tests/unit/g-drill-readings.test.mjs:1018 在真仓上跑它并断言退出码）。"
     },
     {
       "path": "tools/contract-status-core.mjs",
@@ -50,7 +50,12 @@
     {
       "path": "tools/openapi-route-inventory.mjs",
       "kind": "by-design",
-      "reason": "一次性盘点脚本：`node tools/openapi-route-inventory.mjs <root>` 打印已挂载路由表 JSON，没有断言、没有退出码语义（判定在同目录的 openapi-route-parity.mjs），接进 CI 等于只证明「能打印」。"
+      "reason": "一次性盘点脚本：`node tools/openapi-route-inventory.mjs <root>` 打印已挂载路由表 JSON，没有断言、没有退出码语义（判定在同目录的 openapi-route-parity.mjs，已由 tools-repo-run-smoke 在真仓跑），接进 CI 等于只证明「能打印」。"
+    },
+    {
+      "path": "tools/prepare-wechat.mjs",
+      "kind": "by-design",
+      "reason": "把小程序工程装配成微信开发者工具能打开的形状，只有真实微信工程树才有意义（会往工程里写 project.config.json 一类文件）；三个站点全部 cpSync 到临时树后跑**副本**（tests/local-debug.test.mjs:100→:105、:249、tests/unit/prepare-wechat-components.test.mjs:47→:60），按判据「只夹具不算接线」应判未接线——在仓库根裸跑它会改仓库里的 demo 工程，不是判定面。"
     },
     {
       "path": "tools/verify-chat-live.mjs",
@@ -64,38 +69,20 @@
     },
     {
       "path": "tools/verify-production-provisioning.mjs",
-      "kind": "by-design",
-      "reason": "真云控制台核对（生产实例 / 备份 / 告警配置），需要生产只读凭据；仓库规矩是未审代码不接触生产凭据、凭据只在内存，CI 里没有也不该有这套凭据。"
+      "kind": "in-process",
+      "exercisedBy": "tests/unit/production-provisioning.test.mjs",
+      "reason": "真云控制台核对（生产实例 / 备份 / 告警配置）：脚本本身要生产只读凭据，但它的判定逻辑已经有退出码语义（report → exit），并由 tests/unit/production-provisioning.test.mjs:15 在进程内用注入的假凭据驱动（该测试在 test:unit 里，被 engineering-shell.yml:63 点名）；真仓裸跑才是不能做的那件事——未审代码不接触生产凭据。"
     },
     {
       "path": "tools/verify-real-capability-config.mjs",
-      "kind": "by-design",
-      "reason": "校验 docs/verification/config.local.json（.gitignore:42 明确忽略的本地配置，access-verification.yml:43 还用 git check-ignore 证明它不该入库）；没有这份文件脚本无法判定，接进 CI 只会红。"
+      "kind": "in-process",
+      "exercisedBy": "tests/unit/real-capability-config.test.mjs",
+      "reason": "校验 docs/verification/config.local.json（.gitignore:42 明确忽略的本地配置），没有这份文件裸跑必然红；但它有真实的退出码语义（exitCodeFor(report)）且被 tests/unit/real-capability-config.test.mjs:33 以 runCli 在进程内驱动（test:unit 里跑），故归 in-process 而不是 by-design。"
     },
     {
       "path": "tools/verify-gy-i05-log-redaction.mjs",
       "kind": "by-design",
       "reason": "负例对照探针：要在一份「改前」的 services/api/src/app.ts 上跑，证明探针抓得到泄漏，判定明细走 stderr、靠人工 tee before.log 与 after.log 对比；把改前源码固化进 CI 才能重复，等于把历史版本塞进流水线。"
-    },
-    {
-      "path": "tools/run-python.mjs",
-      "kind": "gap",
-      "reason": "本该接：它是 npm run test:docs 链的第一环（npm 脚本里 `node tools/run-python.mjs tools/validate_development_docs.py`），而 test:docs 在 15 份 workflow 里 0 命中——本片发现的第二个空档；接它必须改 engineering-shell.yml（加一条 run:），A 档不动 .github/**，故登记 gap。"
-    },
-    {
-      "path": "tools/openapi-route-parity.mjs",
-      "kind": "gap",
-      "reason": "本该接：package.json 的 verify:parity 就是 `node tools/openapi-route-parity.mjs`，是个现成门禁，但没有任何 workflow 调用它；tests/contract/openapi-route-parity.test.mjs 只在进程内调导出函数（不算 B）。接它要改 .github/**，A 档不动，故登记 gap。"
-    },
-    {
-      "path": "tools/verify-gy-i09-candidates.mjs",
-      "kind": "gap",
-      "reason": "本该接：头注自称「可复核探针 … 供人工与 CI 复核」，纯本地合成数据、不联网不连库、退出码 0/1 就是判定；但 15 份 workflow 与 package.json 里 0 命中。接它要改 .github/**，A 档不动，故登记 gap。"
-    },
-    {
-      "path": "tools/verify-verification-comment-anchors.mjs",
-      "kind": "gap",
-      "reason": "本该接（本片就是因它而做：单测全绿、真仓跑却 EXIT 1 基线外新增 9 条）：现有守卫 tests/unit/verify-verification-comment-anchors.test.mjs 只用临时夹具调导出函数，头注写明「⛔ 不 spawn 子进程、不写仓库内文件」，所以真仓从未被跑过；正确接法是在 workflow 里跑它并断言退出码，A 档不动 .github/**，故登记 gap。"
     }
   ]
 }
