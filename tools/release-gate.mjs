@@ -71,6 +71,7 @@ const USAGE = `发布门禁汇总（release gate）
   --only <id,id>        只跑这些门禁（逗号分隔；未知 id ⇒ 退出码 2）
   --skip <id,id>        跳过这些门禁（⛔ 不能与 --only 同时给，见退出码 2）
   --base <ref>          待发布 diff 的基线（默认按 upstream/main → origin/main → main → HEAD 解析）
+  --require-base        基线必须是「解析得到且不等于 HEAD」的提交，否则退出码 2（CI 用，防空 diff 假绿）
   --out <path>          JSON 报告落盘路径（默认 ${DEFAULT_OUT}）
   --root <dir>          仓库根（默认本脚本上一级目录）
   --max-file-bytes <n>  大文件阈值（默认 ${DEFAULT_MAX_FILE_BYTES} 字节）
@@ -111,11 +112,12 @@ function parseArgs(argv) {
     pg: false,
     list: false,
     help: false,
+    requireBase: false,
   };
   const valueOpts = new Set([
     'only', 'skip', 'base', 'out', 'root', 'max-file-bytes', 'timeout-ms', 'binary-allow', 'plan',
   ]);
-  const flagOpts = new Set(['pg', 'list', 'help', 'h']);
+  const flagOpts = new Set(['pg', 'list', 'help', 'h', 'require-base']);
 
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -129,6 +131,7 @@ function parseArgs(argv) {
       if (name === 'h' || name === 'help') opts.help = true;
       else if (name === 'pg') opts.pg = true;
       else if (name === 'list') opts.list = true;
+      else if (name === 'require-base') opts.requireBase = true;
       continue;
     }
     if (!valueOpts.has(name)) throw new UsageError(`未知选项：${token}`);
@@ -468,11 +471,38 @@ function resolveBase(root, requested) {
 }
 
 /**
+ * `--require-base` 的判据：基线必须**解析得到**，且**不能就是 HEAD**。
+ *
+ * 为什么要有这一条：`resolveBase` 的候选链末尾是 `HEAD`，所以在一个没有 `upstream/main`／
+ * `origin/main`／`main` 的仓库里（无 remote 的临时仓库、或 CI 里浅克隆拿不到远端分支），
+ * 默认解析会落到 `HEAD`；此时 `<base>...HEAD` 是空 diff，`secrets`/`artifacts` 扫 0 行也判 `passed`，
+ * 退出码 0 —— 这是**假绿**：不是「没泄漏」，是「根本没看」。
+ *
+ * 只做判定，**不动** `resolveBase` 的候选顺序（那属于另一件事：放宽候选等于改变既有语义）。
+ * 返回 `null` 表示合规；返回字符串表示用法错误文案。
+ */
+function baseRequirementProblem(base, headSha) {
+  if (!base.sha) {
+    return `--require-base 要求基线可解析，但解析不到（试过：${base.attempts.join(' → ')}）——请显式指定 --base <ref>`;
+  }
+  if (headSha !== null && base.sha === headSha) {
+    return '--require-base 要求基线不是 HEAD，但当前基线就是 HEAD'
+      + `（ref=${base.ref}，sha=${base.sha.slice(0, 8)}）：此时 \`<base>...HEAD\` 必为空 diff，`
+      + '扫 0 行也判 pass，等于把「没看」当成「没问题」。'
+      + '请把 --base 指到待发布分支与主干的共同祖先（CI 里用 --base origin/main）';
+  }
+  return null;
+}
+
+/**
  * 取「待发布 diff」的新增行：`git diff <base>...HEAD`（三点＝相对共同祖先）。
  * 只认 `+` 行；hunk 头给出的新文件行号用来对齐 `file:line`。
  */
 function collectAddedLines(root, base) {
-  const diff = git(root, ['diff', '--unified=0', '--no-color', '--diff-filter=AM', `${base}...HEAD`]);
+  // `AMR` 而不是 `AM`：纯改名（similarity 100%）在默认的重命名侦测下是 `R`，`AM` 会把它整份漏掉——
+  // 真跑过 `git mv clean.txt moved.txt` 再追加一行疑似密钥，`--diff-filter=AM` 得 `scannedLines: 0`／退出码 0。
+  // `AMR = AM ∪ R` 是**严格超集**：原来会扫的 A/M 一个不少，只多扫 rename（含改名＋改内容，git 记为 R0xx）。
+  const diff = git(root, ['diff', '--unified=0', '--no-color', '--diff-filter=AMR', `${base}...HEAD`]);
   if (!diff.ok) return { ok: false, error: diff.stderr, lines: [] };
 
   const lines = [];
@@ -508,7 +538,8 @@ function collectAddedLines(root, base) {
 
 /** 待发布 diff 里新增/修改的文件清单（供大文件与二进制检查）。 */
 function collectChangedFiles(root, base) {
-  const listing = git(root, ['diff', '--name-only', '--diff-filter=AM', `${base}...HEAD`]);
+  // 同上：改名后的大文件/二进制在 `AM` 下同样整份漏检，必须把 `R` 纳入。
+  const listing = git(root, ['diff', '--name-only', '--diff-filter=AMR', `${base}...HEAD`]);
   if (!listing.ok) return { ok: false, error: listing.stderr, files: [] };
   return {
     ok: true,
@@ -978,6 +1009,17 @@ function main(argv) {
     workspaceDirs: listWorkspaceDirs(opts.root, manifest),
     base: resolveBase(opts.root, opts.base),
   };
+
+  // `--require-base`：在 `resolveBase` **之后**判定，早于任何门禁开跑（不落盘、stdout 保持为空）。
+  if (opts.requireBase) {
+    const headProbe = git(opts.root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    const headSha = headProbe.ok ? headProbe.stdout.trim() : null;
+    const problem = baseRequirementProblem(ctx.base, headSha);
+    if (problem) {
+      process.stderr.write(`用法错误：${problem}\n\n${USAGE}`);
+      return 2;
+    }
+  }
 
   let report;
   try {
