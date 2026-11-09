@@ -40,7 +40,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CASES, FAMILIES } from './cases.mjs';
-import { API, SPECIES_ID, envelopeShape, inject, seedReceiptHolder } from './world.mjs';
+import { API, SPECIES_ID, envelopeShape, inject, seedReceiptHolder, seedInFlightDeletion } from './world.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
@@ -1212,6 +1212,16 @@ async function main() {
           headers: { 'idempotency-key': `i22-realpg-c4-logout-${caseId}` },
         });
         if (logout.status !== 200) throw new Error(`logout 夹具失败 ${logout.status}：${logout.text}`);
+      } else if (name === 'cancelable' || name === 'cancelled') {
+        // 真库臂：受理会在同一事务里撤掉该账号全部会话（0016:122-135）⇒ 这条夹具播完后令牌即失效，
+        // C4-25/26 只能读到 401（用例的 realExpect 已按此声明）。播不上就抛 ⇒ 本条如实 not-runnable。
+        built = await seedInFlightDeletion(world, {
+          createAccount,
+          dispatch: (spec) => inject(world.app, spec),
+          label: `mx-${name}-${caseId}`,
+          key: `i22-realpg-c4-${name}-${caseId}`,
+          cancel: name === 'cancelled',
+        });
       } else {
         throw new Error(`未知 actor：${name}（用例 ${caseId}）`);
       }

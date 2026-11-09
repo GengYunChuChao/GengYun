@@ -36,7 +36,7 @@ import {
   inject,
   loopbackInject,
   envelopeShape,
-  seedOwnerRows, seedReceiptHolder,
+  seedOwnerRows, seedReceiptHolder, seedInFlightDeletion,
 } from './world.mjs';
 
 /**
@@ -296,6 +296,10 @@ async function main() {
   deleter.receipt = deletion.body.data.receipt_token;
   deleter.staleReceipt = null;
   ctx.actors.deleter = deleter; ctx.actors.receiptHolder = await seedReceiptHolder(world, { createAccount, dispatch });
+  // C4-25/26 的专用账号：有在途注销，且 stub 世界受理不撤会话（见 world.mjs 的 seedInFlightDeletion）。
+  ctx.actors.cancelable = await seedInFlightDeletion(world, { createAccount, dispatch, label: 'mx-cancel-target' });
+  // C4-26 独立夹具：已取消的单，不依赖 C4-25 先跑（--only=C4-26 也能判定）。
+  ctx.actors.cancelled = await seedInFlightDeletion(world, { createAccount, dispatch, label: 'mx-cancelled-target', key: 'i22-c4-cancelled-seed', cancel: true });
 
   /** 懒建 actor：`fresh/expired/stale/logout` 每条用例一份；`deleter` 全局一份。 */
   async function resolveActor(name, caseId) {
