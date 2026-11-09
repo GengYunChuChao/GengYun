@@ -206,7 +206,15 @@ node --test tests/unit/conversation-*.test.mjs tests/unit/demo-pages-seed.test.m
 ℹ tests 208
 ℹ pass 208
 ℹ fail 0
+
+npm run test:unit   # 合入 origin/main 后跑全量单元面（CI unit-tests 同一条命令）
+ℹ tests 6968
+ℹ pass 6965
+ℹ fail 0
+ℹ skipped 3
 ```
+
+新增 `db/seeds/demo_community_messages.sql` 会让 `tests/unit/audit-action-literal-coverage.test.mjs` 的「反向扫描面」SQL 份数真值从 21 变 22（`db` 根下多一份 `*.sql`，本文件不写审计表），已同步下界与注释（提交 `338d95f5`），该文件 12/12 绿。
 
 契约锚点：`node tools/verify-contract-status.mjs` → 全部 PASS（130 条操作、593 条证据锚点、中文表格一致），未需要 `--reanchor`。
 
@@ -226,11 +234,11 @@ node --test tests/unit/doc-anchor-relocation-identity.test.mjs
 
 # ③ 文档一致性（链接/表格/27 项依赖/F‑AC‑Q 映射）
 npm run test:docs
-PASS: 识别 5 页 / 跳过 376 页（扫描面 381 页：docs/verification）——读数七条判据全部自洽   # exit 0
+PASS: 识别 5 页 / 跳过 377 页（扫描面 382 页：docs/verification）——读数七条判据全部自洽   # exit 0
 
 # ④ verification 注释锚点
 node tools/verify-verification-comment-anchors.mjs
-VERIFICATION-COMMENT-ANCHOR-PASS: 基线内 1421 条注释锚点只告警，没有基线外新增   # exit 0
+VERIFICATION-COMMENT-ANCHOR-PASS: 基线内 1425 条注释锚点只告警，没有基线外新增   # exit 0
 ```
 
 **为什么 services 改动是"行号中性"的**：本轮 `retrieval.ts` / `guard.ts` / `service.ts` 的改动都是**等行数替换**（`git diff --numstat` = 3/3、3/3、2/2），`tools/demo-stack.mjs` 相对 `origin/main` 只有一处新增（`--demo` 档内，第 802 行以后；`git diff --numstat origin/main` = 22/0），其余行逐字节一致。这样既不动 5 份架构/历史取证文档的行号锚点，也不改任何锚点基线 JSON——第一道闸门在**没有 reanchor、没有 `--write-baseline`** 的情况下 PASS。
