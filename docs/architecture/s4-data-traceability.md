@@ -252,7 +252,7 @@
   与「已请求必有请求时间」（`:202`）；② 内存协议在——`packages/privacy/deletion.mjs:210`（请求）、`:236`（确认，无证据引用即 `INVALID_REQUEST`）、
   `:252`（失败）、`:261`（不支持）；③ 适配器在且**已登记**——`services/api/src/privacy/third-party-deletion-adapter.ts:134`
   （`:147` 无凭据或无传输即不可用、`:45` 错误码 `OBJECT_UNAVAILABLE`），装配在 `services/api/src/app.ts:2046`：只登记进
-  删除注册表、**不 dispatch**（同段 `:2007` 自陈 `config.ts` 无第三方凭据键 ⇒ 装配层不自造真实适配器）；④ 回执投影在且
+  删除注册表，**调度在注销链 `executeHandlers()` 里**（同段 `:2007` 自陈 `config.ts` 无第三方凭据键 ⇒ 装配层不自造真实适配器）；④ 回执投影在且
   **已接进注销回执**——`services/api/src/privacy/third-party-deletion-projection.ts:277` → `services/api/src/routes/account-deletion.ts:152`
   （`thirdPartyRowsFor` 当次请求内预取一次）→ `:154`（`thirdPartyReceiptState`），契约字段 `third_party_state` 见 `packages/contracts/openapi.json:13834`
   （回执是 `getDeletionReceipt`，原页误作 `/me/exports`）；⑤ 真库端口在、**读侧已装配**——`services/api/src/privacy/third-party-deletion-pg.ts`
@@ -270,7 +270,7 @@
   `privacy/third-party-deletion-pg.ts` 5 行（第 8／14／59／79／142 行）、写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行注释（第 8 行），两者对表零 DML/SELECT）；`git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = **15 行**（原页记「0 行」；
   实测 `:158/:162/:166/:167/:336/:339/:562/:567/:1991/:1998/:2002/:2004/:2009/:2538/:2547`）；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口 `services/api/src/privacy/third-party-deletion-pg.ts:141`、实现 `:312`、`privacy/user-data-deletion.ts` 一处注释）⇒ **写侧零调用者**（2026-11-05 复核改判：该 grep 今天是 **8 行 / 3 文件**——`privacy/third-party-deletion-dispatch.ts` 四行、端口接口与实现 `privacy/third-party-deletion-pg.ts` 两行（第 141／312 行）、`privacy/user-data-deletion.ts` 两行注释；唯一生产调用者在 `privacy/third-party-deletion-dispatch.ts:544` `await writePort.subscribeThirdPartyDeletion(payload);`（PR #860，`7a25d900`），故「写侧零调用者」自 GY-R73 起不成立，本行「3 行」为 2026-10-28 旧读数，今日不得再引）。
 - **缺口（2026-10-28 复核重写：原三条里两条已被代码证伪）**：① ~~端口未装配~~ 不成立——读侧装配在 `services/api/src/app.ts:2035`；② ~~适配器未在 `app.ts` 装配~~
-  不成立——装配在 `services/api/src/app.ts:2046`（仅注入、不 dispatch）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:152`→`:154`。
+  不成立——装配在 `services/api/src/app.ts:2046`（仅注入；调度在 `executeHandlers()`，GY-R73）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:152`→`:154`。
   **改判后的真实缺口**（2026-11-03 两次订正：GY-R73 接上写入口、GY-R74 打开受理门，原判两句都已作废，剩下的只是「无一条真实写证据」）：
   ① 写入口已存在——`services/api/src/privacy/third-party-deletion-dispatch.ts` 是 `subscribeThirdPartyDeletion` 的唯一调用者（由注销链 `executeHandlers()` 在 coordinator 之后调），但**生产既无收件人来源也无第三方凭据** ⇒ 实际一条也不写（`RECIPIENTS_UNWIRED`／`ADAPTER_UNAVAILABLE`），表恒空、投影恒 `unsupported`/`THIRD_PARTY_NONE`；② 受理门**已按域打开**——`services/api/src/app.ts:2339` 的 `available: config.executionMode !== 'real' || deletionAcceptanceDurable`，消费点 `services/api/src/app.ts:2628` `accountDeletionWired`：`real` + 真库可受理（202），唯一保留的 503 是 `real` 但无可用连接池；③ 因此「真实执行模式下四件事一条都取不到」只在**备份介质逐用户清除**与**第三方完成证据**两件上成立（回执 `backup_state: blocked`／`third_party_state: unsupported`，真库臂 `tests/integration/account-deletion-pg.mjs` PASS 16）。本项判「未实现」即按此口径，不按 §0.1「零命中」那一句。
 

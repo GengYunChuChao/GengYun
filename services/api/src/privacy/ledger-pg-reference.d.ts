@@ -62,6 +62,17 @@ declare module '*packages/privacy/job-kinds.mjs' {
 
 declare module '*packages/privacy/redact.mjs' {
   export function redactForLog(value: unknown, options?: { depth?: number }): unknown;
+  export function redactLogRecord(value: unknown, options?: { depth?: number }): unknown;
+  /** 行内擦除：敏感片段就地替换为 [REDACTED]；非字符串原样返回。 */
+  export function scrubInlineText<T>(text: T): T;
+  /** pino `serializers.err`：message / stack / cause 链过行内擦除。 */
+  export function redactErrorForLog(error: unknown): {
+    [key: string]: unknown;
+    type: string;
+    message: string;
+    stack: string;
+  };
+  export const USERINFO_URL_PATTERN: RegExp;
   export function assertNoSensitiveLeak(
     value: unknown,
     forbiddenFragments: readonly string[],
