@@ -8896,17 +8896,9 @@
       "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
       "line": 38,
       "target": "services/api/src/privacy/task-egress.ts",
-      "from": 313,
-      "to": 313,
-      "kind": "block-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
-      "line": 38,
-      "target": "services/api/src/privacy/task-egress.ts",
-      "from": 314,
-      "to": 314,
-      "kind": "block-comment"
+      "from": 348,
+      "to": 348,
+      "kind": "jsdoc"
     },
     {
       "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
@@ -10131,14 +10123,6 @@
       "from": 106,
       "to": 106,
       "kind": "block-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
-      "line": 90,
-      "target": "services/api/src/privacy/task-egress.ts",
-      "from": 210,
-      "to": 213,
-      "kind": "line-comment"
     },
     {
       "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
