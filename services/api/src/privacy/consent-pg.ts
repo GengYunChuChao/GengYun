@@ -92,7 +92,7 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, serv
       if (error instanceof ApiError) throw error;
       const code = (error as { code?: string }).code;
       if (code === 'ACCOUNT_INACTIVE' || code === 'CONSENT_REQUIRED' || code === 'SCOPE_DENIED') {
-        throw new ApiError(code, '当前身份或用途授权不满足要求');
+        throw new ApiError(code, '当前身份或用途授权不满足要求', code === 'CONSENT_REQUIRED' ? { details: consentFailureDetails(error) } : undefined);
       }
       throw new ApiError(code === '57014' || code === '55P03' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', '授权服务暂不可用');
     } finally { client?.release(); }
@@ -200,4 +200,19 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, serv
       });
     },
   };
+}
+
+/**
+ * 闸侧唯一能给的机器码：闸只读 `privacy_epochs ⨝ consent_records`（按设计不读政策表），
+ * 所以它说得出「未授予」，说不出「没有可用政策」——后者由授予路径的 `no_policy` 表达。
+ * 公开码与文案逐字不变，只补 `details`。定义追加在文件尾部：不移动既有行号，避免证据页锚点漂移。
+ */
+const NOT_GRANTED_DETAIL = { field: 'purpose', code: 'not_granted' };
+function consentFailureDetails(error: unknown): Array<{ field: string; code: string }> {
+  const inherited = (error as { details?: unknown }).details;
+  if (!Array.isArray(inherited)) return [NOT_GRANTED_DETAIL];
+  const fields = inherited.filter((entry): entry is { field: string; code: string } => typeof entry === 'object' && entry !== null
+    && typeof (entry as { field?: unknown }).field === 'string' && typeof (entry as { code?: unknown }).code === 'string');
+  if (fields.length === 0) return [NOT_GRANTED_DETAIL];
+  return fields.some(entry => entry.field === 'purpose') ? fields : [...fields, NOT_GRANTED_DETAIL];
 }

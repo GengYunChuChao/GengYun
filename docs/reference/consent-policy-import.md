@@ -1,10 +1,11 @@
 # 用途政策导入（`consent_policies`）
 
-运维命令 `tools/import-consent-policy.mjs` 的说明：**把一行仓外的用途政策写进 `public.consent_policies`**。
-这是这张表的**唯一写入途径** —— 产品代码、后台路由、迁移种子都没有写过它。
+运维命令 `tools/import-consent-policy.mjs` 的说明：**把一行仓外的用途政策写进 `public.consent_policies`，
+把一条仓外的接收方写进 `public.recipients`**。这两张表此前都**没有写入途径** —— 产品代码、后台路由、
+迁移种子都没写过它们（迁移 `0009` 头注释：「No production policy or recipient seeds.」）。
 
 先读[操作三步](#操作三步)与[⛔ 不许做的事](#-不许做的事)；要判断「导入成功是不是等于闸门开了」，读
-[与三层闸序的关系](#与三层闸序的关系)与[已登记的依赖](#已登记的依赖recipients-仍是零写入)。
+[与三层闸序的关系](#与三层闸序的关系)与[接收方登记](#接收方登记recipient-子命令)。
 要判断「重放/启用到底证明了什么」，读[重放/启用的元数据一致性](#重放启用的元数据一致性-报告只报库行) ——
 同版本只比正文是不够的。
 
@@ -17,7 +18,8 @@
 | 表空时 `POST /posts`、`POST /me/consents` 直接 403 `CONSENT_REQUIRED`，**审核代码不执行** | `persistConsentGrant`（`services/api/src/privacy/grant-pg.ts`）找不到现行政策行就抛 `CONSENT_REQUIRED` |
 | 同一道闸也挂在媒体上传（`media_processing`）、OCR / 识别 / 问答外发（`external_inference`） | 同上；用途闭集见 `CONSENT_PURPOSES`（`services/api/src/privacy/consent-pg.ts`） |
 
-本工具补的就是这条路径。它**只补 `consent_policies` 一侧**，见[已登记的依赖](#已登记的依赖recipients-仍是零写入)。
+本工具补的就是这两条路径：`policy` 写第 ① 层，`recipient` 写接收方清单；两者都**不**替用户授予、
+**不**改运行时角色权限（见[接收方登记](#接收方登记recipient-子命令)）。
 
 ## 用途
 
@@ -89,15 +91,15 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 
 | 子命令 | 状态 | 说明 |
 | --- | --- | --- |
-| `policy` | 已交付 | 导入一行 `consent_policies` |
-| `recipient` | **未交付** | 会以 exit 2 明确拒绝并说明原因，见[已登记的依赖](#已登记的依赖recipients-仍是零写入) |
+| `policy` | 已交付 | 导入一行 `consent_policies`；清单与参数见上 |
+| `recipient` | 已交付 | 导入一条 `public.recipients`；清单字段见[接收方登记](#接收方登记recipient-子命令)，`--file` 必填，`--apply` 才写，`--enable` 决定 `enabled` |
 
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
-| `--file <path>` | 是 | 仓外政策清单；⛔ 不接受内联正文 |
+| `--file <path>` | 是 | 仓外清单（政策或接收方）；⛔ 不接受内联正文 |
 | `--apply` | 否 | 真正写库；缺省 = dry-run |
-| `--enable` | 否 | 导入后把目标版本设为该 `purpose` 唯一启用行 |
-| `--reviewed-by <uuid>` | 与 `--enable` 同进同出 | 复核人；只用 `--reviewed-by` 而不 `--enable` ⇒ exit 2 |
+| `--enable` | 否 | `policy`：导入后把目标版本设为该 `purpose` 唯一启用行；`recipient`：把该接收方置为 `enabled=true` |
+| `--reviewed-by <uuid>` | 与 `--enable` 同进同出（仅 `policy`） | 复核人；只用 `--reviewed-by` 而不 `--enable` ⇒ exit 2；`recipient` 没有复核人列，带它 ⇒ exit 2 |
 | `--help` | 否 | 打印用法 |
 
 ## 四类失败码
@@ -105,9 +107,9 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 | 码 | 类别 | 什么时候出现 | 库内状态 |
 | --- | --- | --- | --- |
 | `0` | 成功 | dry-run 出形状 / `--apply` 落库 / 幂等重放 `unchanged=true` | 成功的写已提交；重放零改动 |
-| `2` | `CONFIG` | 缺子命令、未知子命令、`recipient` 未交付、缺 `--file`、清单读不到、JSON 不合法、缺 `DATABASE_URL` | 未连库或未写 |
-| `3` | `INVALID_POLICY` | 闭集 purpose 越界、正文空/太短/占位、版本形状或保留值、有效期不合法、清单里带 `content_sha256`/`reviewed_by`、来源或证据形状不符、`verified` 拿夹具措辞冒充、绑定形状不符、绑定指向不存在的 `recipients.id`、复核主体不存在、库内 CHECK 拒绝（`23514`/`23503`/`22P02`） | 事务已回滚 |
-| `4` | `POLICY_CONFLICT` | 同 `(purpose, policy_version)` 已存在但正文 sha 不同、**同版本安全元数据不一致（`METADATA_CONFLICT`）**、版本回退、启用比库里最新版本更旧的版本、唯一约束冲突（`23505`） | 事务已回滚 |
+| `2` | `CONFIG` | 缺子命令、未知子命令、缺 `--file`、清单读不到、JSON 不合法、`recipient` 带 `--reviewed-by`、缺 `DATABASE_URL` | 未连库或未写 |
+| `3` | `INVALID_POLICY` | 闭集 purpose 越界、正文空/太短/占位、版本形状或保留值、有效期不合法、清单里带 `content_sha256`/`reviewed_by`、来源或证据形状不符、`verified` 拿夹具措辞冒充、绑定形状不符、绑定指向不存在的 `recipients.id`、复核主体不存在、接收方清单缺字段/形状不符/capability 越界/留存越界、库内 CHECK 拒绝（`23514`/`23503`/`22P02`） | 事务已回滚 |
+| `4` | `POLICY_CONFLICT` | 同 `(purpose, policy_version)` 已存在但正文 sha 不同、**同版本安全元数据不一致（`METADATA_CONFLICT`）**、版本回退、启用比库里最新版本更旧的版本、**同 `id` 的接收方除 `enabled` 外有字段不同**、唯一约束冲突（`23505`） | 事务已回滚 |
 | `5` | `DB_ERROR` | 连不上、缺表（`42P01`）、连接角色无写权限（`42501`）、超时/拿不到锁、未知 SQLSTATE | 事务已回滚 |
 
 报错只给类别、SQLSTATE 与约束名，**⛔ 不回显驱动原文**（可能带主机/用户名/SQL），也**⛔ 不回显连接串**。
@@ -158,7 +160,7 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 
 这条纪律是从一个真实缺陷上补回来的：原来的 `SELECT` 只取 `content_sha256` / `enabled` / `reviewed_at`，
 于是同版本同正文就被判 `unchanged`，而报告按**清单**打印 `verified` 与未来有效期——库行仍是 `synthetic`
-且已过期。现在 `SELECT` 取全七列（`tools/import-consent-policy.mjs:111` 的列清单常量），判定在
+且已过期。现在 `SELECT` 取全七列（`tools/import-consent-policy.mjs:114` 的列清单常量），判定在
 `tools/lib/consent-policy-import.mjs:635` 的 `comparePolicySafetyMetadata`，报告在
 `tools/lib/consent-policy-import.mjs:824` 的 `renderPolicyImportReport` 只接受一个库行。
 
@@ -170,7 +172,7 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 ③ 外发账本闸   exports / export_writebacks（预留 → 发送 → 回写）
 ```
 
-本工具**只动第 ① 层**。第 ① 层没开时，第 ② 层的 `POST /me/consents` 与第 ③ 层的所有外发都没有机会执行 ——
+本工具**只动第 ① 层**（政策行 + 它绑定的 `recipients` 行）。第 ① 层没开时，第 ② 层的 `POST /me/consents` 与第 ③ 层的所有外发都没有机会执行 ——
 `persistConsentGrant` 在第一步就抛 `CONSENT_REQUIRED`。所以「导入了一行政策」意味着「第 ① 层对这个 `purpose`
 放行」，**不**意味着任何一次请求已被授权：用户仍要自己授予，撤回仍走既有 epoch 机制。
 
@@ -210,20 +212,39 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 
 本机实测（临时簇 + 真 `0001/0003/0009`）：三张相关表在迁移后**都不播种** —— `consent_policies` 0 行、
 `recipients` 0 行、`admin_accounts` **0 行**。⇒ 全新库上要开闸，需要**先有一条后台账号**（`--reviewed-by` 的
-外键目标），这不是本工具能替你造的。
+外键目标），这不是本工具能替你造的；本机演示可以走 `node tools/demo-stack.mjs up --demo`，
+它会幂等写入两条演示政策 + 一条演示接收方 + 一条**不可登录**的演示复核账号（见
+[本地演示栈](../demo/本地演示-stack.md)），那些行都带 `demo-stack local demo profile (non-production)` 标记。
 
-## 已登记的依赖：`recipients` 仍是零写入
+## 接收方登记：`recipient` 子命令
 
-`public.recipients` 同样**没有生产写入途径**（产品代码/种子/工具都没写过它），而 `external_inference` 这条用途
-在授予时必须至少绑一个**已核验**接收方（`persistConsentGrant` 对空接收方、未核验接收方、绑定配置漂移逐条 403）。
+`public.recipients` 决定 `external_inference` 能不能授予：`persistConsentGrant` 对空接收方、未核验接收方、
+绑定配置漂移逐条 403（`services/api/src/privacy/grant-pg.ts`）。这张表同样没有生产种子，所以 `recipient`
+子命令补的就是这条写入路径。
 
-⇒ 本片只交付 `policy` 子命令，**`recipient` 子命令未交付**。后果明说：
+清单是仓外 JSON，白名单字段（出现别的键 ⇒ `INVALID_POLICY`）：
 
-> **`external_inference` 这条用途目前仍打不开。** 即使把一行 `external_inference` 政策导进库并启用，
-> 用户授予时仍会因「对外推理需要已核验接收方」被 403。
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `id` | 是 | 1..80，小写 `[a-z0-9][a-z0-9._-]*`；同时是政策 `recipient_bindings` 的键 |
+| `display_name` | 是 | 1..200 码点 |
+| `capability` | 是 | `weed` / `ocr` / `asr` / `tts` / `llm` / `moderation` |
+| `policy_version` | 是 | 1..80，不许是 `unpublished`；读面按它与现行政策版本对齐 |
+| `retention_online_days` | 是 | 0..7 整数 |
+| `retention_backup_days` | 是 | 0..30 整数 |
+| `no_training_verified` | 是 | 布尔；`true` 才会被授予路径认作已核验 |
+| `deletion_verified` | 是 | 布尔；同上 |
+| `config_version` | 是 | 1..40；必须与政策绑定里的 `config_version` 逐字相同 |
 
-工具对「`purpose=external_inference` + 空 `recipient_bindings`」会打印 `warning=` 行（而不是拒绝写入 ——
-那属于产品语义，不归本工具裁定）。⛔ 不许把这半个门说成门已开。
+⛔ 清单里**不许**出现 `enabled` / `updated_at` / `created_at`：能不能用只认命令行 `--enable`，
+否则文件就能自己把接收方打开。
+
+行为与 `policy` 同口径：默认 dry-run；`--apply` 才写；已存在且除 `enabled` 外任何字段不同 ⇒ **冲突 exit 4**
+（不静默改授权面，要改就换 `id` 或先下线旧行）；完全一致 ⇒ `unchanged`；写后**同事务读回**，读不回拒绝提交。
+`recipients` 没有复核人列，所以 `--reviewed-by` 在这里是 exit 2。
+
+两条命令的先后：先 `recipient --apply --enable` 登记接收方，再在政策的 `recipient_bindings` 里引用它的 `id`，
+最后 `policy --apply --enable --reviewed-by`。反过来做会被 `INVALID_POLICY` 拦住（绑定指向不存在的接收方）。
 
 ## 已知边界：`valid_until` 不进请求期
 
