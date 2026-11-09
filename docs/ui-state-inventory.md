@@ -348,8 +348,8 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 项 | 口径 | 位置 |
 | --- | --- | --- |
-| 清单条目 | 由「源码树是否存在该文件」决定：存在才打包、不存在不打包 | `tools/prepare-wechat.mjs:279`；口径实现 `tools/lib/region-centroid-packaging.mjs` |
-| 双向断言 | **存在却不在清单** ⇒ 打包失败并点名该文件；**在清单却不存在** ⇒ 也失败（复制阶段会 ENOENT）；重复登记同样失败 | `tools/prepare-wechat.mjs:354` |
+| 清单条目 | 副本**整树复制**（跳过 `.local`、`node_modules`、`*.local.json`）：源码树有这个文件就进副本，清单只负责「这些必须在产物里」的断言；地区质心条目仍由「源码树是否存在该文件」决定 | `tools/prepare-wechat.mjs:414`；口径实现 `tools/lib/region-centroid-packaging.mjs` |
+| 双向断言 | **存在却不在清单** ⇒ 打包失败并点名该文件；**在清单却不存在** ⇒ 也失败（清单存在性断言点名，不再等复制阶段的 ENOENT）；重复登记同样失败 | `tools/prepare-wechat.mjs:494` |
 | 负控制用例 | 真跑 `prepare-wechat` 三态：没有就不打包／有就逐字打包／**有却漏进清单 ⇒ 必红** | `tests/unit/region-centroid-packaging.test.mjs` |
 | 端到端固定 | 「源码树里有 ⇔ 标准包里必须有」两端一致 | `tests/local-debug.test.mjs:201-203` |
 

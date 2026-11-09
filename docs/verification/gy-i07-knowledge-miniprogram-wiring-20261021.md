@@ -38,7 +38,7 @@
 
 - 共享源码固定 `mode: 'disabled'`（`tools/check-wechat-project.mjs:55-56` 的断言就是钉这一行，防止有人把共享源改成联网）。
 - `miniprogram/utils/auth.js:37-38` 的 `networkEnabled()` 要求 `runtime.mode === 'local' && runtime.apiBaseUrl !== ''`；`knowledge-api.js:67` 在两个条件任一不满足时直接 reject `SESSION_REQUIRED`，**不会**静默降级成离线数据。
-- 联网副本由 `node tools/prepare-wechat.mjs local --config <file> [--appid wx…]` 生成（输出 `.local/wechat-local`，被忽略），`apiBaseUrl` 需含客户端拼接的业务前缀（如 `http://127.0.0.1:3100/api/v1`）；`tools/prepare-wechat.mjs:50-51` 在共享 `runtime.js` 被改动时拒绝打包。
+- 联网副本由 `node tools/prepare-wechat.mjs local --config <file> [--appid wx…] [--out <仓库外的根目录>]` 生成（默认输出 `.local/wechat-local`，被忽略；副本是 `miniprogram/` 的整树复制），`apiBaseUrl` 需含客户端拼接的业务前缀（如 `http://127.0.0.1:3100/api/v1`）；`tools/prepare-wechat.mjs:378-379` 在共享 `runtime.js` 被改动时拒绝打包。
 - 服务端执行模式：真实读库或 real 端口为 `real`；本地替身服务为 `stub`；演示预置为 `preset_demo`。页面文案随之变化，`api.modeNote` 对三者不共用一句话。
 
 ## 四、五个 operationId 的对照
