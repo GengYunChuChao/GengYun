@@ -2042,7 +2042,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           : {};
   // GY-R59（P2-b）· 第三方删除**写侧适配器**：本期**只支持注入**。
   // `config.ts` 里没有第三方凭据键 ⇒ 装配层不会自造真实适配器（不新增环境变量、不伪造"已接线"）。
-  // 本片只把它接进删除注册表并透出取证（`app.userDataDeletion.thirdPartyAdapter`），⛔ 不 dispatch。
+  // 本段只把它接进删除注册表并透出取证（`app.userDataDeletion.thirdPartyAdapter`）；调度**不在这里**——注销受理链在 `executeHandlers()` 里经 `thirdPartyDispatch` 调它（GY-R73 起）。
   const thirdPartyAdapterWiring: { thirdPartyAdapter?: ThirdPartyDeletionAdapter } =
     userDataDeletionInjection?.thirdPartyAdapter === undefined
       ? {}
