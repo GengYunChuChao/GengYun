@@ -19,8 +19,8 @@ CI 里一次也没跑过；本提交把它接进 `real-pg-integration.yml` 的**
   `name: real-pg-deidentify-17.11` 在 `.github/workflows/real-pg-integration.yml:1816`、
   `runs-on: ubuntu-24.04` 在 `.github/workflows/real-pg-integration.yml:1817`、
   `timeout-minutes: 45` 在 `.github/workflows/real-pg-integration.yml:1818`。
-- 5 个 step（封顶之和 35 + 前置余量 10 = job 级 45，算式写在
-  `.github/workflows/real-pg-integration.yml:1810`）：`actions/checkout` 在
+- 5 个 step（封顶之和 35 + 前置余量 10 = job 级 45，落成
+  `.github/workflows/real-pg-integration.yml:1818` 的 `timeout-minutes: 45`）：`actions/checkout` 在
   `.github/workflows/real-pg-integration.yml:1820`、`actions/setup-node` 在
   `.github/workflows/real-pg-integration.yml:1824`、`npm ci` 在
   `.github/workflows/real-pg-integration.yml:1829`、装 PG 17 服务端二进制在
@@ -88,7 +88,7 @@ CI 里一次也没跑过；本提交把它接进 `real-pg-integration.yml` 的**
    这些被 docs 锚点钉住的行号原地不动。
 4. **`services:` 判据的窄豁免**：`postgresJobProblems()`（
    `tests/unit/ci-real-pg-wiring.test.mjs:1012`）对「跑受管脚本」的每个 job 都要求 `services.postgres`，
-   自起集群 job 天然没有 ⇒ 在 `tests/unit/ci-real-pg-wiring.test.mjs:1021` 处加一条豁免判断，
+   自起集群 job 天然没有 ⇒ 在 `tests/unit/ci-real-pg-wiring.test.mjs:1022` 处加一条豁免判断（`if (isSelfClusteredOnlyJob(job, managed)) continue;`），
    谓词 `isSelfClusteredOnlyJob`（受管脚本全部落在自起集群族、且 job 没有 `services:` 行才放行）写在 `tests/unit/ci-real-pg-wiring.test.mjs:2695`：
    只有「该 job 命中的受管脚本全部 ∈ `SELF_CLUSTERED_SCRIPTS`」**且**「job.body 没有 `services:` 行」才跳过。
    反向控制⑪ 在 `tests/unit/ci-real-pg-wiring.test.mjs:2708` 钉住这条路**不能更宽**：
@@ -122,7 +122,7 @@ node tests/integration/deidentify-account-pg.mjs
 ## 五、既有 job 一行未改的证据
 
 - `git diff --numstat origin/main -- .github/workflows/real-pg-integration.yml` ⇒ `81	0`
-  （81 行新增、0 行删除），且新增行全部落在 `.github/workflows/real-pg-integration.yml:1798` 之后（文件从 1796 行变 1877 行）。
+  （81 行新增、0 行删除），且新增的 81 行全部落在文件末尾这一段（注释头 + job 块，job 键 `.github/workflows/real-pg-integration.yml:1815`；文件从 1796 行变 1877 行）。
 - 既有 7 个 job 的键仍然落在原来那 7 行上：`real-pg-17-11` 在
   `.github/workflows/real-pg-integration.yml:94`、`real-pg-admin-read-17-11` 在
   `.github/workflows/real-pg-integration.yml:945`、`real-pg-admin-write-17-11` 在
