@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "未接线白名单：tools/*.mjs 里既没被 workflow 的 run: 点名（A），也没有被 tests 在真仓 spawn 并断言退出码（B）的脚本。kind：library=库模块，接线由 host 承担；in-process=由某份 CI 会跑的测试在进程内驱动（日志/配置装配，没有独立判定面）；by-design=确实不该接；gap=本该接、但本片（A 档，不改 .github/**）接不了，逐条写清卡在哪。已接线的条目留在表里会被判红（过期）。",
+  "note": "未接线白名单：tools/*.mjs 里既没被 workflow 的 run: 点名并执行（A；`node --check` 只做语法检查，不算执行），也没有被 tests 在真仓 spawn 并断言退出码（B）的脚本。kind：library=库模块，接线由 host 承担；in-process=由某份 CI 会跑的测试在进程内驱动（日志/配置装配，没有独立判定面）；syntax-only=CI 里只有 `node --check`，工具本体从未执行（必须写 witness）；by-design=确实不该接；gap=本该接、但本片（A 档，不改 .github/**）接不了，逐条写清卡在哪。已接线的条目留在表里会被判红（过期）。",
   "entries": [
     {
       "path": "tools/collect-g-drill.mjs",
@@ -44,8 +44,9 @@
     },
     {
       "path": "tools/openapi-route-inventory.mjs",
-      "kind": "by-design",
-      "reason": "一次性盘点脚本（只被宿主调起）：`node tools/openapi-route-inventory.mjs <root>` 打印已挂载路由表 JSON，没有断言、没有退出码语义，唯一调用方是 tools/openapi-route-parity.mjs:82 的子进程（那个宿主已由 tools-repo-run-smoke 在真仓跑）；接进 CI 等于只证明「能打印」。"
+      "kind": "library",
+      "host": "tools/openapi-route-parity.mjs",
+      "reason": "路由表盘点库（`node tools/openapi-route-inventory.mjs <root>` 只打印已挂载路由表 JSON）：没有断言、没有退出码语义，唯一调用方是 tools/openapi-route-parity.mjs:82 的子进程；那个宿主已由 tests/unit/tools-repo-run-smoke.test.mjs:42 在真仓跑并断言退出码，所以接线由 host 承担，不单独接。"
     },
     {
       "path": "tools/prepare-wechat.mjs",
@@ -78,6 +79,48 @@
       "path": "tools/verify-gy-i05-log-redaction.mjs",
       "kind": "by-design",
       "reason": "负例对照探针：要在一份「改前」的 services/api/src/app.ts 上跑，证明探针抓得到泄漏，判定明细走 stderr、靠人工 tee before.log 与 after.log 对比；把改前源码固化进 CI 才能重复，等于把历史版本塞进流水线。"
+    },
+    {
+      "path": "tools/ai-config.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/ai-config.test.mjs",
+      "reason": "AI 供应商配置解析/校验库：CI 里只有 access-verification.yml:28 的 `node --check`（语法级，工具本体从未作为 CLI 被执行）；它的判定逻辑（模型名 / 端点 / 密钥形状）由 tests/ai-config.test.mjs:10 在进程内驱动，该测试被同文件 :30 的 `node --test tests/ai-config.test.mjs` 点名。" 
+    },
+    {
+      "path": "tools/verify-env.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/verify-env.test.mjs",
+      "reason": "环境变量/连通性检查器：CI 里只有 access-verification.yml:35 的 `node --check`；真跑需要各供应商凭据（正是不能进 CI 的东西），判定逻辑（verifyEnvironment / probeHTTPS / PROVIDERS）由 tests/verify-env.test.mjs:4 在进程内以假探针驱动，该测试被同文件 :36 点名。" 
+    },
+    {
+      "path": "tools/verify-tencent-live.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/tencent-live.test.mjs",
+      "reason": "腾讯云真实连通性/签名探针：CI 里只有 access-verification.yml:21 的 `node --check`；真跑要真实 SecretId/SecretKey 与付费接口，签名与判定逻辑（reserve / attempt / signRequest / resolveTc3Credentials）由 tests/tencent-live.test.mjs:5 在进程内驱动，该测试被同文件 :23 点名。" 
+    },
+    {
+      "path": "tools/verify-llm-live.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/llm-live.test.mjs",
+      "reason": "大模型真实调用探针（含付费预算与注入判定）：CI 里只有 access-verification.yml:24 的 `node --check`；真跑要真实 API Key 与付费额度，判分/预算逻辑（buildCases / runCase / judgeInjection / priceTokens …）由 tests/llm-live.test.mjs:6 在进程内驱动，该测试被同文件 :25 点名。" 
+    },
+    {
+      "path": "tools/verify-tokenhub.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/tokenhub-account.test.mjs",
+      "reason": "账号/令牌可用性探针：CI 里只有 access-verification.yml:26 的 `node --check`；真跑要真实令牌，判定逻辑（verifyTokenHub）由 tests/tokenhub-account.test.mjs:3 在进程内驱动，该测试被同文件 :27 点名。" 
+    },
+    {
+      "path": "tools/verify-provider-adapter-live.mjs",
+      "kind": "syntax-only",
+      "witness": ".github/workflows/access-verification.yml:22",
+      "reason": "供应商适配器真实连通性探针：CI 里只有 `node --check`（语法检查，工具本体从未执行），也没有进程内见证；真跑要真实供应商凭据与付费链路，本片（A 档，不改 .github/**）无法把它接成执行面——登记为已知缺口形状，不是「已接线」。" 
+    },
+    {
+      "path": "tools/prepare-ai-verification.mjs",
+      "kind": "syntax-only",
+      "witness": ".github/workflows/access-verification.yml:29",
+      "reason": "把 docs/verification/ 下的配置拼成待核清单的装配脚本：CI 里只有 `node --check`，没有断言面也没有进程内见证；它产出的是给人看的清单（写文件），接进 CI 需要先确定「清单正确」的判据，本片不做——登记为已知缺口形状。" 
     }
   ]
 }

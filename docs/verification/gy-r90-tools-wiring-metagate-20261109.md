@@ -6,8 +6,10 @@
 > 本片只改 `tests/**` 与本页：**不动 `.github/**`、不动 `tools/**`**。
 >
 > 版本说明：第一版（`4a110df6`）被监工与独立审查各判「判定面会误报」——文件级退出码断言、`run:` 只看文本出现、
-> 仓库根标识符不核落点、夹具副本能被当成真仓跑、`prepare-wechat` 被误判成已接线。本页与代码都是修完之后的读数，
-> 修法与红/绿证据在 §六。
+> 仓库根标识符不核落点、夹具副本能被当成真仓跑、`prepare-wechat` 被误判成已接线。v3（`22dd89e2`）修完这些之后
+> 又被终审抓到一条**高估**：`node --check tools/x.mjs` 被当成「执行」，而它只是语法检查——真仓里有 7 条这样的
+> 实例（全在 `access-verification.yml`）。v4 把 `--check` 判成**非执行位**，7 条从「已接线」挪进白名单新档
+> `syntax-only`（§3.5），读数因此从 33 已接线 / 14 白名单变成 **26 / 21**。修法与红/绿证据在 §六。
 
 ## 一、为什么要这道闸：三件事可以同时为真
 
@@ -30,7 +32,7 @@
 
 | 类 | 定义 | 本片怎么判（v3） |
 | --- | --- | --- |
-| **A1** | 某份 `.github/workflows/*.yml` 的 `run:` 文本里**点名并执行**该路径 | 按 `;\|&&\|\|\|\|` 与换行切段、按空白/引号切词；路径必须落在**执行位**（同段更早出现 `node`/`npm`/`bash` 等运行器，或段首本身是可执行脚本）；`echo`/`printf`/`cat`/`grep` 等只把路径当数据的段跳过 |
+| **A1** | 某份 `.github/workflows/*.yml` 的 `run:` 文本里**点名并执行**该路径 | 按 `;\|&&\|\|\|\|` 与换行切段、按空白/引号切词；路径必须落在**执行位**（同段更早出现 `node`/`npm`/`bash` 等运行器，或段首本身是可执行脚本）；`echo`/`printf`/`cat`/`grep` 等只把路径当数据的段跳过；**`node --check <path>` 只是语法检查、不算执行**（终审 P1：它什么都不跑，任何人加一行就能让闸门闭嘴）；`bash -c "…"` 内层递归切段再判；`>`/`>>` 之后不算 |
 | **A2** | 该工具由 `package.json` 的某个 script 点名，而那个 script 被某份 workflow 以 `npm run <script>` 调起 | 两段都要成立：script 文本点名 + `run:` 里真有人 `npm run` 它（只认真的被调用的 script） |
 | **B** | 某个 `tests/` 下的 `.mjs` **在仓库根 spawn 它**，且**这一次 spawn 的退出码**被断言 | spawn 家族（`spawnSync`/`execFileSync`/`execSync`/`execFile`/`spawn`）+ 工具路径锚在**仓库根解析出的绝对路径**上（`join(ROOT,'tools','x.mjs')`、`new URL('../tools/x.mjs', import.meta.url)` 或它们的别名；argv 里的裸相对字面量只在该 spawn 的 `cwd` 已核实为仓库根时才算）+ `cwd` 是仓库根/继承/默认值即仓库根 + 退出码断言绑定到**该站点的返回值**（含 helper 返回值 4 跳消费链） |
 
@@ -42,27 +44,28 @@
 4. **只在文档/注释里出现**：`README` 与 `package.json` 写了用法，等于没人跑；
 5. **蹭别的站点的断言**：同一文件里有另一处 `assert.equal(other.status, 0)`，不代表这一次 spawn 的退出码被检查过；
 6. **路径只出现在参数位**：`spawnSync(node, [copy, '--compare', 'tools/x.mjs'])` 里被跑的是副本，`tools/x.mjs` 只是参数——
-   只认 `args[0]`，窗口里别处出现的路径一律不算。
+   只认 `args[0]`，窗口里别处出现的路径一律不算；
+7. **只做语法检查**：`node --check tools/x.mjs` 把路径放在执行位，但解析器只检查语法、**不执行任何判据**——
+   v3 曾把它算成 A1，真仓里因此有 7 条「看着像接线、实际从未跑过」的假绿（§3.5、§六 变异 H）。
 
 > 反例就在仓里：`tests/unit/verify-verification-comment-anchors.test.mjs:29` import 三个导出函数、`:67` 起临时目录，
 > 全仓 `tests/` 里**没有任何一处**在真仓 spawn 它（当时）——按上面的口径，它一条 B 证据都没有。
 
 ## 三、47 个 `tools/*.mjs` 的四类现状（逐条到 `文件:行`）
 
-扫描面：47 个顶层 `tools/*.mjs`、15 份 workflow、164 条 `run:` 步、714 个 `tests/` 下的 `.mjs`。
-汇总：**已接线 33**（A1 15 + A2 3 + B 15）、**只 import 8**、**只夹具 1**、**完全无引用 5**。33 + 8 + 1 + 5 = 47。
+扫描面：47 个顶层 `tools/*.mjs`、15 份 workflow、164 条 `run:` 步、716 个 `tests/` 下的 `.mjs`。
+汇总：**已接线 26**（A1 8 + A2 3 + B 15）、**只 import 8**、**只夹具 1**、**完全无引用 5**、**仅语法检查 7**。26 + 8 + 1 + 5 + 7 = 47。
 
-### 3.1 已接线（33）
+> 「四类」口径沿用既有元闸门（已接线 / 只 import / 只夹具 / 无引用），`syntax-only` 是本片为「CI 里只有
+> `node --check`、工具本体从未执行」的 7 条单列的第 5 档——它们既不算已接线，也不该被塞进 `by-design`
+> （工具本体当然该接，是**当前的 CI 写法**只做了语法级），所以登记在白名单里但打不同的 kind。
+> 分档**互斥且按优先级**：已接线 > 仅语法检查 > 只 import > 只夹具 > 无引用（所以 §3.5 那 5 条虽然也被测试
+> `import`，仍记在 `syntax-only`，不重复计进 §3.2）。
+
+### 3.1 已接线（26）
 
 | 脚本 | 面 | 证据（文件:行） | 强度 |
 | --- | --- | --- | --- |
-| `tools/ai-config.mjs` | A1 | `.github/workflows/access-verification.yml:28` | 仅语法级 `node --check` |
-| `tools/verify-tencent-live.mjs` | A1 | `.github/workflows/access-verification.yml:21` | 仅语法级 `node --check` |
-| `tools/verify-provider-adapter-live.mjs` | A1 | `.github/workflows/access-verification.yml:22` | 仅语法级 `node --check` |
-| `tools/verify-llm-live.mjs` | A1 | `.github/workflows/access-verification.yml:24` | 仅语法级 `node --check` |
-| `tools/verify-tokenhub.mjs` | A1 | `.github/workflows/access-verification.yml:26` | 仅语法级 `node --check` |
-| `tools/prepare-ai-verification.mjs` | A1 | `.github/workflows/access-verification.yml:29` | 仅语法级 `node --check` |
-| `tools/verify-env.mjs` | A1 | `.github/workflows/access-verification.yml:35` | 仅语法级 `node --check` |
 | `tools/check-wechat-project.mjs` | A1 | `.github/workflows/local-wechat.yml:55` | 真跑 |
 | `tools/demo-align.mjs` | A1 | `.github/workflows/local-wechat.yml:60` | 真跑 |
 | `tools/verify-layout.mjs` | A1 | `.github/workflows/local-wechat.yml:61` | 真跑 |
@@ -90,7 +93,22 @@
 | `tools/verify-gy-i09-candidates.mjs` | B | `tests/unit/tools-repo-run-smoke.test.mjs:55` | 真仓 spawn + `.status`（完整判定） |
 | `tools/i22-failmatrix-evidence-table.mjs` | B | `tests/unit/i22-failmatrix-evidence-table-guard.test.mjs:235`（调用点，helper 形态） | 真仓 spawn + `.status`（v2 认得 helper 调用点，见 §六 变异 A） |
 
-7 个只有 `node --check` 的脚本：**语法级点名也算接线，但不假装它够**（见 §八）。
+### 3.5 仅语法检查（7）：`run:` 里只有 `node --check`，工具本体从未执行
+
+| 脚本 | `--check` 证据（文件:行） | 另有进程内见证 |
+| --- | --- | --- |
+| `tools/verify-tencent-live.mjs` | `.github/workflows/access-verification.yml:21` | `tests/tencent-live.test.mjs:5`（`.github/workflows/access-verification.yml:23` 的 `node --test` 点名） |
+| `tools/verify-provider-adapter-live.mjs` | `.github/workflows/access-verification.yml:22` | 无 |
+| `tools/verify-llm-live.mjs` | `.github/workflows/access-verification.yml:24` | `tests/llm-live.test.mjs:6`（`.github/workflows/access-verification.yml:25` 点名） |
+| `tools/verify-tokenhub.mjs` | `.github/workflows/access-verification.yml:26` | `tests/tokenhub-account.test.mjs:3`（`.github/workflows/access-verification.yml:27` 点名） |
+| `tools/ai-config.mjs` | `.github/workflows/access-verification.yml:28` | `tests/ai-config.test.mjs:10`（`.github/workflows/access-verification.yml:30` 点名） |
+| `tools/prepare-ai-verification.mjs` | `.github/workflows/access-verification.yml:29` | 无 |
+| `tools/verify-env.mjs` | `.github/workflows/access-verification.yml:35` | `tests/verify-env.test.mjs:4`（`.github/workflows/access-verification.yml:36` 点名） |
+
+5 条有 `node --test tests/*.test.mjs` 的进程内见证 ⇒ 白名单里记 `in-process`（`exercisedBy` 指向那份测试，
+且 `runInCi` 必须真命中——④ 会核）；`verify-provider-adapter-live`、`prepare-ai-verification` 既无进程内见证、
+CI 里也只有语法检查 ⇒ 记 `syntax-only`，`witness` 写 `--check` 那一步（④ 会核那个 workflow 与行号存在）。
+**没有一条被塞进 `library` 或 `in-process` 凑数**：前者要求有 host 链，后者要求有真被 CI 跑到的测试。
 
 ### 3.2 只 import（8）：导出函数被进程内调用，真仓从未 spawn
 
@@ -125,62 +143,82 @@
 | `tools/verify-gy-i05-log-redaction.mjs` | 无 | 0 命中（负例对照探针，需人工对比 `before/after`） |
 | `tools/verify-provider-live-r28.mjs` | 无 | 0 命中（头注明令不得进 CI） |
 
-## 四、白名单 14 条：逐条一句话理由
+## 四、白名单 21 条：逐条一句话理由
 
-`tests/unit/orphan-tools-wired-baseline.json`。`kind` 四档：`library`（库模块，接线由 host 承担）、
-`in-process`（由 CI 会跑的测试在进程内驱动，没有独立退出码）、`by-design`（确实不该接）、
-`gap`（**本该接，本片接不了**——本版为 0 条：三条走 B 类接上了，见 §六 变异 E）。
+`tests/unit/orphan-tools-wired-baseline.json`。`kind` 五档：`library`（库模块，接线由 host 承担）、
+`in-process`（由 CI 会跑的测试在进程内驱动，没有独立退出码）、**`syntax-only`**（CI 里只有 `node --check`，
+工具本体从未执行）、`by-design`（确实不该接）、`gap`（**本该接，本片接不了**——本版为 0 条：三条走 B 类接上，
+见 §六 变异 E）。
 
 | # | 脚本 | kind | 一句话理由 |
 | --- | --- | --- | --- |
 | 1 | `tools/collect-g-drill.mjs` | library | 纯函数库（`runDrillPlan`/`readSha`/`readDirty`），无 CLI，接线由 host `verify-g-drill-readings` 负责 |
 | 2 | `tools/contract-status-core.mjs` | library | 契约锚点核心库，host `verify-contract-status` 已在 `engineering-shell.yml:111` 被点名 |
 | 3 | `tools/contract-status-runtime.mjs` | library | 运行期探针，由 `contract-status-core.mjs:68` 子进程调起，两层宿主最终落在已接线的 `verify-contract-status` |
-| 4 | `tools/local-debug-config.mjs` | in-process | 配置读取器，被 `local-wechat.yml:57` 点名的 `tests/local-debug.test.mjs:9` 进程内驱动 |
-| 5 | `tools/local-debug-server.mjs` | in-process | 回环调试服务，常驻无一次性退出码，由 `tests/local-debug.test.mjs:10` 驱动 |
-| 6 | `tools/i22-failmatrix-negative-control.mjs` | by-design | 人工变异执行器（27 条负控制），`README` 的命令清单与工具表都写明人工执行，进 CI 会把「负控制按预期失败」误报成红 |
-| 7 | `tools/local-env.mjs` | by-design | 本机开发栈编排（真 PG17 + 固定端口 + gitignored `.env`）；`tests/unit/local-env.test.mjs:809` 只 import 一个辅助函数 `stopSpawnedApi`，不构成接线 |
-| 8 | `tools/openapi-route-inventory.mjs` | by-design | 一次性盘点脚本，只打印路由表 JSON，没有断言与退出码语义；唯一调用方是宿主 `openapi-route-parity.mjs:82`（已接线） |
-| 9 | `tools/prepare-wechat.mjs` | by-design | 装配微信开发者工具工程，只有真微信工程树才有意义（会写 `project.config.json` 一类文件）；三个站点全是 `cpSync` 副本，按判据属「只夹具」 |
-| 10 | `tools/verify-chat-live.mjs` | by-design | 受控付费取证：默认零外发（无 `--approved` 只预检 `exit 2`），需外发台账 + 单独授权 + 最多 2 次付费调用 |
-| 11 | `tools/verify-provider-live-r28.mjs` | by-design | 文件头第 19 行明写「⛔ 本工具不得被任何 workflow 引用，也不得进任何 `test:*` 套件」 |
-| 12 | `tools/verify-production-provisioning.mjs` | in-process | 真云控制台核对：脚本要生产只读凭据，但判定逻辑有退出码语义，已由 `tests/unit/production-provisioning.test.mjs` 注入假凭据进程内驱动 |
-| 13 | `tools/verify-real-capability-config.mjs` | in-process | 读 `.gitignore:42` 忽略的 `config.local.json`，裸跑必红；但 `exitCodeFor(report)` 有退出码语义，已由 `tests/unit/real-capability-config.test.mjs:33` 进程内驱动 |
-| 14 | `tools/verify-gy-i05-log-redaction.mjs` | by-design | 负例对照探针：要在「改前」的 `app.ts` 上跑并 `tee before.log` 人工对比，固化进 CI 等于把历史源码塞进流水线 |
+| 4 | `tools/openapi-route-inventory.mjs` | library | 路由表盘点库，无断言/退出码语义；唯一调用方是已接线的宿主 `openapi-route-parity.mjs:82`（由 `tests/unit/tools-repo-run-smoke.test.mjs:42` 在真仓跑） |
+| 5 | `tools/local-debug-config.mjs` | in-process | 配置读取器，由 `local-wechat.yml:57` 点名的 `tests/local-debug.test.mjs:9` 进程内驱动 |
+| 6 | `tools/local-debug-server.mjs` | in-process | 回环调试服务，常驻无一次性退出码，由 `tests/local-debug.test.mjs:10` 驱动 |
+| 7 | `tools/verify-production-provisioning.mjs` | in-process | 真云控制台核对：脚本要生产只读凭据，但判定有 `report → exit` 语义，已由 `tests/unit/production-provisioning.test.mjs:15` 注入假凭据进程内驱动 |
+| 8 | `tools/verify-real-capability-config.mjs` | in-process | 读 `.gitignore:42` 忽略的 `config.local.json`，裸跑必红；但 `exitCodeFor(report)` 有退出码语义，已由 `tests/unit/real-capability-config.test.mjs:33` 进程内驱动 |
+| 9 | `tools/ai-config.mjs` | in-process | CI 里只有 `.github/workflows/access-verification.yml:28` 的 `node --check`；判定逻辑由 `tests/ai-config.test.mjs:10` 进程内驱动，该测试被 `.github/workflows/access-verification.yml:30` 的 `node --test` 点名 |
+| 10 | `tools/verify-env.mjs` | in-process | CI 里只有 `.github/workflows/access-verification.yml:35` 的 `node --check`；真跑要各供应商凭据，判定逻辑由 `tests/verify-env.test.mjs:4` 以假探针进程内驱动（`.github/workflows/access-verification.yml:36` 点名） |
+| 11 | `tools/verify-tencent-live.mjs` | in-process | CI 里只有 `.github/workflows/access-verification.yml:21` 的 `node --check`；真跑要真实密钥与付费接口，签名/判定由 `tests/tencent-live.test.mjs:5` 进程内驱动（`.github/workflows/access-verification.yml:23` 点名） |
+| 12 | `tools/verify-llm-live.mjs` | in-process | CI 里只有 `.github/workflows/access-verification.yml:24` 的 `node --check`；真跑要真实 Key 与付费预算，判分逻辑由 `tests/llm-live.test.mjs:6` 进程内驱动（`.github/workflows/access-verification.yml:25` 点名） |
+| 13 | `tools/verify-tokenhub.mjs` | in-process | CI 里只有 `.github/workflows/access-verification.yml:26` 的 `node --check`；真跑要真实令牌，`verifyTokenHub` 由 `tests/tokenhub-account.test.mjs:3` 进程内驱动（`.github/workflows/access-verification.yml:27` 点名） |
+| 14 | `tools/verify-provider-adapter-live.mjs` | **syntax-only** | CI 里只有 `.github/workflows/access-verification.yml:22` 的 `node --check`，无进程内见证；真跑要真实凭据与付费链路，本片（A 档）接不了 ⇒ 明确登记为「看着像接线、其实没跑过」 |
+| 15 | `tools/prepare-ai-verification.mjs` | **syntax-only** | CI 里只有 `.github/workflows/access-verification.yml:29` 的 `node --check`，无断言面也无进程内见证；它产出给人看的清单，接进 CI 前要先定「清单正确」的判据 |
+| 16 | `tools/i22-failmatrix-negative-control.mjs` | by-design | 人工变异执行器（27 条负控制），`README` 的命令清单与工具表都写明人工执行，进 CI 会把「负控制按预期失败」误报成红 |
+| 17 | `tools/local-env.mjs` | by-design | 本机开发栈编排（真 PG17 + 固定端口 + gitignored `.env`）；`tests/unit/local-env.test.mjs:809` 只 import 一个辅助函数 `stopSpawnedApi`，不构成接线 |
+| 18 | `tools/prepare-wechat.mjs` | by-design | 装配微信开发者工具工程，只有真微信工程树才有意义（会写 `project.config.json` 一类文件）；三个站点全是 `cpSync` 副本，按判据属「只夹具」 |
+| 19 | `tools/verify-chat-live.mjs` | by-design | 受控付费取证：默认零外发（无 `--approved` 只预检 `exit 2`），需外发台账 + 单独授权 + 最多 2 次付费调用 |
+| 20 | `tools/verify-provider-live-r28.mjs` | by-design | 文件头第 19 行明写「⛔ 本工具不得被任何 workflow 引用，也不得进任何 `test:*` 套件」 |
+| 21 | `tools/verify-gy-i05-log-redaction.mjs` | by-design | 负例对照探针：要在「改前」的 `app.ts` 上跑并 `tee before.log` 人工对比，固化进 CI 等于把历史源码塞进流水线 |
 
-14 条 = 47 − 33，与 §三 的四类表逐条对得上。**没有为了让它绿把本该接的塞进 by-design**：
+21 条 = 47 − 26，与 §三 的四类表逐条对得上（4 library + 9 in-process + 2 syntax-only + 6 by-design + 0 gap）。
+**没有为了让它绿把本该接的塞进 by-design**：
 - 第一版登记为 `gap` 的 4 条（`run-python`、`openapi-route-parity`、`verify-gy-i09-candidates`、
   `verify-verification-comment-anchors`）全部退出了白名单——前三条由新增的 `tools-repo-run-smoke` 在真仓跑，
   最后一条由 `#1137` 的守卫在真仓跑（§六 变异 E）。
 - 第二版把 `i22-failmatrix-evidence-table` 从 by-design 里删掉：它不是「无判定面」，而是判定被包在 helper 里，
   属于**元闸门认不出**而非「不该接」——按审查要求改成认 helper 调用的**真仓调用点**，它回到 B 类（§六 变异 A）。
   这也是本页要区分「人工归类」与「机器判定」的地方：表里的 kind 是人工判断，机器只认 A/B 证据。
+- 终审把 7 条 `node --check` 从「已接线」里剔出来：其中 5 条有真被 CI 跑到的进程内见证 ⇒ `in-process`；
+  另 2 条什么见证都没有 ⇒ `syntax-only`。**没有**把 `syntax-only` 混进 `in-process` 或 `library` 凑数字——
+  这两种 kind 各有 ④ 的硬校验（`exercisedBy` 必须被 `runInCi` 命中；`host` 必须沿链接到已接线脚本），塞不进去。
 
 ## 五、判据代码怎么写的
 
 `tests/unit/ci-orphan-tools-wired.test.mjs`（六条判据，测试名带 ①–⑥）：
 
-1. **① 扫描面下界**：47 tools / 15 workflows / 164 `run:` 步 / 714 测试文件的下界（工具 44、workflow 14、
+1. **① 扫描面下界**：47 tools / 15 workflows / 164 `run:` 步 / 716 测试文件的下界（工具 44、workflow 14、
    run 140、测试 600），外加「一个 spawn 站点都没解析出来 ⇒ 红」。解析器坏掉时先红，避免「扫到 0 条所以全绿」。
 2. **② 未接线必须登记**：`classify(tool)` 返回证据数组，空数组 = 未接线；未接线且不在白名单 ⇒ 红，逐条点名并给三条修法。
 3. **③ 白名单不得过期**：已接线却还在白名单 ⇒ 红「已过期，删掉它」（与 `ci-orphan-tests-wired` 同口径：**过期判红**）。
-4. **④ 白名单自身可核**：路径必须 ∈ 当前 47 个脚本；`kind` ∈ 四档；`reason` ≥ 12 字；`library` 的 `host`
+   终审的 P1 正是被这条抓住的：`--check` 一改判，7 条白名单条目立刻变成「已过期」。
+4. **④ 白名单自身可核**：路径必须 ∈ 当前 47 个脚本；`kind` ∈ 五档；`reason` ≥ 12 字；`library` 的 `host`
    必须存在且**沿 host 链最终接到已接线脚本**（`contract-status-runtime → core → verify-contract-status` 走得通）；
-   `in-process` 的 `exercisedBy` 必须是真测试文件且被某份 workflow（含 `npm run` 转接）跑到。
-5. **⑤ 反向控制**：把合成文本喂给同一批判据函数，**20 条边**逐条断言——YAML 注释 `run` 不算、块标量里的 shell
-   注释不算、`echo` 之后的路径不算、`node --check` 算、整词才算、`paths:` 不造 `run` 步、仅 import ⇒ 0 站点、
+   `in-process` 的 `exercisedBy` 必须是真测试文件且被某份 workflow（含 `npm run` 转接）跑到；
+   `syntax-only` 的 `witness` 必须是 `工作流:行号` 且该文件存在。
+5. **⑤ 反向控制**：把合成文本喂给同一批判据函数，**23 条边**逐条断言——YAML 注释 `run` 不算、块标量里的 shell
+   注释不算、`echo` 之后的路径不算、整词才算、`paths:` 不造 `run` 步、仅 import ⇒ 0 站点、
    夹具 cwd 不算、`--root` 改指夹具不算、真仓 spawn + `.status` 算、没有 `.status` 断言不算、`cwd = ROOT` 默认参数算、
    同文件另一站没断言 ⇒ 仍不算、`cpSync` 副本 ⇒ 0 站点、裸相对字面量有/无 `cwd` 两种结果，
-   以及 v3 新增的六条：**参数位/重定向目标/`bash -c` 内层参数/npm 参数位都不算执行位**（P1-4）、
+   v3 新增的六条：**参数位/重定向目标/`bash -c` 内层参数/npm 参数位都不算执行位**（P1-4）、
    **`'--root=' + tmp` 拼接算改指夹具**（P2）、**helper 真仓调用点算 / helper 夹具调用点不算**（P1-1）、
-   **同文件同名 `const result` 不串号**（P1-3）、**argv[0] 是副本、字面量只在参数位 ⇒ 0 站点**（P1-2）。
-6. **⑥ gap 台账 + 读数**：`kind: gap` 逐条 `t.diagnostic`（不判红），并打印「已接线 A1/A2/B + 白名单四档」读数供对账。
+   **同文件同名 `const result` 不串号**（P1-3）、**argv[0] 是副本、字面量只在参数位 ⇒ 0 站点**（P1-2），
+   以及 v4 新增的三条：**`node --check <path>` 不算执行**（P1）、**`node <path> --check` 与「同段另一条真执行」都算**（P1 的正控制）、
+   **默认参数只在声明它的函数里算仓库根**（P2-2）、**`$RUNNER_TEMP/copy/tools/x.mjs` 不算仓内路径**（P2-3）、
+   **`node --test a b` 里第二个文件也算被执行**（P2-5）。
+6. **⑥ gap 台账 + 读数**：`kind: gap` 逐条 `t.diagnostic`（不判红），并打印「已接线 A1/A2/B + 白名单五档 + 未接线率」读数供对账；
+   未接线率超 60% 直接红（防「白名单越养越松」）。
 
 实现上几个必须**配平/求值**而不是正则截断的地方（每一处都踩过一次）：
 
 - `cwd` 取值要读到**顶层的** `,` / `}`：`cwd: fileURLToPath(new URL('../../', import.meta.url))` 里的逗号
   会让 `[^,}\n]+` 提前截断，把真仓跑误判成夹具（`tests/integration/online-purge-pg.mjs:379` 就这么被误判过）；
 - `{cwd, ...}` 简写要回看形参默认值：`tests/unit/release-gate.test.mjs:40` 的 `function gate(args, cwd = ROOT)`；
+  **但只在那个函数的作用域内**（终审 P2-2）：`functionRanges` 记下每个函数体的 `[start,end]`，
+  `cwdOfWindow(window, at)` 要求 `at` 落在某个区间里才算 root——夹具块里另起的 `const cwd = mkdtempSync('x')` 不许蹭；
 - **仓库根标识符要求值**：`resolve(dirname(fileURLToPath(import.meta.url)), …)` 只说明「相对本文件算了条路径」，
   必须按该测试文件的位置求值后**恰好等于仓库根**才登记；从 `tools/*.mjs` import 进来的 `REPO_ROOT`
   也走同一把尺子（读那个模块自己的根表达式求值）；
@@ -193,6 +231,8 @@
   `helperCallSites` 把站点改记在调用点上，实参须是锚在仓库根的 `tools/x.mjs`、`cwd` 实参须是仓库根；
 - **`run:` 只认执行位**：切段后剥行尾注释、跳过 `NON_EXEC` 段首（`echo`/`cat`/`grep`…）、`bash -c` 内层递归、
   `npm|pnpm|yarn` 之后全是参数位、`>`/`>>` 之后不算、段首在 `RUNNERS` 时第一个非 `-` 参数才是脚本位（P1-4）；
+  **`--check` 出现在脚本位之前 ⇒ 这一整段判「非执行」**（终审 P1：它只是语法检查）；
+  `node --test a b c` 里 `--test` 之后的**每个**非 flag 参数都算被执行（P2-5）；以 `$` 开头的 token 不算仓内路径（P2-3）；
   注释里写明这是**降级口径**：`node --import ./pre.mjs tools/x.mjs` 会被判「没接线」，宁可低估。
 
 ## 六、变异自证：红/绿原文
@@ -284,21 +324,73 @@
 
 三者在元闸门里随即变成 B 类（§3.1 后三行），`gap` 台账从 4 条降到 0 条。
 
-## 七、六道闸门（本片实跑）
+**变异 H（终审 P1，`--check` 当执行）：把「脚本位之前出现 `--check` 就跳过」那行删掉**
 
-下列读数全部在 `ed3884cb`（= 本页判据/白名单定稿后、merge `origin/main` 得到的提交）上实跑；
-本提交只补这张表，没有改判据、白名单或 §三/§四的读数。
+真仓 7 条立刻从白名单的「不该过期」翻成「已接线」，同时 ⑤ 里那条负控制也红：
+
+```
+✖ ③ 白名单不得过期：已接线的条目必须删掉
+  AssertionError [ERR_ASSERTION]: 白名单里有条目已经被接线了（已过期，删掉它，否则白名单会越养越松）：
+  +   'tools/ai-config.mjs（.github/workflows/access-verification.yml:28（run: 点名））',
+  +   'tools/verify-env.mjs（.github/workflows/access-verification.yml:35（run: 点名））',
+  +   'tools/verify-tencent-live.mjs（.github/workflows/access-verification.yml:21（run: 点名））',
+  +   'tools/verify-llm-live.mjs（.github/workflows/access-verification.yml:24（run: 点名））',
+  +   'tools/verify-tokenhub.mjs（.github/workflows/access-verification.yml:26（run: 点名））',
+  +   'tools/verify-provider-adapter-live.mjs（.github/workflows/access-verification.yml:22（run: 点名））',
+  +   'tools/prepare-ai-verification.mjs（.github/workflows/access-verification.yml:29（run: 点名））'
+✖ ⑤ 反向控制：合成文本喂同一批判据函数
+  AssertionError [ERR_ASSERTION]: `--check` 是语法检查，不是执行
+ℹ pass 4 / fail 2
+```
+
+恢复后：`ℹ pass 6 / ℹ fail 0`。这 7 条逐行就是 §3.5 那张表——它们此前一直以「已接线 A1」出现在 v3 的读数里。
+
+**变异 I（终审 P2-2）：`isRepoRootExpression` 退回「只要形参名带默认值就算仓库根」**（`return context.rootParams.has(expr);`）
+
+```
+✖ ⑤ 反向控制：合成文本喂同一批判据函数
+  AssertionError [ERR_ASSERTION]: 只有「默认参数 cwd = ROOT」那个函数里的站点算真仓；夹具块里的 `const cwd = mkdtempSync()` 不能蹭
+ℹ pass 5 / fail 1
+```
+
+恢复后：`ℹ pass 6 / ℹ fail 0`。
+
+**变异 J（终审 P2-3）：去掉 argv token 的 `$` 拦截**
+
+```
+✖ ⑤ 反向控制：合成文本喂同一批判据函数
+  AssertionError [ERR_ASSERTION]: 以 $ 变量开头的 token 不能算跑了仓里的脚本
+ℹ pass 5 / fail 1
+```
+
+恢复后：`ℹ pass 6 / ℹ fail 0`。
+
+**变异 K（终审 P2-5）：让 `node --test a b` 只看第一个文件**（`if (testAt >= 0)` → `if (false)`）
+
+```
+✖ ⑤ 反向控制：合成文本喂同一批判据函数
+  AssertionError [ERR_ASSERTION]: `--test` 之后的第二个文件也是被执行对象
+ℹ pass 5 / fail 1
+```
+
+恢复后：`ℹ pass 6 / ℹ fail 0`。
+
+## 七、七道闸门（本片实跑）
+
+下列读数在**本页与判据定稿后的提交**上实跑（②⑥ 需要提交后的 HEAD，故它们与 ①③④⑤⑦ 分两次跑；
+两次之间只改这张表与 §八 的文字，不改判据、白名单或 §三/§四的读数）。逐行注明了跑它的提交。
 
 | # | 闸门 | 命令 | EXIT | 尾行摘录 |
 | --- | --- | --- | --- | --- |
-| ① | 四连 strict anchors | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `本次：不在区间 44、UNDECLARED 259、配成对 1327`（基线 44 / 265 / 1051）；`PASS: --strict 下没有基线之外的新增` |
+| ① | 四连 strict anchors | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `本次：不在区间 44、UNDECLARED 259、配成对 1328`（基线 44 / 265 / 1051）；`PASS: --strict 下没有基线之外的新增` |
 | ② | 锚点搬迁身份单测 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ tests 37 / ℹ pass 36 / ℹ fail 0 / ℹ skipped 1`（提交前跑会红：`base == HEAD` 时拒绝静默通过） |
 | ③ | 契约状态 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 行号区间 324 条…`；`PASS: 中文表格一致`；`PASS: 状态为人工判定…` |
 | ④ | 文档闸门 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 369 页（扫描面 374 页：docs/verification）——读数七条判据全部自洽` |
-| ⑤ | 钻孔读数 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 611（glob 合计 581）；生长型读数按下界判` |
+| ⑤ | 钻孔读数 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 611（glob 合计 581）；生长型读数按下界判`（8 条滞后逐行打印） |
 | ⑥ | 与 main 合并试算 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 输出只有一行树哈希、**没有冲突路径行**（树哈希随任何文字改动而变，故不在此钉死具体值） |
+| ⑦ | 注释锚点闸门（下游） | `node tools/verify-verification-comment-anchors.mjs` | 0 | `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`；`VERIFICATION-COMMENT-ANCHOR-PASS` |
 
-另跑了下游的注释锚点闸门（`node tools/verify-verification-comment-anchors.mjs`）：`本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0。
+七道里 ②⑥ 是「提交后才能跑」的两道：② 要求 `base != HEAD` 才肯判，⑥ 要拿 HEAD 去和 `origin/main` 试算。
 
 ### 七之一、本页自己被下游闸门抓了一次（真实案例，不是夹具）
 
@@ -317,16 +409,29 @@
 
 - **不声称这些脚本的判据本身正确**：本闸门只问「有没有人跑」，不问「跑出来的判定对不对」。
   `release-gate` 的 secrets/artifacts 判据、`verify-sample-gap` 的读数口径，本片一个字没验。
-- **不声称 A 的强度足够**：7 个脚本只有 `node --check`（§3.1 标了「仅语法级」），语法通过不等于门禁判定跑过。
+- **不声称 A 的强度足够**：`node --check` 连 A 都不算（§3.5 那 7 条已挪进白名单的 `syntax-only` / `in-process`）；
+  真跑的那 8 条 A1 里，`verify-doc-anchors` 是四连 strict、其余多为默认档——A 只证明「CI 里有人执行它」，
+  不证明那个执行面的参数覆盖了它的全部判据。
 - **不声称 B 的强度整齐**：判据只要求「这一次 spawn 的退出码被断言」，不要求断言覆盖工具的全部判定面。
   `tools-repo-run-smoke` 里 `run-python` 只断言不带参数退 2 的 argv 契约；`release-gate` 的真仓臂偏弱
   （`--list` / `--help` / `--only pg`(skip)，`--base HEAD` 空 diff 臂不断言 status）——它们算「接线」，但不算「验过」。
 - **不声称替代真正的 CI 接线**：B 类接线的判定面比在 workflow 里单列一步窄（没有独立 job、没有路径过滤、
   没有 failure annotation）。要让 `tools/**` 的接线强度整体上一个台阶，仍应另开 B 档 PR 往 `.github/workflows/**` 加 `run:`。
-- **不声称不误报**：本闸门是静态解析（不做 shell / JS 语义分析）。方向是**宁可低估**——`cwd` 不明、
+- **不声称不误报**：本闸门是静态解析（不做 shell / JS 语义分析）。**主要方向是低估**——`cwd` 不明、
   路径不锚、断言不绑定到站点、脚本位经过两层以上 helper 转发，一律不算接线；代价是少数真接线可能被判未接线，
   需要显式登记或改写成可判形态（v3 已把「一层 helper + 调用点实参」这种形状收进来，`i22-failmatrix-evidence-table`
-  就是这么从白名单回到 B 类的）。
+  就是这么从白名单回到 B 类的）。但**已知仍有几处高估**，逐条登记在这儿（终审 P2 要求）：
+
+  | # | 高估形状 | 现状 / 真仓是否已有实例 |
+  | --- | --- | --- |
+  | 高估-1 | helper 的 `cwd` 形参不叫 `cwd`（`function runTool(script, args, root) { … {cwd: root} }`），调用点传 `mkdtempSync()`：`cwdParam` 找不到 ⇒ 该站的 `cwd` 落 `inherit` ⇒ 判真仓 | **真仓无实例**：`git grep -n -E "function [A-Za-z_$][\w$]*\([^)]*\bcwd\b[^)]*\)" -- "tests/**/*.mjs"` 命中 10 处，helper 形参全叫 `cwd`（`tests/unit/i22-failmatrix-evidence-table-guard.test.mjs:142`、`tests/unit/release-gate.test.mjs:39`、`tests/unit/release-materials-index.test.mjs:118` …）；没有「形参叫 root 再 `{cwd: root}`」的形状 |
+  | 高估-2 | B 类不校验见证测试**是否真在 CI 里跑**（`in-process` 校验了，B 没校验） | 当前 15 条 B 的见证文件全部落在 CI 会跑的套件里（`test:unit` 的 6 个 glob / `test:evaluation` / `real-pg-integration.yml:627`、`:674`、`:697` 的逐条 `run:`），所以今天没有假绿；但**换一个人把见证写进一份没人跑的测试，B 就会误判**——这是判据缺口，不是当前读数问题 |
+  | 高估-3 | heredoc 正文里的 `node tools/x.mjs` 会被记成执行 | 真仓无实例（15 份 workflow 里没有 heredoc 包着工具调用的段）；接受这个形状，不另写解析 |
+  | 高估-4 | A2 的 `npm run <script>` 不剥**引号**：引号里的 script 名会多切一刀 | 行尾注释这一半已修（`scriptInvocations` 先过 `stripShellComments`，⑤ 的 case x 钉住）；引号在 `npm run` 的实参里本来就不合法，真仓无实例，登记为已知形状 |
+  | 高估-5 | `parseWorkflow` 解析出的 `hasPaths` 目前不参与判类（只看 `run:`） | 设计如此：`paths:` 过滤只影响「什么时候跑」，不影响「跑不跑」；登记以免读者以为它被用上了 |
+
 - **不声称 by-design 的判断有外部背书**：这些理由来自各工具的文件头自述、`.gitignore`、以及
   `access-verification.yml:43` 的 `git check-ignore` 证据；它是本片的判断，不是工具作者的授权。
 - **不声称白名单可以长期不动**：③ 只挡「已过期」，挡不住「理由变得不成立」；理由失真需要人工复审。
+  本片的 21 条里，14 条是「工具本体不该/不能进 CI」，7 条是「CI 现在只做了语法检查」——后者是**待补的缺口**，
+  一旦哪个 PR 把 `node --check` 换成真跑，③ 会立刻把那一条顶成「已过期」，这是设计意图，不是故障。
