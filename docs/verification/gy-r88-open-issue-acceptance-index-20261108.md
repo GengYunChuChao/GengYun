@@ -61,7 +61,7 @@
 | #24 | 比赛版部署、备份恢复与交付材料未有正式环境读数 | 外部条件 | `docs/verification/gy-r79-demo-readiness-20261106.md:18`（预览/体验版不可用）、`docs/verification/gy-r79-demo-readiness-20261106.md:47`（正式 HTTPS 基址未提供） | 域名与备案、服务器与备份目标、材料口径（用户/业主） |
 | #27 | 正式主体资质与类目、真机域名与外部服务接入一项都没落地 | 外部条件 | `project.config.json:5`（appid 已是正式形态，非开发号）、`docs/verification/gy-r79-demo-readiness-20261106.md:45`（主体/类目/隐私指引/备案未核对） | 微信主体类目与资质、隐私指引、备案，腾讯云审核（用户/业主） |
 | #28 | 五 Tab 骨架与台账闸门都硬了：状态闭集 + 证据归一化 | 外部条件 | `tests/reference/i26-tabbar-skeleton.test.mjs:462`（同一条证据不得跨行复用）、`docs/verification/gy-i26-demo-align-20261014.md:783`（已知限制同步句） | 真机截图与原 demo 并排、Android/iOS 各一台（用户/业主） |
-| #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户/跨用途负控制，走真实 HTTP 触发面）、`services/api/src/privacy/ledger-pg.ts:765`（生产侧 `guardWriteback`） | 「终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`」是否算必须修的缺口，需裁定；修法在 `a4eb4400` |
+| #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户/跨用途负控制，走真实 HTTP 触发面）、`services/api/src/privacy/ledger-pg.ts:766`（生产侧 `guardWriteback`） | 「终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`」是否算必须修的缺口，需裁定；修法在 `a4eb4400` |
 | #1003 | 识别协议适配层已在仓内（`openai-vision-v1` + 真实 fetch） | 外部条件 | `services/api/src/recognitions/openai-vision-adapter.ts:46`、`services/api/src/recognitions/openai-vision-adapter.ts:271` | 真实厂商端点与密钥、一次真调用读数（用户/业主） |
 | #1030 | real 模式每帖 ≤3 已是结构约束，并发与计数负控制有测试钉住；但 ⑩/⑪ 目前无 CI 计数闸门覆盖（`tests/integration/post-media-attachments-pg.mjs:506` 自述） | 代码在飞 | `services/api/db/migrations/0056_post_media_attachments.sql:70`、`services/api/src/community/store-pg.ts:397`、`tests/integration/post-media-attachments-pg.mjs:600` | real+PG 的 **HTTP** 端到端仍缺（现有用例是 store 层直连）：`feat/gy-r87-i30-http-e2e` @ `b0513fb4` 未推（指挥）→ 2026-11-08 05:20 校正：已补上，`#1071`（`ecbe343c`）把 `tests/integration/post-media-attach-http-pg.mjs` 合入 main（建 app、走 HTTP 面，真库 + 503 信封 + 待用池释放），读数在 `docs/verification/gy-r87-i30-http-e2e-20261107.md`；仓内仍剩两处缺口：24h 自衰减未测（`docs/verification/gy-r87-i30-http-e2e-20261107.md:163`）与上传完成 ⇒ ready 的 `/complete` 状态迁移未覆盖（`docs/verification/gy-r87-i30-http-e2e-20261107.md:161`） |
 
@@ -140,7 +140,7 @@
 ## 六、待裁定与已知限制
 
 - `#19`：撤销注销要不要另立需求单，待产品/监工一句话。事实是受理即撤全部会话，连管理员都 restore 不了（`services/api/db/migrations/0017_account_suspend_authority.sql:272-273` 抛 `G0004`）。
-- `#29`：「撤回是否级联终止已受理 job」经查不是漏洞——仓内没有 worker，执行前有 `assertExecutable`（`services/api/src/privacy/task-egress.ts:127`）、保存前有 `guardWriteback`（`services/api/src/privacy/ledger-pg.ts:765`）两道复查。真缺口只是终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`，修法在本地 `a4eb4400`，要不要算必修仍待裁定。
+- `#29`：「撤回是否级联终止已受理 job」经查不是漏洞——仓内没有 worker，执行前有 `assertExecutable`（`services/api/src/privacy/task-egress.ts:127`）、保存前有 `guardWriteback`（`services/api/src/privacy/ledger-pg.ts:766`）两道复查。真缺口只是终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`，修法在本地 `a4eb4400`，要不要算必修仍待裁定。
 - `#28` 台账闸门的已知限制写在测试里：只比路径、不比字节，同一张图另存 4 份物理拷贝仍能点亮多行（`tests/reference/i26-tabbar-skeleton.test.mjs:950-951`）；证据下限已从 1024 上调到 8192 字节（`tests/reference/i26-tabbar-skeleton.test.mjs:122`），8 KB 只抬高占位成本，挡不住「同一张图另存四份」，也不是画质判据（清晰度、真机与否仍靠人看）；8.3 短名与长名是不同字符串键，在关闭 8dot3name 的卷上连造都造不出来，只能靠人工复核。
 - 读数页闸门（`tools/verify-reading-pages.mjs`，随 `#1060` 进 main）只做页内算术：不与上游 json 产物对账（`tools/verify-reading-pages.mjs:32`）；页内没有「这一行属于哪一组」的声明时会误报（`tools/verify-reading-pages.mjs:30`）；historical 前缀规则靠 `旧读数|旧基线|旧版本|修前` 正则（`tools/verify-reading-pages.mjs:314-315`、`tools/verify-reading-pages.mjs:322`），把读数写成散文标「（旧读数）」即可绕开比对。
 

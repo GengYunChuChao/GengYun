@@ -47,6 +47,19 @@ declare module '*packages/privacy/constants.mjs' {
   export function statusForErrorCode(code: string): number;
 }
 
+/**
+ * `packages/privacy/job-kinds.mjs`：撤回/注销的 `purpose` → `public.jobs.kind` 映射。
+ *
+ * 只声明形状；运行期以 `.mjs` 为准。`jobs/ledger.ts` 用 `jobKindsForPurpose` 生成
+ * `JOB_LEDGER_REVOKE_IN_FLIGHT_SQL` 的 `$2`，内存账本 `packages/privacy/ledger.mjs` 用同一函数，
+ * 两边因此不可能各写一份映射。
+ */
+declare module '*packages/privacy/job-kinds.mjs' {
+  export const PURPOSE_JOB_KINDS: Readonly<Record<string, readonly string[]>>;
+  /** `null`/空串 ⇒ `null`（全量）；表内用途 ⇒ kind 数组；表外用途 ⇒ 空数组。 */
+  export function jobKindsForPurpose(purpose: string | null | undefined): readonly string[] | null;
+}
+
 declare module '*packages/privacy/redact.mjs' {
   export function redactForLog(value: unknown, options?: { depth?: number }): unknown;
   export function assertNoSensitiveLeak(
