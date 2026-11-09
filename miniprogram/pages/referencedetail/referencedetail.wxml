@@ -127,7 +127,7 @@
       <view class="row"><text class="k">发布机构</text><text class="v">{{detail.source.publisher || '接口未提供'}}</text></view>
       <view class="row" wx:if="{{detail.source.issue}}"><text class="k">期号／文件</text><text class="v">{{detail.source.issue}}</text></view>
       <!-- 服务端 SourceRef.updated_at 不是采集日期：标签由 sourceDateLabel 如实切换。 -->
-      <view class="row"><text class="k">{{sourceDateLabel}}</text><text class="v">{{detail.source.retrieved_at}}</text></view>
+      <view class="row"><text class="k">{{sourceDateLabel}}</text><text class="v">{{detail.source.retrievedText}}</text></view>
       <view class="src-url" bindtap="copySource">{{detail.source.original_url}}</view>
       <view class="src-hint">点击链接文本可复制原始来源地址</view>
     </view>
@@ -136,7 +136,7 @@
     <view class="card">
       <view class="section-title">来源版本与核对范围</view>
       <view class="row"><text class="k">来源版本</text><text class="v mono">{{detail.source_version}}</text></view>
-      <view class="row" wx:if="{{sourceDateLabel === '采集日期'}}"><text class="k">更新时间</text><text class="v">{{detail.source.retrieved_at}}</text></view>
+      <view class="row" wx:if="{{sourceDateLabel === '采集日期'}}"><text class="k">更新时间</text><text class="v">{{detail.source.retrievedText}}</text></view>
       <block wx:if="{{verifiedScope.length}}">
         <view class="sub-title">已核对字段</view>
         <view class="chips">
