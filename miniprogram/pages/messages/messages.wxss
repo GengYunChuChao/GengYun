@@ -39,3 +39,10 @@
   color: var(--tone-warn-ink);
   background: var(--tone-warn-bg);
 }
+
+/* 筛选行右侧的「全部已读」ghost 按钮（GY-R92）：四个 chip 占 250px、按钮 108px，
+ * 348px 的行宽里差 10px 放不下，于是换行到第二行。换行本身是对的（不挤 chip），
+ * 但默认落在行首会像一行孤零零的正文；靠右对齐后读起来仍是「筛选行 + 行尾动作」。 */
+.section-head > .btn {
+  margin-left: auto;
+}

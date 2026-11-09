@@ -188,12 +188,14 @@ test('接线：`up --demo` 先补目录再开开关，且用的是同一个种�
   assert.match(source, /buildPsqlFileArgs\(\{ port: options\.pgPort, database: DATABASE_NAME, file \}\)/u, '没按 --seed-demo 的方式用 psql -f');
 
   // 栈已经在跑（`up` 的短路分支）时也得补目录：否则「--demo 保证有目录」只在新栈成立。
+  // 但 #1165 的复用契约是「批准项齐备就 exit 0」：既有实例不是本工具起的、或簇不在这个
+  // state 目录时这里没有可连的库，硬连会把复用变成 DB_UNREACHABLE 退出 ⇒ 先 pgRunning 守卫。
   const shortCircuit = /API 是本工具上一次起的实例[\s\S]*?return EXIT\.OK;/u.exec(source);
   assert.ok(shortCircuit, '找不到「栈已就绪 ⇒ 不重复启动」的短路分支');
   assert.match(
     shortCircuit[0],
-    /if \(options\.demo\) \{\s*const catalogCode = applyDemoCatalog\(\{ options, pgBin \}\);[\s\S]*?return EXIT\.OK;/u,
-    '栈已就绪时 --demo 没补目录（幂等种子本来就该重复跑）',
+    /if \(options\.demo && pgRunning\(pgBin, paths\.dataDir\)\) \{\s*const catalogCode = applyDemoCatalog\(\{ options, pgBin \}\);[\s\S]*?return EXIT\.OK;/u,
+    '栈已就绪时 --demo 没补目录（幂等种子本来就该重复跑；簇不在跑时跳过，别把复用变成连库失败）',
   );
 });
 

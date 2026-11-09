@@ -529,6 +529,11 @@ function loadPage(h, name) {
     '../../utils/auth': { requireLogin() {} },
     '../../utils/page-gate': { start() {}, cancel() {} },
     '../../utils/font-scale': { DEFAULT_FONT_SCALE: 1, applyFontScale() {}, currentFontScale() { return 1 } },
+    '../../utils/time-format': {
+      formatRelative: (value) => String(value == null ? '' : value),
+      formatDateTime: (value) => String(value == null ? '' : value),
+      formatDate: (value) => String(value == null ? '' : value),
+    },
     '../../utils/navigation': {
       openTarget(url, resume, done) { h.routes.push({ url: url, resume: resume }); if (done) done(); },
     },

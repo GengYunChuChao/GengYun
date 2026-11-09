@@ -36,12 +36,12 @@ state 里「已 seed 过」的记录。本次新增幂等演示种子 `db/seeds/
 - 不是版本问题：`git diff origin/main HEAD -- miniprogram/pages/profile miniprogram/utils/profile-api.js` 为空；
 - 不是「表结构不支持县级」：`regions.parent_code` 就够挂三级；
 - 是**这两张表没有行，或行的值与目录 JSON 不一致**：`cities` 为空 ⇒ 文案成立；
-- `--demo` 原先只调 `applyDemoProfile`（`tools/demo-stack.mjs:475` 的定义），目录那一步是本次新加的：
+- `--demo` 原先只调 `applyDemoProfile`（`tools/demo-stack.mjs:480` 的定义），目录那一步是本次新加的：
   目录此前完全靠 baseline `SEED_FILES`，而 baseline 只在 state 里**没记过** `real:gengyun` 时才跑：
   库被重建、换库、或只跑迁移而 state 仍记 seeded，`--demo` 起来的栈就是空目录；
 - 另一个实际缺口：`up` 在「API 已由本工具起过且健康」时直接短路返回，**旧版连 demo 开关都不重跑**，
   于是对「已经在跑的演示栈」执行 `up --demo` 根本补不了目录。本次在短路分支里补了幂等的一步
-  （`tools/demo-stack.mjs:631`）。
+  （`tools/demo-stack.mjs:685`）。
 
 ## 灌了什么：`db/seeds/seed_demo_regions.sql`
 
@@ -65,7 +65,7 @@ state 里「已 seed 过」的记录。本次新增幂等演示种子 `db/seeds/
   没有 `DELETE` / `TRUNCATE`；
 - 自检：文件末尾 `DO $$`（`db/seeds/seed_demo_regions.sql:51`）数省/市/县区/作物，缺一项就
   `RAISE EXCEPTION`；配 `-v ON_ERROR_STOP=1` ⇒ 整组回滚，不会留下半套目录；
-- 接线：`tools/lib/demo-stack.mjs:540` 定义路径常量，`tools/demo-stack.mjs:434` 的 `applyDemoCatalog`
+- 接线：`tools/lib/demo-stack.mjs:540` 定义路径常量，`tools/demo-stack.mjs:439` 的 `applyDemoCatalog`
   用 `psql -f` 跑它（与既有 `--seed-demo` 同一种跑法），并回读
   `tools/lib/demo-stack.mjs:560` 的读数 SQL 打印「省 / 市 / 县区 / 作物」。
 

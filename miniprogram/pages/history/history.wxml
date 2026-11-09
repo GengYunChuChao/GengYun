@@ -58,7 +58,7 @@
           </view>
           <view class="card-text">{{item.stateDesc}}</view>
           <view class="demo-caption">
-            记录时间 {{item.createdText}} · 任务类型 {{item.kindLabel}} · 记录版本 {{item.revision}}
+            <text class="nowrap">记录时间 {{item.createdText}}</text> · <text class="nowrap">任务类型 {{item.kindLabel}}</text> · <text class="nowrap">记录版本 {{item.revision}}</text>
           </view>
           <view class="row-actions">
             <gy-ui-button label="查看详情" variant="primary" data-index="{{index}}" bind:tap="openDetail"></gy-ui-button>

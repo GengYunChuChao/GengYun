@@ -310,7 +310,7 @@ function historyItemView(item) {
     targetId: item.target_ref.id,
     targetType: item.target_ref.type,
     createdAt: item.created_at,
-    createdText: item.created_at.replace('T', ' ').replace(/\.\d+/, '').replace(/Z$/, ' UTC'),
+    createdText: require('./time-format').formatDateTime(item.created_at),
     state: item.job_state,
     stateLabel: stateView.title,
     stateDesc: stateView.desc,

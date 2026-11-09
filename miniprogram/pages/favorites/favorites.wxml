@@ -34,7 +34,7 @@
             <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
             <view class="info-row__copy">
               <text class="info-row__title">{{item.title}}</text>
-              <text class="info-row__desc">{{item.typeLabel}} · 资料版本 {{item.revision}}{{item.favorited ? ' · 已收藏' : ''}}</text>
+              <text class="info-row__desc">{{item.typeLabel}} · 资料版本 {{item.revision}}</text>
             </view>
             <gy-ui-button
               label="{{item.favorited ? '已收藏' : '收藏'}}"
@@ -64,7 +64,7 @@
 
       <view class="demo-caption">
         目标与版本取自服务端资料列表；重复收藏同一目标不会产生第二条记录（服务端去重）。
-        资料可收藏**不等于**它适合你的地块或可以照此用药。
+        资料可收藏<text class="strong">不等于</text>它适合你的地块或可以照此用药。
       </view>
     </view>
 

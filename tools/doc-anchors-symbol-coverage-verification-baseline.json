@@ -1,7 +1,7 @@
 {
-  "note": "verification 面符号覆盖的回归闸门（只判上升；收敛期不逐条钉）。2026-11-05 按 main b3600fbd 实测收紧：outOfRange 61→44、undeclared 268→265、paired 1067→1051（上一版基线取 2b4acf17）。",
-  "baselineMain": "b3600fbdad1ef8156e33880d31daf2591df73770",
+  "note": "verification 面符号覆盖的回归闸门（只判上升；收敛期不逐条钉）。2026-11-09 按 main 9e36959e 实测收紧：undeclared 265→264、paired 1051→1338（outOfRange 保持 44；paired 上升是新增证据页的配对锚点变多，不是放宽）。",
+  "baselineMain": "9e36959e670d9ebd39f0e91af96107cff531a81c",
   "outOfRange": 44,
-  "undeclared": 265,
-  "paired": 1051
+  "undeclared": 264,
+  "paired": 1338
 }
