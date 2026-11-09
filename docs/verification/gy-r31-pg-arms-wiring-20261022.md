@@ -39,7 +39,7 @@ const workflows = git('ls-tree','--name-only','origin/main','.github/workflows/'
 | 13 | `conversations-pg.mjs` | `real-pg-integration.yml` | 2,69 |
 | 14 | `egress-ledger-pg.mjs` | `consent-grant-postgres.yml` | 37,42 |
 | 15 | `egress-object-key-pg.mjs` | `consent-grant-postgres.yml` | 40,51,56 |
-| 16 | `egress-revoke-race-pg.mjs` | `consent-grant-postgres.yml` | 65 |
+| 16 | `egress-revoke-race-pg.mjs` | `consent-grant-postgres.yml` | 66（2026-11-09 订正：原记 65 是基线 `bf2f76f9` 上的读数（已过期，保留以便追溯）；接线提交 `906fe147`／#421 之后，HEAD 上执行该臂的无名 step 的 `- run:` 行是第 66 行）|
 | 17 | `favorites-history-pg.mjs` | `real-pg-integration.yml` | 5,111 |
 | 18 | `messages-pg.mjs` | `real-pg-integration.yml` | 4,102 |
 | 19 | `messages-purge-pg.mjs` | `real-pg-integration.yml` | 264,280 |
