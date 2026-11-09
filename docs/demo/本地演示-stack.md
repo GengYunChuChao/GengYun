@@ -93,6 +93,8 @@ $lines = foreach ($k in $map.Keys) { "$k=$(& $get $map[$k])" }
 node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file E:\GengYunPrivate\demo-real.env
 ```
 
+要开演示档就再加 `--demo`（见 §3.1）。
+
 它按九步走，每一步都会说自己在干什么：
 
 | 步骤 | 你会看到 | 这一步实际做了什么 |
@@ -104,7 +106,7 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | `[5/9] 数据目录与 initdb` | 第一次 `✓ 新建簇`，之后 `✓ 已有簇，复用` | 只在第一次初始化 |
 | `[6/9] 启动 PG 簇` | `✓ 已启动（日志 …\pg.log）` | 只监听 127.0.0.1 |
 | `[7/9] 建库与迁移` | `✓ 数据库 gengyun 已存在` / `✓ 迁移完成（应用 N 个）` | 建库 + 跑迁移 |
-| `[8/9] 种子数据` | `✓ seed_reference.sql` / `✓ 已导入过…跳过` | 只在 real 模式灌演示资料 |
+| `[8/9] 种子数据` | `✓ seed_reference.sql` / `✓ 已导入过…跳过`；带 `--demo` 时还会看到 `[8/9] 演示开关：已开启 …` | real 模式灌演示资料；`--demo` 另外把三个开关置为开启 |
 | `[9/9] 启动 API` | `已启动：pid …` → `✓ /health → 200 ok（database=ok, mode=real）` | 后台起 API，轮询健康检查 |
 
 成功的判据是**最后这几行**（原文摘自一次真跑）：
@@ -132,6 +134,38 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | 5 | 种子失败 | 屏幕上的最后 15 行 |
 | 6 | API 启动即退出 | 自动打印的 API 日志尾 30 行 |
 | 7 | 健康检查超时（进程还活着但没 200） | 自动打印的 API 日志尾 30 行 |
+| 8 | 演示开关写入失败（`--demo`） | 屏幕上的 psql 报错原文；确认迁移已完成 |
+| 8 | 演示开关写入失败（`--demo`） | 屏幕上的 psql 报错原文；确认迁移已完成 |
+
+### 3.1 演示档 `--demo` 做什么、不做什么
+
+`--demo` 是给**本机演示**用的一次性便利开关。它只做一件事：在迁移完成、种子处理完之后，用**一次** `psql -c` 把 `public.feature_flags` 的三行更新成演示档：
+
+- `enabled = true`
+- `revision = revision + 1`
+- `reason = 'demo-stack local demo profile (non-production)'`
+- `changed_at = now()`
+
+三个键与它们的语义：
+
+| 开关 | 开启时 | 关掉时 |
+| --- | --- | --- |
+| `submissions_enabled` | 社区投稿与评论可受理 | 社区投稿不可用（`POST /posts`、`POST /posts/:id/comments` 拒绝） |
+| `specific_herbicide_output_enabled` | `/herbicides` 与登记核对可输出制剂信息 | `/herbicides` 返回 409，错误详情里的 `code` 是 `FLAG_CLOSED` |
+| `ai_enabled` | 识别、OCR、转写、合成、文字问答的**任务受理面**可用 | 这些受理面返回 409（任务不会被受理） |
+
+幂等策略：每条 `UPDATE` 都带「当前还不是演示档」的条件；已经是 `enabled = true` 且 `reason` 一致的行不会再次 `revision + 1`。所以 `down` 后再 `up --demo`，revision 不会越加越大；第一次真正写入时每个键只加一次。
+
+它**不**做这些：
+
+- 不新增迁移，不改 `services/api/**`，也不改开关的默认值、后台写入口或权限模型；
+- 不改种子里已有的业务资料，不建演示账号，不补首页的 `verified` 来源；
+- 不碰生产环境、不改 `.env` 或凭据，也不把开关值写回任何模板；
+- 不是「安全建议」。这是**本机演示配置**：生产环境该开哪个、什么时候开，要按实际审核与合规要求决定，不能照抄这里的三个 `true`。
+
+不带 `--demo` 时只打印「演示开关：未开（默认）」，不执行任何 `UPDATE`，`public.feature_flags` 保持迁移后的原值。
+
+> 这是本机演示配置，不是生产建议。
 
 ## 4 看一眼：`status`
 
@@ -263,6 +297,7 @@ node tools/demo-stack.mjs reset --yes
 | --- | --- |
 | 在哪跑 | `cd E:\GengYunCommander\.pg17\wt-demo-stack` |
 | 起来 | `node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file E:\GengYunPrivate\demo-real.env` |
+| 演示档 | 在上面的 `up` 末尾加 `--demo`（三个开关置为开启；幂等，仅本机演示） |
 | 状态 | `node tools/demo-stack.mjs status --port 38110 --pg-port 55510` |
 | 日志 | `node tools/demo-stack.mjs logs --lines 50` |
 | 收工 | `node tools/demo-stack.mjs down --port 38110 --pg-port 55510` |
