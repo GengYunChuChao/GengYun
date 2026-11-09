@@ -108,7 +108,7 @@ Test-Path …\demo-stack\pgdata                                     → True（�
 
 本轮修掉的两个真 bug（都是靠上面这些真跑才暴露的）：
 
-1. **每次 `up` 必卡 90 秒**：`spawnSync` 用管道接 `pg_ctl` 输出，`postmaster` 继承了管道句柄，`pg_ctl` 明明 0.3s 就 ready，`spawnSync` 仍等满 `timeoutMs` 并返回 `{status:0, error:ETIMEDOUT}`——**被当成成功**。探针实测 `elapsedMs:5012, status:0, err:"ETIMEDOUT"`。修法：`runPgCtlStart` 把 stdio 改成 `['ignore', fd, fd]`（`tools/demo-stack.mjs:320` 起，第 327 行的 `stdio`），并把 `result.error` 也算失败。修前 stub `up` 93s、real 冷启 103s；修后 5.7s / 13.4s。
+1. **每次 `up` 必卡 90 秒**：`spawnSync` 用管道接 `pg_ctl` 输出，`postmaster` 继承了管道句柄，`pg_ctl` 明明 0.3s 就 ready，`spawnSync` 仍等满 `timeoutMs` 并返回 `{status:0, error:ETIMEDOUT}`——**被当成成功**。探针实测 `elapsedMs:5012, status:0, err:"ETIMEDOUT"`。修法：`runPgCtlStart` 把 stdio 改成 `['ignore', fd, fd]`（`tools/demo-stack.mjs:314` 的 `stdio`），并把 `result.error` 也算失败。修前 stub `up` 93s、real 冷启 103s；修后 5.7s / 13.4s。
 2. **健康失败路径自己抛 `ReferenceError`**：`const classified = failWith({…}, [\`  处理：${classified.hint}\`])` 自引用（TDZ），把「该打印日志尾 30 行」的路径变成 `✗ 未预期的错误` + exit 1。修法：删掉自引用，改由 `failWith` 内部先分类再打印（第 86 行），并在第 724 行补 `const headline = …` 让首行直接说清是「进程退出了」还是「超时」。
 
 ## 五、闸门（改动落地后逐条真跑）
