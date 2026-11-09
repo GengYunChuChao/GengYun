@@ -50,7 +50,7 @@ LIBRARY 行（真值）：source_kind=synthetic / valid_until=2026-10-02T00:00:0
 
 ### 3.1 SELECT 取全安全元数据列
 
-`tools/import-consent-policy.mjs:111` 新增列清单常量 `SELECT_POLICY_ROW_COLUMNS`，现库行查询与「写后读回」
+`tools/import-consent-policy.mjs:114` 新增列清单常量 `SELECT_POLICY_ROW_COLUMNS`，现库行查询与「写后读回」
 共用它，取出的列：
 
 `id` / `purpose` / `policy_version` / `content_sha256` / `enabled` / **`source_kind`** / **`source_ref`** /
@@ -91,9 +91,9 @@ LIBRARY 行（真值）：source_kind=synthetic / valid_until=2026-10-02T00:00:0
 | `request_reviewed_by` | 命令行断言（请求），与库行的 `reviewed_by`（事实）分开列 |
 | `manifest_*` | **只在没有库行时**出现，供 dry-run 预览，⛔ 不用裸键冒充库行状态 |
 
-库行从哪来：`tools/import-consent-policy.mjs:328`（重放/dry-run 传 `existingTarget`）、
-`tools/import-consent-policy.mjs:385`（写入后**同事务内**按 id 读回，读不回就拒绝提交）、
-`tools/import-consent-policy.mjs:392`（把那一行交给报告）。于是「报告说 verified、库里还是 synthetic」
+库行从哪来：`tools/import-consent-policy.mjs:470`（重放/dry-run 传 `existingTarget`）、
+`tools/import-consent-policy.mjs:527`（写入后**同事务内**按 id 读回，读不回就拒绝提交）、
+`tools/import-consent-policy.mjs:534`（把那一行交给报告）。于是「报告说 verified、库里还是 synthetic」
 在结构上没有第二条取值路径。
 
 ### 3.4 `--enable` 先过一致性关
@@ -131,13 +131,13 @@ valid_until: 库行 2026-10-02T00:00:00.000Z → 清单 2027-10-01T00:00:00.000Z
 
 | 新增/改写 | 用例（行号为 `tests/unit/consent-policy-import.test.mjs`） | 钉住什么 |
 | --- | --- | --- |
-| 新增 | `tests/unit/consent-policy-import.test.mjs:601` 监工场景 | 库行 `synthetic`+过期、清单 `verified`+未来有效期、同版本同正文 ⇒ `METADATA_CONFLICT`、exit 4、**无 action**（不会去写） |
-| 新增 | `tests/unit/consent-policy-import.test.mjs:648` 六类「只差这一列」 | 见 §4.1；并含一条正控制：逐列一致 ⇒ 仍 `unchanged` |
-| 新增 | `tests/unit/consent-policy-import.test.mjs:687` 元数据读不全 | 七个字段逐个删一列 ⇒ 冲突；整行缺失也冲突 |
-| 新增 | `tests/unit/consent-policy-import.test.mjs:705` `reviewed_by` 特例 | 草稿（`reviewed_by=null`）可启用；已有他人复核 ⇒ 冲突（`COALESCE` 会让本次复核静默不生效） |
-| 新增 | `tests/unit/consent-policy-import.test.mjs:726` `valid_from` | 清单未声明 ⇒ 跳过；声明了不同时刻 ⇒ 冲突；同一时刻两种写法不算不同 |
-| 新增 | `tests/unit/consent-policy-import.test.mjs:745` 报告逐字段等于库行 | 七个键按库行渲染；`(未写入)` 与 `manifest_*` 的分工 |
-| 改写 | `tests/unit/consent-policy-import.test.mjs:538` dry-run 报告 | 首次插入时安全元数据键打印 `(未写入)` + `metadata_source=none` |
+| 新增 | `tests/unit/consent-policy-import.test.mjs:606` 监工场景 | 库行 `synthetic`+过期、清单 `verified`+未来有效期、同版本同正文 ⇒ `METADATA_CONFLICT`、exit 4、**无 action**（不会去写） |
+| 新增 | `tests/unit/consent-policy-import.test.mjs:653` 六类「只差这一列」 | 见 §4.1；并含一条正控制：逐列一致 ⇒ 仍 `unchanged` |
+| 新增 | `tests/unit/consent-policy-import.test.mjs:692` 元数据读不全 | 七个字段逐个删一列 ⇒ 冲突；整行缺失也冲突 |
+| 新增 | `tests/unit/consent-policy-import.test.mjs:710` `reviewed_by` 特例 | 草稿（`reviewed_by=null`）可启用；已有他人复核 ⇒ 冲突（`COALESCE` 会让本次复核静默不生效） |
+| 新增 | `tests/unit/consent-policy-import.test.mjs:731` `valid_from` | 清单未声明 ⇒ 跳过；声明了不同时刻 ⇒ 冲突；同一时刻两种写法不算不同 |
+| 新增 | `tests/unit/consent-policy-import.test.mjs:750` 报告逐字段等于库行 | 七个键按库行渲染；`(未写入)` 与 `manifest_*` 的分工 |
+| 改写 | `tests/unit/consent-policy-import.test.mjs:543` dry-run 报告 | 首次插入时安全元数据键打印 `(未写入)` + `metadata_source=none` |
 | 改写 | 退出码映射 | `exitCodeFor(METADATA_CONFLICT) === 4`，且与 `POLICY_CONFLICT` 可区分 |
 
 ### 4.1 六类「只差这一列 ⇒ 冲突」逐条读数
@@ -156,7 +156,7 @@ valid_until: 库行 2026-10-02T00:00:00.000Z → 清单 2027-10-01T00:00:00.000Z
 
 ### 4.2 真 PG17 集成：14 条 ⇒ 17 条读数
 
-新增的三条（`tests/unit/consent-policy-import.test.mjs:925` 起的集成用例内）：
+新增的三条（`tests/unit/consent-policy-import.test.mjs:930` 起的集成用例内）：
 
 ```
 PASS 15: 重放报告逐字段等于库行：source_kind/source_ref/review_evidence_ref/valid_from/valid_until/

@@ -54,6 +54,8 @@ import {
   POLICY_MANIFEST_KEYS,
   POLICY_SAFETY_METADATA_FIELDS,
   RECIPIENT_CAPABILITY_CLOSED_SET,
+  RECIPIENT_MANIFEST_KEYS,
+  RECIPIENT_PLAN_ACTIONS,
   comparePolicySafetyMetadata,
   comparePolicyVersions,
   contentSha256ForBody,
@@ -64,9 +66,12 @@ import {
   maxPolicyVersion,
   normalizePolicyBody,
   planConsentPolicyImport,
+  planRecipientImport,
   policyImportWarnings,
   readPolicyManifest,
+  readRecipientManifest,
   renderPolicyImportReport,
+  renderRecipientImportReport,
   renderSafetyMetadataValue,
   validateRecipientBindings,
 } from '../../tools/lib/consent-policy-import.mjs';
@@ -1163,14 +1168,100 @@ BEGIN RAISE EXCEPTION 'synthetic injected failure: enable must be rolled back' U
     assert.equal(`${noUrl.stdout}${noUrl.stderr}`.includes('postgresql://'), false, '报错里不许出现连接串');
     assert.equal(runTool([], databaseUrl).status, EXIT_CODES.CONFIG, '缺子命令 ⇒ exit 2');
     assert.match(runTool(['policy'], databaseUrl).stderr, /--file/, '缺 --file ⇒ exit 2');
-    const recipient = runTool(['recipient', '--file', fileA], databaseUrl);
-    assert.equal(recipient.status, EXIT_CODES.CONFIG);
-    assert.match(recipient.stderr, /尚未交付/);
-    assert.match(recipient.stderr, /external_inference/);
+    const recipientOnPolicyManifest = runTool(['recipient', '--file', fileA], databaseUrl);
+    assert.equal(recipientOnPolicyManifest.status, EXIT_CODES.INVALID_POLICY, '拿政策清单当接收方清单 ⇒ exit 3（不是 2）');
+    assert.match(recipientOnPolicyManifest.stderr, /缺少字段「id」/);
+    assert.match(recipientOnPolicyManifest.stderr, /未知字段「purpose」/);
+    const recipientWithReviewer = runTool(['recipient', '--file', fileA, '--reviewed-by', reviewer], databaseUrl);
+    assert.equal(recipientWithReviewer.status, EXIT_CODES.CONFIG, 'recipients 没有复核人列 ⇒ exit 2');
+    assert.match(recipientWithReviewer.stderr, /--reviewed-by/);
     const strayReviewer = runTool(['policy', '--file', fileA, '--reviewed-by', reviewer], databaseUrl);
     assert.equal(strayReviewer.status, EXIT_CODES.CONFIG, '--reviewed-by 只在 --enable 时有意义');
     assert.equal(runTool(['bogus'], databaseUrl).status, EXIT_CODES.CONFIG, '未知子命令 ⇒ exit 2');
-    say('缺 DATABASE_URL / 缺子命令 / 缺 --file / recipient 未交付 / 多余 --reviewed-by：全部 exit 2 且不打印连接串');
+    say('缺 DATABASE_URL / 缺子命令 / 缺 --file / 清单串用 / recipient 带 --reviewed-by / 多余 --reviewed-by：全部按约定 exit 2 或 3，且不打印连接串');
+
+    // ── ⑤b recipient 子命令（真库四连：dry-run → apply → unchanged → 冲突/启用） ──
+    // 这一臂补的是「`recipients` 只有本工具能写」的那一半：真迁移（0003）+ 真命令子进程 + 回读。
+    const writeRecipient = (name, overrides = {}) => {
+      const file = join(filesDir, name);
+      writeFileSync(
+        file,
+        `${JSON.stringify(
+          {
+            id: 'demo-recipient-1',
+            display_name: 'Demo recipient one',
+            capability: 'weed',
+            policy_version: '2026.11-1',
+            retention_online_days: 0,
+            retention_backup_days: 0,
+            no_training_verified: true,
+            deletion_verified: true,
+            config_version: 'demo-config-1',
+            ...overrides,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+      return file;
+    };
+    const recipientFile = writeRecipient('recipient.json');
+    assert.equal((await client.query('SELECT count(*)::int AS n FROM public.recipients')).rows[0].n, 0, '起点：receivers 表为空');
+
+    const recipientDry = runTool(['recipient', '--file', recipientFile], databaseUrl);
+    assert.equal(recipientDry.status, EXIT_CODES.OK, `dry-run 必须 exit 0：${recipientDry.stderr}`);
+    assert.match(recipientDry.stdout, /^action=insert$/m);
+    assert.match(recipientDry.stdout, /^unchanged=false$/m);
+    assert.match(recipientDry.stdout, /^metadata_source=none$/m, 'dry-run 首次插入没有库行 ⇒ 不许拿清单冒充库行');
+    assert.match(recipientDry.stdout, /^recipient_id=demo-recipient-1$/m);
+    assert.match(recipientDry.stdout, /^transaction=rollback/m);
+    assert.equal((await client.query('SELECT count(*)::int AS n FROM public.recipients')).rows[0].n, 0, 'dry-run 零写');
+
+    const recipientApply = runTool(['recipient', '--file', recipientFile, '--apply'], databaseUrl);
+    assert.equal(recipientApply.status, EXIT_CODES.OK, `apply 必须 exit 0：${recipientApply.stderr}`);
+    assert.match(recipientApply.stdout, /^changed_rows=1$/m);
+    assert.match(recipientApply.stdout, /^transaction=commit$/m);
+    const afterRecipient = (await client.query('SELECT * FROM public.recipients ORDER BY id')).rows;
+    assert.equal(afterRecipient.length, 1);
+    const storedRecipient = afterRecipient[0];
+    assert.equal(storedRecipient.id, 'demo-recipient-1');
+    assert.equal(storedRecipient.display_name, 'Demo recipient one');
+    assert.equal(storedRecipient.capability, 'weed');
+    assert.equal(storedRecipient.policy_version, '2026.11-1');
+    assert.equal(storedRecipient.retention_online_days, 0);
+    assert.equal(storedRecipient.retention_backup_days, 0);
+    assert.equal(storedRecipient.no_training_verified, true);
+    assert.equal(storedRecipient.deletion_verified, true);
+    assert.equal(storedRecipient.enabled, false, '不带 --enable 只能写成未启用');
+    assert.equal(storedRecipient.config_version, 'demo-config-1');
+    assert.match(recipientApply.stdout, /^enabled=false$/m, '报告里的 enabled 取库行');
+
+    const recipientReplay = runTool(['recipient', '--file', recipientFile, '--apply'], databaseUrl);
+    assert.equal(recipientReplay.status, EXIT_CODES.OK);
+    assert.match(recipientReplay.stdout, /^action=unchanged$/m);
+    assert.match(recipientReplay.stdout, /^changed_rows=0$/m);
+    assert.match(recipientReplay.stdout, /^transaction=rollback/m);
+    assert.deepEqual((await client.query('SELECT * FROM public.recipients')).rows, afterRecipient, '重放零写');
+
+    const recipientEnable = runTool(['recipient', '--file', recipientFile, '--apply', '--enable'], databaseUrl);
+    assert.equal(recipientEnable.status, EXIT_CODES.OK, `--enable 必须 exit 0：${recipientEnable.stderr}`);
+    assert.match(recipientEnable.stdout, /^action=enable$/m);
+    assert.match(recipientEnable.stdout, /^enabled=true$/m);
+    assert.match(recipientEnable.stdout, /^enabled_after=true$/m);
+    assert.equal((await client.query("SELECT enabled FROM public.recipients WHERE id='demo-recipient-1'")).rows[0].enabled, true);
+
+    const recipientConflict = runTool(['recipient', '--file', writeRecipient('recipient-diff.json', { config_version: 'demo-config-2' }), '--apply'], databaseUrl);
+    assert.equal(recipientConflict.status, EXIT_CODES.POLICY_CONFLICT, '同 id 换配置必须 exit 4（不静默改授权面）');
+    assert.match(recipientConflict.stderr, /POLICY_CONFLICT/);
+    assert.match(recipientConflict.stderr, /config_version: demo-config-1 → demo-config-2/);
+    assert.equal(`${recipientConflict.stdout}${recipientConflict.stderr}`.includes('transaction=commit'), false, '冲突时不许 commit');
+    assert.equal(
+      (await client.query("SELECT config_version FROM public.recipients WHERE id='demo-recipient-1'")).rows[0].config_version,
+      'demo-config-1',
+      '冲突后库行逐字不变',
+    );
+    say('recipient 真库四连：dry-run 零写 / apply 落一行(enabled=false) / 重放 unchanged / --enable 翻 true / 换配置 exit 4 且零写');
 
     // ── ⑥ 重放报告逐字段等于**库行**（不是清单） ─────────────────────────
     const libraryRow = afterToggle.find((item) => item.policy_version === '2026.11-1');
@@ -1273,4 +1364,188 @@ BEGIN RAISE EXCEPTION 'synthetic injected failure: enable must be rolled back' U
     if (started) spawnSync(pgTool(pgBin, 'pg_ctl'), ['-D', dataDir, '-m', 'fast', '-w', '-t', '60', 'stop'], { stdio: 'ignore', timeout: 180_000 });
     removeTreeByEntry(workDir);
   }
+});
+
+// ── recipient 子命令：纯逻辑（不连库） ────────────────────────────────────
+
+/** 一份形状合法的接收方清单，逐字段覆盖用。 */
+function recipientManifest(overrides = {}) {
+  return {
+    id: 'demo-recipient-1',
+    display_name: 'Demo recipient one',
+    capability: 'weed',
+    policy_version: '2026.11-1',
+    retention_online_days: 0,
+    retention_backup_days: 0,
+    no_training_verified: true,
+    deletion_verified: true,
+    config_version: 'demo-config-1',
+    ...overrides,
+  };
+}
+
+test('接收方清单：合法形状通过，值原样归一（不吃掉字段）', () => {
+  const read = readRecipientManifest(JSON.stringify(recipientManifest()));
+  assert.equal(read.ok, true, read.ok === false ? read.errors.join('; ') : '');
+  assert.deepEqual(Object.keys(read.recipient).sort(), [...RECIPIENT_MANIFEST_KEYS].sort());
+  assert.equal(read.recipient.id, 'demo-recipient-1');
+  assert.equal(read.recipient.capability, 'weed');
+  assert.equal(read.recipient.retention_backup_days, 0);
+  assert.equal(read.recipient.no_training_verified, true);
+});
+
+test('接收方清单：JSON 坏 / 非对象 ⇒ CONFIG（退出码 2，不是内容校验）', () => {
+  for (const [input, why] of [
+    ['{', '不是合法 JSON'],
+    ['[]', '数组'],
+    ['null', 'null'],
+    ['"x"', '字符串'],
+  ]) {
+    const read = readRecipientManifest(input);
+    assert.equal(read.ok, false, why);
+    assert.equal(read.code, FAILURE_KINDS.CONFIG, why);
+    assert.equal(exitCodeFor(read.code), EXIT_CODES.CONFIG, why);
+  }
+});
+
+test('接收方清单：enabled / updated_at / created_at 是禁键（文件不能自己授权）', () => {
+  for (const key of ['enabled', 'updated_at', 'created_at']) {
+    const read = readRecipientManifest(recipientManifest({ [key]: true }));
+    assert.equal(read.ok, false, key);
+    assert.equal(read.code, FAILURE_KINDS.INVALID_POLICY, key);
+    assert.match(read.errors.join('\n'), new RegExp(`${key} 不是清单字段`, 'u'), key);
+  }
+  const withEnabled = readRecipientManifest(recipientManifest({ enabled: true }));
+  assert.match(withEnabled.errors.join('\n'), /--enable/u, '必须指向 --enable 才是唯一开关');
+});
+
+test('接收方清单：缺字段与未知字段都被点名（写错键不能静默忽略）', () => {
+  const missing = recipientManifest();
+  delete missing.capability;
+  const readMissing = readRecipientManifest(missing);
+  assert.equal(readMissing.ok, false);
+  assert.match(readMissing.errors.join('\n'), /缺少字段「capability」/u);
+
+  const readUnknown = readRecipientManifest(recipientManifest({ config_versions: 'x' }));
+  assert.equal(readUnknown.ok, false);
+  assert.match(readUnknown.errors.join('\n'), /未知字段「config_versions」/u);
+});
+
+test('接收方清单：id / capability / policy_version / config_version 的边界', () => {
+  const cases = [
+    [{ id: 'Demo-Recipient' }, /id 只能用小写 ASCII/u],
+    [{ id: '-leading' }, /id 只能用小写 ASCII/u],
+    [{ id: '' }, /id 必须是 1\.\.80/u],
+    [{ id: 'a'.repeat(81) }, /id 必须是 1\.\.80/u],
+    [{ capability: 'video' }, /capability 必须是/u],
+    [{ policy_version: UNPUBLISHED_POLICY_VERSION }, /不能是保留值 unpublished/u],
+    [{ policy_version: '' }, /policy_version 必须是 1\.\.80/u],
+    [{ config_version: '' }, /config_version 必须是 1\.\.40/u],
+    [{ config_version: 'c'.repeat(41) }, /config_version 必须是 1\.\.40/u],
+    [{ display_name: '   ' }, /display_name 必须是 1\.\.200/u],
+    [{ display_name: '名'.repeat(201) }, /display_name 必须是 1\.\.200/u],
+  ];
+  for (const [overrides, pattern] of cases) {
+    const read = readRecipientManifest(recipientManifest(overrides));
+    assert.equal(read.ok, false, JSON.stringify(overrides));
+    assert.equal(read.code, FAILURE_KINDS.INVALID_POLICY, JSON.stringify(overrides));
+    assert.match(read.errors.join('\n'), pattern, JSON.stringify(overrides));
+  }
+});
+
+test('接收方清单：留存与两个 verified 的取值边界照 0003 的 CHECK', () => {
+  for (const overrides of [
+    { retention_online_days: -1 },
+    { retention_online_days: 8 },
+    { retention_backup_days: -1 },
+    { retention_backup_days: 31 },
+    { retention_online_days: 1.5 },
+    { retention_backup_days: '7' },
+    { no_training_verified: 'true' },
+    { deletion_verified: 1 },
+  ]) {
+    const read = readRecipientManifest(recipientManifest(overrides));
+    assert.equal(read.ok, false, JSON.stringify(overrides));
+    assert.equal(read.code, FAILURE_KINDS.INVALID_POLICY, JSON.stringify(overrides));
+  }
+  const edge = readRecipientManifest(
+    recipientManifest({ retention_online_days: 7, retention_backup_days: 30, no_training_verified: false, deletion_verified: false }),
+  );
+  assert.equal(edge.ok, true, edge.ok === false ? edge.errors.join('; ') : '');
+});
+
+test('接收方判定：不存在 ⇒ insert；存在且一致 ⇒ unchanged（enabled 也一致时）', () => {
+  const { recipient } = readRecipientManifest(recipientManifest());
+  assert.deepEqual(planRecipientImport({ recipient, existing: null }), {
+    ok: true,
+    action: RECIPIENT_PLAN_ACTIONS.INSERT,
+    enabled_after: false,
+  });
+  assert.equal(planRecipientImport({ recipient, existing: null, wantEnable: true }).enabled_after, true);
+
+  const stored = { ...recipient, enabled: false };
+  assert.equal(planRecipientImport({ recipient, existing: stored }).action, RECIPIENT_PLAN_ACTIONS.UNCHANGED);
+  const enabledRow = { ...recipient, enabled: true };
+  assert.equal(planRecipientImport({ recipient, existing: enabledRow, wantEnable: true }).action, RECIPIENT_PLAN_ACTIONS.UNCHANGED);
+});
+
+test('接收方判定：只差 enabled ⇒ enable（不重写别的列）；差任何别的列 ⇒ 冲突 exit 4', () => {
+  const { recipient } = readRecipientManifest(recipientManifest());
+  const disabled = { ...recipient, enabled: false };
+  const plan = planRecipientImport({ recipient, existing: disabled, wantEnable: true });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.action, RECIPIENT_PLAN_ACTIONS.ENABLE);
+  assert.equal(plan.enabled_after, true);
+  // 反向：库里 enabled、命令行没给 --enable ⇒ 也不许悄悄关掉。
+  const back = planRecipientImport({ recipient, existing: { ...recipient, enabled: true }, wantEnable: false });
+  assert.equal(back.action, RECIPIENT_PLAN_ACTIONS.ENABLE);
+  assert.equal(back.enabled_after, false);
+
+  for (const [field, value] of [
+    ['display_name', 'Someone else'],
+    ['capability', 'llm'],
+    ['policy_version', '2026.10-1'],
+    ['retention_online_days', 3],
+    ['retention_backup_days', 30],
+    ['no_training_verified', false],
+    ['deletion_verified', false],
+    ['config_version', 'demo-config-2'],
+  ]) {
+    const conflict = planRecipientImport({ recipient: { ...recipient, [field]: value }, existing: { ...recipient, enabled: true } });
+    assert.equal(conflict.ok, false, field);
+    assert.equal(conflict.code, FAILURE_KINDS.POLICY_CONFLICT, field);
+    assert.equal(exitCodeFor(conflict.code), EXIT_CODES.POLICY_CONFLICT, field);
+    assert.match(conflict.reason, new RegExp(`${field}: `, 'u'), field);
+  }
+});
+
+test('接收方判定：pg 回来的 number/boolean 与清单的 number/boolean 按值相等（不因类型误报冲突）', () => {
+  const { recipient } = readRecipientManifest(recipientManifest());
+  const fromPg = { ...recipient, retention_online_days: 0, retention_backup_days: 0, no_training_verified: true, deletion_verified: true, enabled: true };
+  assert.equal(planRecipientImport({ recipient, existing: fromPg, wantEnable: true }).action, RECIPIENT_PLAN_ACTIONS.UNCHANGED);
+});
+
+test('接收方报告：无库行时值为 (未写入)、清单值只以 manifest_ 前缀出现', () => {
+  const { recipient } = readRecipientManifest(recipientManifest());
+  const plan = { action: RECIPIENT_PLAN_ACTIONS.INSERT, enabled_after: false };
+  const text = renderRecipientImportReport({ recipient, plan, mode: 'dry-run', file: 'C:/tmp/r.json', row: null }).join('\n');
+  assert.match(text, /^mode=dry-run$/mu);
+  assert.match(text, /^metadata_source=none$/mu);
+  assert.match(text, /^enabled=\(未写入\)$/mu);
+  assert.match(text, /^display_name=\(未写入\)$/mu);
+  assert.match(text, /^manifest_display_name=Demo recipient one$/mu);
+  assert.match(text, /^manifest_config_version=demo-config-1$/mu);
+  assert.match(text, /^enabled_after=false$/mu);
+});
+
+test('接收方报告：有库行时逐字段取库行（不拿清单顶替）', () => {
+  const { recipient } = readRecipientManifest(recipientManifest());
+  const plan = { action: RECIPIENT_PLAN_ACTIONS.ENABLE, enabled_after: true };
+  const row = { ...recipient, display_name: 'Library name', enabled: true };
+  const text = renderRecipientImportReport({ recipient, plan, mode: 'apply', file: 'C:/tmp/r.json', row, enabledAfter: true }).join('\n');
+  assert.match(text, /^metadata_source=library_row$/mu);
+  assert.match(text, /^display_name=Library name$/mu);
+  assert.match(text, /^enabled=true$/mu);
+  assert.match(text, /^enabled_after=true$/mu);
+  assert.equal(text.includes('manifest_display_name'), false, '有库行时不再追加 manifest_ 行');
 });
