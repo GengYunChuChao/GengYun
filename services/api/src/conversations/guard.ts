@@ -320,10 +320,10 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
         };
       }
 
-      // ---- 引用：必须逐字段等于集合内某条目自带的来源对象 ----
+      // ---- 引用：必须逐字段等于集合内某条目自带的来源对象（先按条目 id 命中；`source.id` 是 sources 行 id，与知识条目 id 不同，见迁移 0010；重复引用按来源对象去重）----
       const accepted: SourceRef[] = [];
       for (const citation of candidate.citations) {
-        const item = set.items.find((entry) => entry.id === citation.id);
+        const item = set.items.find((entry) => entry.id === citation.id) ?? set.items.find((entry) => sameSourceRef(entry.source, citation));
         if (item === undefined) {
           rejectedCitations.push(`not_in_retrieval_set:${citation.id}`);
           continue;
@@ -338,7 +338,7 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
           rejectedCitations.push(`source_not_representable:${citation.id}:${problems.join('+')}`);
           continue;
         }
-        if (accepted.some((entry) => entry.id === citation.id)) {
+        if (accepted.some((entry) => sameSourceRef(entry, citation))) {
           rejectedCitations.push(`duplicate_citation:${citation.id}`);
           continue;
         }
