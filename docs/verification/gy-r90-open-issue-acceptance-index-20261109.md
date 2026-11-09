@@ -309,7 +309,7 @@ chains.filter(c=>c.length===max).forEach(c=>console.log(c.map(n=>"#"+n).join(" -
 
 | PR | 合入 SHA | 标题 | 钉住了哪条 AC | 锚点 |
 | --- | --- | --- | --- | --- |
-| #1078 | `c031023d` | feat(privacy) 撤回导致 job 终态写 `CONSENT_WITHDRAWN` | `#29` AC「撤回后外发终态被守卫阻断」的库侧落点 | `services/api/src/privacy/ledger-pg.ts:872` |
+| #1078 | `c031023d` | feat(privacy) 撤回导致 job 终态写 `CONSENT_WITHDRAWN` | `#29` AC「撤回后外发终态被守卫阻断」的库侧落点 | `services/api/src/privacy/ledger-pg.ts:889` |
 | #1080 | `f7a4d0d9` | ci(privacy) jobs 账本真库臂接进 CI | `#29` AC「第三方删除请求／完成／失败可追溯」有了 CI 真库臂 | `.github/workflows/real-pg-integration.yml:1582` |
 | #1081 | `25a8cb70` | ci(media) HTTP 端到端臂接进真库 CI | `#6` AC4 的 HTTP 面（上传上限／挂载释放／503 信封）第一次进 CI | `.github/workflows/real-pg-integration.yml:1772` |
 | #1082 | `6df31497` | test(tools) 锚点闸门跳过围栏代码块 + 目标文件不存在零容忍 | 证据页「围栏里抄下来的报文」不再被当成锚点 | `tools/verify-doc-anchors.mjs:415` |

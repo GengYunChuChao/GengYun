@@ -7,7 +7,7 @@
  *  2. **撤回用途后写面被阻断且零写入**（GET 的 revision 不变）——本单的核心增量；
  *  3. 读取与删除**不受**用途授权限制（否则用户无法取回/删除自己的数据）；
  *  4. **未注入 ⇒ 既有行为逐字不变**（可回退的对照）；
- *  5. `consent-pg` / `grant-pg` 的撤回/授予路径：注入 `egressRevoker` 后**先撤销在途外发**再继续；
+ *  5. `consent-pg` / `grant-pg` 的撤回/授予路径：注入 `egressRevoker` 后先由**账本自己的事务**撤销在途外发再继续；
  *     未注入 ⇒ 既有 `OBJECT_UNAVAILABLE` 兜底不变。
  *
  * 身份为合成身份（替身微信提供者 + 内存 auth store），外发消费者为替身/未接线，
@@ -435,7 +435,7 @@ test('撤回接线·注入 egressRevoker ⇒ 先撤销在途外发再完成撤�
   assert.equal(result.state, 'withdrawn');
   assert.equal(result.withdrawn_at, new Date('2026-10-14T01:00:00.000Z').toISOString());
   assert.deepEqual(calls, [{ userId: pool.userId, purpose: 'external_inference' }], '撤回消费者必须被调用一次');
-  // 消费者先于撤回提交被调用（同一事务内）：撤回后 epoch 递增语句必须出现。
+  // 消费者先于撤回提交被调用（但走账本自己的事务）：撤回后 epoch 递增语句必须出现。
   const sqls = pool.queries.map((q) => q.text);
   assert.ok(sqls.some((sql) => sql.includes("UPDATE public.privacy_epochs")), '撤回必须递增 purpose epoch');
 });

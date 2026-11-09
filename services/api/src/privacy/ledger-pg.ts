@@ -36,6 +36,7 @@ import {
 } from '../../../../packages/privacy/constants.mjs';
 import { redactForLog } from '../../../../packages/privacy/redact.mjs';
 import type { PgPool } from '../db/pool.ts';
+import { revokeJobLedgerInFlight } from '../jobs/ledger.ts';
 
 type Row = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -861,13 +862,29 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     });
   }
 
-  /** 撤回/注销：把在途外发置 failed（幂等；撤回时可由 `required_consents` 精确到用途）。 */
+  /**
+   * 撤回/注销：把在途外发置 failed（幂等；撤回时可由 `required_consents` 精确到用途）。
+   *
+   * #29 缺口：这里**同时**终止该主体仍在 `queued`/`running` 的台账作业行
+   * （`jobs/ledger.ts::revokeJobLedgerInFlight`）。两件事在同一次调用里发生：
+   *   - `public.exports` 按 `required_consents ? purpose` 精确到用途（既有语义，不动）；
+   *   - `public.jobs` 按 `jobKindsForPurpose(purpose)` 映射出的 kind 终止；`purpose=null`
+   *     （注销/全撤）不按 kind 过滤，该主体全部在途作业行都终止。
+   *
+   * 返回值仍是**外发账本**的撤销行数（`revokedInFlight` 的历史语义），不把作业行数并进来 ——
+   * 否则既有审计读数会从「外发行数」悄悄变成「外发+作业」。作业行的真实命中数由
+   * `revokeJobLedgerInFlight` 自己返回（本方法不消费）。
+   *
+   * ⚠ 本方法**自己开** `withTransaction`（独立连接/事务，**不加入**调用方事务）：两句同一事务，作业句失败 ⇒ 整笔回滚，
+   * 调用方拿到错误（fail-closed），不会留下「外发已撤、作业还在跑」的半截状态。
+   * `revokeJobLedgerInFlight` 的入参类型是 `LedgerSqlRunner`，`PoolClient` 正好满足，因此不复制 SQL。
+   */
   async function revokeInFlight(input: { userId: string; purpose?: string | null }): Promise<number> {
     const { userId, purpose = null } = input ?? {};
     await assertProvisioned();
-    try {
+    return withTransaction(async (client) => {
       const rows = (
-        await pool.query(
+        await client.query(
           `UPDATE public.exports
               SET state='failed', error_code='CONSENT_WITHDRAWN', updated_at=now(), revision=revision+1
             WHERE user_id=$1::uuid AND state IN ('reserved','sent')
@@ -876,10 +893,9 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
           [userId, purpose],
         )
       ).rows as Row[];
+      await revokeJobLedgerInFlight(client, { ownerId: userId, purpose });
       return rows.length;
-    } catch (error) {
-      return mapPgError(error);
-    }
+    });
   }
 
   /**

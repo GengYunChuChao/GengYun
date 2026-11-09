@@ -1398,11 +1398,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- `services/api/src/jobs/ledger.ts` 里那条唯一的 upsert（四源共用：ocr / recognition /
     -- transcription / answer）。列面由该语句反推，与 20-login-roles.sql 的 GRANT 逐列同值：
     --   INSERT 15 列（台账一次写全）+ UPDATE 5 列（只有随状态迁移变的列会改）
-    --   + SELECT **7** 列 = 冲突目标 `id` + `WHERE` 读的 `state` + `DO UPDATE` 的 5 个 SET 列
-    --     + 注销清理谓词列 `owner_id`（GY-R72：`JOB_LEDGER_PURGE_SQL` 是 `DELETE … WHERE owner_id = $1::uuid`，
-    --     PG 对 DELETE 的 WHERE 列另要 SELECT —— 表级 DELETE 已授仍 42501，同角色 `DELETE … WHERE false` 成功）。
+    --   + SELECT **8** 列 = 冲突目标 `id` + `WHERE` 读的 `state` + `DO UPDATE` 的 5 个 SET 列
+    --     + 注销清理谓词列 `owner_id`（GY-R72） + 撤回终止谓词列 `kind`（#29：`UPDATE … WHERE … AND kind = ANY($2)`，PG 对 UPDATE 的 WHERE 列也要 SELECT）。
+    --     另：PG 对 DELETE 的 WHERE 列也要 SELECT —— 表级 DELETE 已授仍 42501，同角色 `DELETE … WHERE false` 成功。
     --     ⚠ 上一版把 SELECT 登记为 2 列（id,state）**不足**：`ON CONFLICT (id) DO UPDATE` 会让 PG 读旧行，
-    --     SET 列也必须可 SELECT；真 PG 17.11 留一法：前 6 列缺任一即 42501（非 SET 列不需）；GY-R72 追加的 `owner_id` 只服务注销 DELETE 的谓词 ⇒ 仍是列级，复核见 egress-ledger-pg.mjs。
+    --     SET 列也必须可 SELECT；真 PG 17.11 留一法：前 6 列缺任一即 42501（非 SET 列不需）；GY-R72 的 owner_id 只服务注销 DELETE 谓词；#29 的 kind 只服务撤回 UPDATE 谓词 ⇒ 仍是列级，复核见 egress-ledger-pg.mjs。
     --   ⚠ 本行（del）在 GY-R71 补片里由 false 翻成 true：注销清理要按 owner 删台账行
     --   （见下方 allow_table_dml 与段 45 的真执行探针）。
     -- ⛔ GY-R71 补片**已改这一行**：注销清理接入后 `del` 从 false 翻成 true
@@ -1411,7 +1411,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 「台账无读者」不是保留依据：行里带 owner_id / target_id / result_ref。
     -- 与本行同批改的还有 `allow_table_dml` 的 ('public','jobs','DELETE') 与段 45 的真执行探针。
     ('jobs',
-     ARRAY['id','state','revision','error_code','result_ref','updated_at','owner_id'],
+     ARRAY['id','state','revision','error_code','result_ref','updated_at','owner_id','kind'],
      ARRAY['id','owner_id','kind','target_type','target_id','entity_revision','input_hash',
            'auth_epoch','state','revision','deadline_at','error_code','result_ref','created_at','updated_at'],
      ARRAY['state','revision','error_code','result_ref','updated_at'],

@@ -41,6 +41,7 @@ import { CONSENT_PURPOSES, MEDIA_PURPOSES, requiredConsentsForDataType } from '.
 import { PrivacyError } from './errors.mjs';
 import { createPrivacyGuard } from './guard.mjs';
 import { createCommitGate, COMMIT_REASON_ERROR_CODES } from './commit-gate.mjs';
+import { jobKindsForPurpose } from './job-kinds.mjs';
 import {
   createMemoryWritebackMedium,
   assertWritebackMedium,
@@ -63,6 +64,7 @@ const OBJECT_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9_.:-]{0,78}[a-z0-9])?$/;
  *   recipientStore: { get: (id: string) => Promise<object|null>, currentOf?: (id: string) => object|null },
  *   commitGate?: { commit: (expected: object, hooks: object) => Promise<{committed: boolean, reason?: string}> },
  *   writeback?: { rows: Map<string, object> },
+ *   jobs?: Map<string, object>,
  *   now?: () => Date,
  * }} deps
  */
@@ -72,6 +74,7 @@ export function createExportLedger({
   recipientStore,
   commitGate,
   writeback,
+  jobs,
   now = () => new Date(),
 } = {}) {
   // 强制要求「身份版本」能力：缺少 authEpochOf 的适配器会绕过账号版本核对，
@@ -103,6 +106,20 @@ export function createExportLedger({
 
   /** @type {Map<string, object>} */
   const rows = new Map();
+
+  /**
+   * 内存作业行（#29 缺口的内存参考实现）。形状是 `public.jobs` 的**最小子集**，用驼峰：
+   * `{ id, ownerId, kind, state, revision, errorCode, updatedAt }`。
+   *
+   * 为什么由调用方注入而不是账本自己造：stub/替身模式没有 `public.jobs` 的持久层，账本不能凭空
+   * 声称「有作业被终止」。注入 Map ⇒ `revokeInFlight` 对**真实存在的内存作业行**做与真库同一判据；
+   * 不注入 ⇒ 空 Map（作业臂 no-op，不伪造终止）。真库路径见
+   * `services/api/src/jobs/ledger.ts::JOB_LEDGER_REVOKE_IN_FLIGHT_SQL`。
+   */
+  if (jobs !== undefined && !(jobs instanceof Map)) {
+    throw new Error('createExportLedger 的 jobs 必须是 Map（内存作业行：id/ownerId/kind/state/revision/errorCode/updatedAt）');
+  }
+  const jobRows = jobs ?? new Map();
 
   /** 对外投影：深拷贝授权快照，调用方改写返回值不得影响内部记录。 */
   function projectRecord(record) {
@@ -465,6 +482,17 @@ export function createExportLedger({
   /**
    * 撤回/注销后撤销在途外发：reserved/sent → failed。
    * purpose 为空（注销/全撤）撤销该用户全部在途；否则撤销「依赖该用途」的在途记录。
+   *
+   * #29 缺口：同一次调用还要终止该用户在途作业行（`queued`/`running` → `cancelled`，
+   * `errorCode='CONSENT_WITHDRAWN'`、`revision += 1`、`updatedAt=now()`）。判据与真库
+   * `services/api/src/jobs/ledger.ts::JOB_LEDGER_REVOKE_IN_FLIGHT_SQL` **逐条相同**：
+   *   - 只动该 `ownerId` 的行（不跨用户）；
+   *   - 只动 `queued`/`running`（终态一行不动 ⇒ 幂等）；
+   *   - `purpose` 为空 ⇒ 全部 kind；否则只动 `jobKindsForPurpose(purpose)` 映射出的 kind
+   *     （表外用途给空数组 ⇒ 一行不动，不猜）。
+   *
+   * 返回值仍是**外发记录**的撤销行数（与 `createEgressRevoker` 的 `revokedInFlight` 历史语义一致）；
+   * 作业行终止数不并进来，避免把两种行数相加后让既有审计读数悄悄改义。
    */
   function revokeInFlight({ userId, purpose = null } = {}) {
     let count = 0;
@@ -480,6 +508,16 @@ export function createExportLedger({
         record.updatedAt = now();
         count += 1;
       }
+    }
+    const kinds = jobKindsForPurpose(purpose);
+    for (const job of jobRows.values()) {
+      if (job.ownerId !== userId) continue;
+      if (job.state !== 'queued' && job.state !== 'running') continue;
+      if (kinds !== null && !kinds.includes(job.kind)) continue;
+      job.state = 'cancelled';
+      job.errorCode = 'CONSENT_WITHDRAWN';
+      job.revision += 1;
+      job.updatedAt = now();
     }
     return count;
   }

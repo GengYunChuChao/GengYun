@@ -1,7 +1,14 @@
 name: Access verification guards
 on:
+  # ⛔ pull_request 不得带 paths 过滤。`access-guards` 是 main 分支保护的必需检查
+  # （required_status_checks.contexts 之一，strict=true）。必需检查按「检查名」匹配：
+  # workflow 一旦被 paths 过滤掉，就根本不产生同名 check run，GitHub 也不会把它当作通过，
+  # PR 会永远停在 Expected ⇒ BLOCKED，已 arm 的 auto-merge 永不触发。
+  # 实测 2026-11-09 PR #1146：29 项检查全绿、5 个必需 context 全 pass，仍 BLOCKED，
+  # 因为它改的 7 个文件无一命中下面那串路径。
+  # 因此 pull_request 恒触发（各步骤只是 node --check / --test，成本约 20 秒）；
+  # push→main 仍按 paths 过滤，避免同一内容在主干上重复跑一遍。
   pull_request:
-    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/ai-config.mjs', 'tools/prepare-ai-verification.mjs', 'tools/check-ai-sdk.cjs', 'tools/verify-tokenhub.mjs', 'tools/verify-tencent-live.mjs', 'tools/verify-provider-adapter-live.mjs', 'tests/tencent-live.test.mjs', 'tools/verify-llm-live.mjs', 'tests/llm-live.test.mjs', 'tests/tokenhub-account.test.mjs', 'tests/ai-config.test.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
   push:
     branches: [main]
     paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/ai-config.mjs', 'tools/prepare-ai-verification.mjs', 'tools/check-ai-sdk.cjs', 'tools/verify-tokenhub.mjs', 'tools/verify-tencent-live.mjs', 'tools/verify-provider-adapter-live.mjs', 'tests/tencent-live.test.mjs', 'tools/verify-llm-live.mjs', 'tests/llm-live.test.mjs', 'tests/tokenhub-account.test.mjs', 'tests/ai-config.test.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']

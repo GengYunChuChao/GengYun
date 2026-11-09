@@ -15,7 +15,7 @@
  * | 任务**执行前** | `createPrivacyInFlightGuard(...).assertExecutable({ exportId, userId })` | 撤回/注销后不得再起新工作 |
  * | 任务**保存前** | `inFlightGuard.saveResult({ exportId, userId, objectVersion, result })` | 回写的实际写入在账本原子临界区内（校验不过 ⇒ 零写入） |
  * | 版本取消 | `inFlightGuard.cancelVersion({ exportId, userId, objectVersion })` | 墓碑只增不减 ⇒ 已取消版本不可被回调复活 |
- * | 撤回/注销的撤销在途 | `createApiEgressRevoker({ ledger })` | `consent-pg.ts` / `grant-pg.ts` 目前以 `OBJECT_UNAVAILABLE` 兜底；注入本对象后可撤掉兜底（**默认不注入 ⇒ 行为与今天逐字一致**） |
+ * | 撤回/注销的撤销在途 | `createApiEgressRevoker({ ledger })` | 注入后由账本自己的事务撤销（不加入调用方 `transaction()`；未注入仍 `OBJECT_UNAVAILABLE` fail-closed） |
  * | 外发派发 | `createPrivacyEgress(...).consumer.send({ identity, ... })` | 无授权/错用途 ⇒ 在预留处被拒；派发前撤回/注销 ⇒ 在原子边界被拒（**零外发**） |
  *
  * ## real 模式红线（监工对 #121 的 P1 口径）
