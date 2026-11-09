@@ -148,7 +148,63 @@ $ Get-NetTCPConnection -LocalPort 38110,55510 -State Listen
 （无输出 ⇒ 两个端口都没有监听）
 ```
 
-记录一个使用坑：5.2 之后我又跑过一次 `up --seed-demo`，是为了验「已经灌过就跳过」这条（它会把栈重新拉起来：API 27172 / PG 72788，15:24 启动），而我当时以为已经收工。复核时 `Get-NetTCPConnection` 仍看到这两个监听，再跑一次 `down` 才真正停掉并确认无监听。所以 **`down` 打印「已释放」只说明那一刻的探测通过；跑过几次 `up` 就要复核几次端口**，上面最后两行才是真正收工的读数。日志：`…\.pg17\demo-stack-logs\down-20261109-final.log`。
+记录一个使用坑：5.2 之后我又跑过一次 `up --seed-demo`，是为了验「已经灌过就跳过」这条（它会把栈重新拉起来：API 27172 / PG 72788，15:24 启动），而我当时以为已经收工。复核时 `Get-NetTCPConnection` 仍看到这两个监听，再跑一次 `down` 才真正停掉并确认无监听。所以 **`down` 打印「已释放」只说明那一刻的探测通过；跑过几次 `up` 就要复核几次端口**，上面最后两行才是那次收工的读数。日志：`…\.pg17\demo-stack-logs\down-20261109-final.log`。
+
+之后 38110/55510 这一组要留给同一台机器上接微信开发者工具的另一位协作者，所以最终证据改用 38210/55520 从零复跑了一遍（见 5.6）；38110/55510 在 5.5 的 `down` 之后也复核过 `Get-NetTCPConnection` 为空，没有留下监听。
+
+### 5.6 复跑（最终证据）：38210 / 55520 + 独立状态目录
+
+`--state-dir` 指到 `…\.pg17\demo-stack-r90`，新 initdb、新库，与 38110 那套数据目录完全分开：
+
+```text
+$ node tools/demo-stack.mjs reset --yes --state-dir …\demo-stack-r90 --port 38210 --pg-port 55520
+  reset：停栈并删除 …\demo-stack-r90
+  API：未运行；PG：未运行；已删除 …；下次 up 会重新 initdb。            → exit 0
+
+$ node tools/demo-stack.mjs up --mode real --port 38210 --pg-port 55520 \
+      --state-dir …\demo-stack-r90 --env-file <redacted> --seed-demo
+  ✓ initdb 完成
+  ✓ 迁移完成：应用 56 个
+  [8/9] ✓ seed_reference.sql
+        ✓ seed_herbicides_verified.sql
+        ✓ 已灌演示资料（非生产数据）：db/seeds/demo_catalog_verified.sql
+  [9/9] 已启动：pid 77920
+  ✓ /health → 200 ok（database=ok, mode=real）（1951ms，探测 4 次）      → exit 0
+
+$ curl.exe -s -o home-r90-38210.json -w "%{http_code}" http://127.0.0.1:38210/api/v1/public/home
+200    # data.previews 8 条
+
+  d0000000-0000-4000-8000-00000000c001  稗
+  d0000000-0000-4000-8000-00000000c002  狗尾草
+  d0000000-0000-4000-8000-00000000c003  荨麻属
+  d0000000-0000-4000-8000-00000000c004  马唐属
+  d0000000-0000-4000-8000-00000000c005  牛筋草
+  d0000000-0000-4000-8000-00000000c006  看麦娘
+  d0000000-0000-4000-8000-00000000c007  藜
+  d0000000-0000-4000-8000-00000000c008  空心莲子草
+
+$ psql -p 55520 -d gengyun -c '<计数>'
+ home_species | verified_sources | demo_kv | src_revision | active_mode
+            8 |                1 |       8 |            2 | real
+```
+
+卡片的 id 是 8 个服务端常量 `d0000000-0000-4000-8000-00000000c0NN`（`c001`…`c008`），不是随机 UUID。
+
+幂等在这一套上也复验了：把种子文件再连跑两遍，两遍的报表都是 `INSERT 0 0 / INSERT 0 1 ×4（ON CONFLICT DO UPDATE 时 psql 也报 INSERT 0 1）/ UPDATE 0 / INSERT 0 8 / DO`，跑完 `home_species` 仍是 8、`sources.revision` 仍是 2、8 条 `created_at` 逐字不变（脚本里比对 `$before -eq $after` = True）。
+
+收工：
+
+```text
+$ node tools/demo-stack.mjs down --port 38210 --pg-port 55520 --state-dir …\demo-stack-r90
+  API：已停（pid 77920）
+  PG：已停（fast）
+  复核：API 端口 38210 已释放；PG 端口 55520 已释放                       → exit 0
+
+$ Get-NetTCPConnection -LocalPort 38210,55520 -State Listen
+（无输出 ⇒ 这两个端口都没有监听）
+```
+
+日志：`…\.pg17\demo-stack-logs\run-20261109-r90-38210.log`、`down-20261109-r90-38210.log`、`home-r90-38210.json`。
 
 ## 六、闸门
 
@@ -190,7 +246,7 @@ PASS: 识别 5 页 / 跳过 373 页（扫描面 378 页：docs/verification）�
 3. **没验证 UI 上「演示资料」标记是否被卡片样式截断**。正文前缀是「【演示资料·非生产数据】」，若首页卡片只显示前 N 个字，可能只露出标记、也可能露不全——渲染层没看。
 4. **没做并发复跑**。幂等性验的是串行重复执行；两个 `up --seed-demo` 同时跑会怎样（psql 的 `ON CONFLICT` 应能处理，但唯一键冲突时的时序没实测）。
 5. **没验证 `--seed-demo` 与 `--reset` 组合之外的恢复路径**。文件末尾的回滚 SQL 是注释块，没有真跑过；只验了 `reset --yes` 这条「全删」路径。
-6. **PG 端口 55520 被别的实例占着**（`demo-walk-pgdata`，pid 69652），负控制因此改到 38133/55533 跑；这不影响结论，但说明本机同时存在其他 PG 实例，`up` 前仍应看端口探测那两行。
+6. **端口是共享资源，不是独占的**：负控制首跑时 PG 55520 被别人的实例占着（`demo-walk-pgdata`，pid 69652，工具点名了 pid 并 exit 2），才改到 38133/55533；最终复跑（5.6）用 38210/55520 时已经空闲。同一台机器上可能同时有多套栈，`up` 前先看端口探测那两行。
 7. **`reset` 期间别在状态目录里开着日志文件**：我第一次把 `Tee-Object` 的日志写在 `…\.pg17\demo-stack\` 里，`reset --yes` 因 Windows 文件占用报 `EPERM`（工具报的是「未预期的错误」，不好看但没造成数据问题）。日志改放 `…\.pg17\demo-stack-logs\` 后一切正常。这是使用姿势问题，本轮没有改 `reset` 的删除逻辑。
 8. **收工前一度留下一个在跑的实例**：见 5.5。我为了验「已灌过会跳过」又 `up` 了一次，那次把栈拉起来了；后续复核发现有监听，再 `down` 才停掉。这条是本轮的操作记录，不是工具行为断言——我没有复现出「`down` 该停没停」的确定性场景，因此没为它改 `down`。
 
@@ -198,11 +254,14 @@ PASS: 识别 5 页 / 跳过 373 页（扫描面 378 页：docs/verification）�
 
 ```powershell
 cd E:\GengYunCommander\.pg17\wt-demo-seed
-node tools/demo-stack.mjs reset --yes
-node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 `
+node tools/demo-stack.mjs reset --yes --state-dir E:\GengYunCommander\.pg17\demo-stack-r90 --port 38210 --pg-port 55520
+node tools/demo-stack.mjs up --mode real --port 38210 --pg-port 55520 `
+  --state-dir E:\GengYunCommander\.pg17\demo-stack-r90 `
   --env-file E:\GengYunPrivate\demo-real.env --seed-demo
-curl.exe -s -w "`n%{http_code}`n" http://127.0.0.1:38110/api/v1/public/home
-node tools/demo-stack.mjs down --port 38110 --pg-port 55510
+curl.exe -s -w "`n%{http_code}`n" http://127.0.0.1:38210/api/v1/public/home
+node tools/demo-stack.mjs down --port 38210 --pg-port 55520 --state-dir E:\GengYunCommander\.pg17\demo-stack-r90
 ```
+
+端口只是例子，换一组空闲端口、配独立的 `--state-dir` 就行（同一台机器上可能有人正在用 38110/55510）。
 
 只想知道「它是不是真的只在演示里有」：把 `--seed-demo` 去掉，换一组空闲端口与独立 `--state-dir` 再 `up` 一次，首页就是空列表（见 5.4）。
