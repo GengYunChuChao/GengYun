@@ -1318,6 +1318,14 @@
     },
     {
       "doc": "docs/verification/gy-i12-conversations-gap-20261021.md",
+      "line": 239,
+      "target": "services/api/src/privacy/task-egress.ts",
+      "from": 84,
+      "to": 108,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-i12-conversations-gap-20261021.md",
       "line": 246,
       "target": "services/api/src/config.ts",
       "from": 70,
@@ -8834,7 +8842,7 @@
       "target": "services/api/src/privacy/task-egress.ts",
       "from": 286,
       "to": 339,
-      "kind": "block-comment"
+      "kind": "jsdoc"
     },
     {
       "doc": "docs/verification/gy-r70-qa-source-recovery-20261030.md",
@@ -8888,9 +8896,17 @@
       "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
       "line": 38,
       "target": "services/api/src/privacy/task-egress.ts",
+      "from": 313,
+      "to": 313,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
+      "line": 38,
+      "target": "services/api/src/privacy/task-egress.ts",
       "from": 314,
       "to": 314,
-      "kind": "jsdoc"
+      "kind": "block-comment"
     },
     {
       "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
@@ -9272,8 +9288,8 @@
       "doc": "docs/verification/gy-r72-assert-domain-visibility-20261102.md",
       "line": 26,
       "target": "services/api/src/privacy/task-egress.ts",
-      "from": 345,
-      "to": 345,
+      "from": 379,
+      "to": 379,
       "kind": "block-comment"
     },
     {
@@ -10110,10 +10126,26 @@
     },
     {
       "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
+      "line": 65,
+      "target": "tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs",
+      "from": 106,
+      "to": 106,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
       "line": 90,
       "target": "services/api/src/privacy/task-egress.ts",
-      "from": 443,
-      "to": 443,
+      "from": 210,
+      "to": 213,
+      "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
+      "line": 90,
+      "target": "services/api/src/privacy/task-egress.ts",
+      "from": 477,
+      "to": 477,
       "kind": "line-comment"
     },
     {
