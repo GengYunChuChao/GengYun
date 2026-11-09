@@ -209,7 +209,7 @@ Page({
         author: author.name,
         authorAvatar: author.avatar,
         authorAnonymized: author.anonymized,
-        time: post.created_at,
+        time: require('../../utils/time-format').formatRelative(post.created_at),
         crop_id: post.crop_id,
         region_code: post.region_code,
         visibility: post.visibility,

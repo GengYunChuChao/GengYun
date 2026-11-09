@@ -120,6 +120,11 @@ function loadPage(h) {
       cancel() { gate.cancelled += 1; },
     },
     '../../utils/font-scale': { DEFAULT_FONT_SCALE: 1, applyFontScale() {}, currentFontScale() { return 1 } },
+    '../../utils/time-format': {
+      formatRelative: (value) => String(value == null ? '' : value),
+      formatDateTime: (value) => String(value == null ? '' : value),
+      formatDate: (value) => String(value == null ? '' : value),
+    },
     '../../utils/navigation': {
       openTarget(url, resume, done) { h.navigations.push({ url, resume }); if (done) done(null); },
       consumeCommunityMine() { return false; },

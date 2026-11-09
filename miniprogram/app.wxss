@@ -61,6 +61,15 @@ page {
   line-height: 1.4;
 }
 
+/* 登录页／识草查药等页把主标题写成 `<view class="title">`，但 `.title` 一直没定义：
+   于是这几页的标题落到继承来的 18px 常规字上，和「知识」「识别」等页的 24px 主标题不同级。
+   这里把它并到 `.page-title` 同一套字级上（含字段相同的行高与字重），不再各页各写一遍。 */
+.title {
+  font-size: calc(24px * var(--font-scale, 1));
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .page-subtitle {
   margin-top: 8px;
   margin-bottom: 20px;
@@ -129,12 +138,42 @@ page {
   box-sizing: border-box;
 }
 
+/* 微信的基础样式表把 `button` 定成 `width: 184px; margin: 0 auto`，而且注入在**页面同源**的
+   样式里、选择器还多带一个伪类（实测特异性高于单个类：`.btn { width: auto }` 会被它按 184px
+   压回去，登录页两个按钮就卡在 184px、10 字文案折成「以游客身份浏览首／页」）。
+   覆盖时选择器必须同样带元素名 + 一个类（`button.btn`，与它同特异性、靠源序取胜）：
+   `width: auto` 让按钮回到父级给的宽度——块级流里撑满一行、flex 行里收到内容宽。
+   同理，整宽按钮的 `--block` 也必须写成 `button.btn--block`，否则同样被 184px 压住。 */
+button.btn {
+  width: auto;
+  max-width: 100%;
+  /* 同一张基础样式表还写着 `margin: 0 auto`；这里一并收掉，避免按钮在 flex 行里被
+     自动外边距推开（块级流里 width:auto 已占满，auto 左右外边距本来就等于 0）。 */
+  margin: 0;
+}
+
 .btn--block {
+  width: 100%;
+}
+
+/* 同上：`--block` 也要带元素名，否则被基础样式的 184px 压住（整宽 CTA 会缩成 184px）。 */
+button.btn--block {
   width: 100%;
 }
 
 .btn[disabled] {
   opacity: 0.5;
+}
+
+/* 行内不许断行的片段：用于「记录版本 1」这类短标签，避免长句折行时把数字单独甩到下一行。 */
+.nowrap {
+  white-space: nowrap;
+}
+
+/* 行内强调：WXML 不认 Markdown 的 `**`，原来收藏页把星号原样渲染成了 `**不等于**`。 */
+.strong {
+  font-weight: 600;
+  color: var(--color-text-strong, #17352b);
 }
 
 /* 供各页复用的行内标签 */

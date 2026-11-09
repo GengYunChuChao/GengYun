@@ -75,8 +75,8 @@
       <view class="card-title">{{item.item.title}}</view>
       <view class="source-tags"><text class="pill">{{item.labels.evidence}}</text><text class="pill amber">{{item.labels.review}}</text></view>
       <view class="notice">{{item.conditionNote}}</view>
-      <view>来源：{{item.item.source.publisher}} · {{item.item.source.title}}</view>
-      <view>来源版本：{{item.item.source.version}}</view><view>来源取得时间：{{item.item.source.updated_at}}</view>
+      <view class="card-source">来源：{{item.item.source.publisher}} · {{item.item.source.title}}</view>
+      <view class="card-source">来源版本：{{item.item.source.version}} · 来源取得时间：{{item.sourceDate}}</view>
       <button class="btn btn--primary btn--block" data-id="{{item.item.id}}" bindtap="open">查看详情并核对来源</button>
     </view>
     <button wx:if="{{nextCursor}}" class="btn btn--secondary btn--block" bindtap="next" disabled="{{busy}}">下一页</button>

@@ -90,12 +90,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  /* 左侧标题与右侧说明都放不下时整块换行；不让标题被右侧说明压成两行
+     （收藏页「可收藏的资料」曾被挤成「可收藏的／资料」）。 */
+  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 
 .section-head__title {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
 }
@@ -110,6 +115,9 @@
 }
 
 .section-head__meta {
+  /* 换行后仍贴右，与标题同一基线组 */
+  margin-left: auto;
+  text-align: right;
   font-size: calc(14px * var(--font-scale, 1));
   color: var(--muted);
 }
@@ -175,6 +183,11 @@
   line-height: 1.7;
 }
 
+/* 说明文字紧跟一组按钮时补一条竖向间距：原来零间距，长段落直接贴着按钮下沿。 */
+.row-actions + .demo-caption {
+  margin-top: 14px;
+}
+
 /* demo .label{display:block;font-size:12px;color:#667e6c} */
 .label {
   display: block;
@@ -191,9 +204,13 @@
   margin-top: 20px;
 }
 
+/* 按钮文案不允许折行：`min-width: max-content` 让每个按钮至少和它的标签一样宽，
+   两个按钮在一行里放不下时由 `flex-wrap` 换行各占一行（而不是把「按当前档案查科普资料」
+   挤成两行、按钮高度翻到 72px）。basis 取 auto 才能让换行判断按内容宽算——
+   原来 `flex: 1`（basis 0）会把两项硬塞在一行里。 */
 .row-actions__item {
-  flex: 1;
-  min-width: 140px;
+  flex: 1 1 auto;
+  min-width: max-content;
 }
 
 /* demo .notice{font-size:11px;padding:13px 16px;border-radius:10px;background:#f1f4e9;color:#7e8a60} */
@@ -474,7 +491,9 @@
   flex: 1 1 calc(50% - 11px);
   min-width: 0;
   min-height: 133px;
-  padding: 18px;
+  /* 底部多留一条：右下角的 `.feature-card__action` 胶囊是绝对定位、不占位，
+     以前正文最后一行会钻到胶囊底下（识别页「…机器读数，非授[拍照识别]」被盖住半行）。 */
+  padding: 18px 18px 44px;
   border-radius: 13px;
   border: 1px solid var(--line);
   background: #FFFFFF;
@@ -1028,15 +1047,19 @@
   min-height: var(--tap-min, 44px);
   border: 1px solid var(--line);
   border-radius: 11px;
-  padding: 12px;
+  /* 三格并排时每格约 109px（348 宽减间距），12px 内边距只留 84px 给文字；
+     「已加载 0 条」在 20px 下必然折成两行，故把内边距收到 8px、值降到 15px。 */
+  padding: 10px 8px;
   box-sizing: border-box;
   text-align: center;
 }
 
 .stat__value {
   display: block;
-  font-size: calc(20px * var(--font-scale, 1));
+  font-size: calc(15px * var(--font-scale, 1));
+  line-height: 1.5;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .stat__label {
@@ -1335,7 +1358,11 @@
   flex-direction: column;
   align-items: center;
   gap: 9px;
-  margin-left: auto;
+  /* 头像 + 身份块 + 操作区是同一行的三段 flex：操作区的 flex-basis 取 max-content（≈210px，
+     含「IP 属地：未接入（本版不读取 IP）」整行），而 `.profile-header__main` 是 `flex: 1`（基准 0），
+     于是主标题只剩 20 余像素、被压成一字一行。让操作区独占一整行，身份块才有宽度。 */
+  flex: 0 0 100%;
+  margin-left: 0;
 }
 
 .ip-location {

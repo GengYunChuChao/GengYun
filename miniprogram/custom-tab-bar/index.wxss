@@ -68,10 +68,12 @@
   font-weight: 600;
 }
 
+/* 选中指示条：demo 放在 top:-11px（凸起胶囊之外）。胶囊不再凸起后它落在底栏留白里，
+   贴着上边框，故改为 top:0 —— 落在 Tab 自己的盒内，与图标留出 4px 间隙。 */
 .tab--selected::before {
   content: '';
   position: absolute;
-  top: -11px;
+  top: 0;
   width: 20px;
   height: 2px;
   border-radius: 4px;
@@ -96,16 +98,20 @@
   text-align: center;
 }
 
-/* demo [data-route="identify"]：居中凸起的识别按钮 */
+/* 居中识别入口：demo 是「凸起 15px + 4px paper 色外环」的胶囊。
+ * 凸起会让底栏上沿变成一条中间高 16px 的折线：页面正文滚到折线处，最后一行会被胶囊连同
+ * 白环拦腰切断，左右各剩半截字（社区页「【演示数据·非…」那一行看上去像乱码／竖排就是这个）。
+ * 取舍：胶囊不再越过底栏（margin-top:0px，保留可被 tools/verify-layout.mjs 复算的写法），
+ * 去掉 paper 外环 —— 底栏上沿变成一条直线，正文只被直线裁切，是正常的滚动收边。
+ * 识别入口仍靠浅绿胶囊底色（选中为深绿）保持比其他 Tab 更醒目。 */
 .tab--identify {
   --gy-icon-size: 26px;
   min-width: 64px;
-  padding: 9px 12px;
-  margin-top: -15px;
+  padding: 4px 14px;
+  margin-top: 0px;
   border-radius: 15px;
   background: var(--green-soft-3, #e6efdf);
   color: var(--green, #176b50);
-  box-shadow: 0 -3px 0 4px var(--paper, #f5f7f4);
 }
 
 .tab--identify.tab--selected {

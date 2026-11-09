@@ -63,8 +63,11 @@
   color: #d83931;
 }
 
-.fav__btn {
+/* 同上：`button` 的 184px 基础宽度会把行内的小按钮撑成半行，这里按内容宽收住。 */
+button.fav__btn {
   flex: none;
+  width: auto;
+  max-width: 100%;
   margin: 0;
   font-size: 24rpx;
   color: #1f6feb;

@@ -221,7 +221,7 @@ test('历史客户端：失败状态真实可见、任务类型与时间显示�
   assert.equal(view.failed, true);
   assert.match(view.stateLabel, /超时/);
   assert.equal(view.kindLabel, '识草');
-  assert.equal(view.createdText, '2026-10-14 06:00:00 UTC');
+  assert.match(view.createdText, /^10-14 \d{2}:\d{2}$/); assert.equal(view.createdAt, '2026-10-14T06:00:00.000Z');
   assert.equal(f.history.historyItemView(result.items[1]).kindLabel, '标签识别');
   // 目标不可用时不给跳转入口（旧链接不复活）。
   assert.equal(f.history.historyItemView(historyItem({ reference_state: 'unavailable' })).navigable, false);
