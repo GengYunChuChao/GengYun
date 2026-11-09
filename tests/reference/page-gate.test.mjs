@@ -69,6 +69,10 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
   };
   const fontModule = { exports: {} };
   vm.runInNewContext(readFileSync(pagePath('utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.3 } }) });
+  // GY-R92：referencedetail 用 `require('../../utils/time-format')` 渲染来源取得时间。登记**真实模块**，
+  // 让时间文案仍由真源码决定；空壳或只替 formatDate 会让页面在真依赖缺失时仍绿。
+  const timeModule = { exports: {} };
+  vm.runInNewContext(readFileSync(pagePath('utils/time-format.js'), 'utf8'), { module: timeModule });
   // 门禁模块的**完整说明符登记表**（登记项逐字取自被加载源码里的 require）：
   // `miniprogram/utils/page-gate.js:3` 只有 `require('./auth')` 一条。改前是 `require: () => auth`
   // 的 blanket —— page-gate.js 将来 require 别的模块，也会被**静默喂成 auth 替身**，用例仍绿。
@@ -109,6 +113,7 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
   // 未登记（将来新增依赖）⇒ 显式失败并带依赖名。登记表随每次 loadPage() 新建，已登记项行为逐字不变。
   const pageDependencies = new Map([
     ['../../utils/font-scale', fontModule.exports],
+    ['../../utils/time-format', timeModule.exports],
     ['../../utils/page-gate', gateModule.exports],
     ['../../utils/auth', auth],
     ['../../utils/profile-api', profileApi],
