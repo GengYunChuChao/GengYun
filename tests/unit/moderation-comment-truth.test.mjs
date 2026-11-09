@@ -15,7 +15,7 @@
  *   T2 `service.ts:1059`（±1 行内）说的是 `publish` 的 `:939` 闸门，不再是「旧回调复活内容」；
  *   T3 `90-assert:454-455` 把「只写不读」限定到 `moderation_decisions`、点明 withdrawals 的 W43 回填；
  *      `1510` 行同样限定，不再把两张表一起概括成「台账只写不读」；
- *   T4 防误伤：`jobs/ledger.ts:52` 的「只写不读」是**作业台账** `public.jobs` 的真话，不许被顺手改；
+ *   T4 防误伤：`jobs/ledger.ts:45` 的「只写不读」是**作业台账** `public.jobs` 的真话，不许被顺手改；
  *   T5 形状护栏：四个被改文件的规模不低于下限、无 BOM、以换行结尾（**不是**零漂移闸门，理由见 T5 注释）；
  *   T6 负向自检：每条「不得包含」常量都在本文件里被真正 `includes(...) === false` 判过一次（防空跑）；
  *   T7 `moderation-withdraw-hydration.test.mjs` 头注释的旧结论同样改成「发布闸门 `:939`」。
@@ -162,9 +162,12 @@ test('T4 防误伤：jobs/ledger.ts:52 的「只写不读」是作业台账 publ
   const text = source(JOBS_LEDGER);
   assert.ok(text.includes('只写不读'), 'jobs/ledger.ts 必须仍写着「只写不读」——那是作业台账，仍为真');
 
+  // 本片（#29 撤回/注销终止在途作业）在 head 注释里新增了「5. 撤回/注销终止在途作业」一节、
+  // 并把「## 幂等」一节扩写成「同态守卫 + 撤回墓碑」：那两段都在「## 边界」**上方**，
+  // 于是「只写不读」那条从 45 整体下移到 52（+7 行，纯位移，判据不变）。
   const pinned = lineAt(JOBS_LEDGER, 52);
-  assert.ok(pinned.includes('**只写不读**'), `jobs/ledger.ts:45 已漂移：${pinned}`);
-  assert.ok(pinned.includes('本片不改任何既有读面'), `jobs/ledger.ts:45 的限定语已漂移：${pinned}`);
+  assert.ok(pinned.includes('**只写不读**'), `jobs/ledger.ts:52 已漂移：${pinned}`);
+  assert.ok(pinned.includes('本片不改任何既有读面'), `jobs/ledger.ts:52 的限定语已漂移：${pinned}`);
 });
 
 test('T5 形状护栏：四个被改文件不低于下限、无 BOM、以换行结尾', () => {

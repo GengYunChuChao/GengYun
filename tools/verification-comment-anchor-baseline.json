@@ -8646,22 +8646,6 @@
     },
     {
       "doc": "docs/verification/gy-r68-s4-recheck-20261028.md",
-      "line": 123,
-      "target": ".github/workflows/real-pg-integration.yml",
-      "from": 253,
-      "to": 253,
-      "kind": "hash-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r68-s4-recheck-20261028.md",
-      "line": 142,
-      "target": ".github/workflows/real-pg-integration.yml",
-      "from": 253,
-      "to": 253,
-      "kind": "hash-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r68-s4-recheck-20261028.md",
       "line": 144,
       "target": "services/api/src/app.ts",
       "from": 2076,

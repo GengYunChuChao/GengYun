@@ -39,10 +39,10 @@
 
 - 新增独立只读工具 `tools/verify-verification-comment-anchors.mjs`；不改 `tools/verify-doc-anchors.mjs`，不改 `.github/**`。
 - 锚点提取与主工具同口径：复用 `extractReferences` 与 `attributeBareAnchors`，显式 `path:line` 直接取，同行裸锚点按最近前置路径归属；围栏代码块单独计入 `fenced`，不混进注释计数。
-- `tools/verify-verification-comment-anchors.mjs:84` 的 `commentKindsOf` 做有状态块注释掩码：识别 `//`、`/* */`、`*` 续行、`--`、shell/sql/yml 语境的 `#`、`<!-- -->`。块状态只在整行以 `/*` 或 `<!--` 开头时打开，避免把 `packages/contracts/openapi.json` 里 `"description": "audio/*"` 这类字符串误判成块注释。
-- `tools/verify-verification-comment-anchors.mjs:131` 的 `collectCommentAnchors` 先去重（同一 `docLine|target|from|to` 的显式/继承撞车只算一次），再解析目标文件，按首行分类：`comment`、`code`、`blank`、`outOfRange`、`unresolved`（`ambiguous` 单列子计数）、`fenced`，另有 `duplicate`；六格加 `duplicate` 等于 `candidates`。
-- 基线条目键是 `tools/verify-verification-comment-anchors.mjs:247` 的 `baselineKey`，即 `doc|line|target|from` 四元组；`to` 与 `kind` 只作说明，不参与键。`tools/verify-verification-comment-anchors.mjs:282` 的 `describeStale` 负责说明「文档没了 / 目标无法解析 / 行号越界 / 目标仍是注释但文档行号疑似位移 / 目标已不是注释」。
-- `tools/verify-verification-comment-anchors.mjs:297` 的 `evaluateCommentAnchorGate` 只做三件事：基线内命中、基线外新增、基线可收紧。`tools/verify-verification-comment-anchors.mjs:368` 的 `main` 负责打印与退出码。
+- `tools/verify-verification-comment-anchors.mjs:100` 的 `commentKindsOf` 做有状态块注释掩码：识别 `//`、`/* */`、`*` 续行、`--`、shell/sql/yml 语境的 `#`、`<!-- -->`。块状态只在整行以 `/*` 或 `<!--` 开头时打开，避免把 `packages/contracts/openapi.json` 里 `"description": "audio/*"` 这类字符串误判成块注释。
+- `tools/verify-verification-comment-anchors.mjs:161` 的 `collectCommentAnchors` 先去重（同一 `docLine|target|from|to` 的显式/继承撞车只算一次），再解析目标文件，按首行分类：`comment`、`code`、`blank`、`outOfRange`、`unresolved`（`ambiguous` 单列子计数）、`fenced`，另有 `duplicate`；六格加 `duplicate` 等于 `candidates`。
+- 基线条目键是 `tools/verify-verification-comment-anchors.mjs:291` 的 `baselineKey`，即 `doc|line|target|from` 四元组；`to` 与 `kind` 只作说明，不参与键。`tools/verify-verification-comment-anchors.mjs:347` 的 `describeStale` 负责说明「文档没了 / 目标无法解析 / 行号越界 / 目标仍是注释但文档行号疑似位移 / 目标已不是注释」。
+- `tools/verify-verification-comment-anchors.mjs:370` 的 `evaluateCommentAnchorGate` 只做三件事：基线内命中、基线外新增、基线可收紧。`tools/verify-verification-comment-anchors.mjs:496` 的 `main` 负责打印与退出码。
 - 闸门语义：`--require-no-new` 默认开，基线外新增 ⇒ EXIT 1 并逐条点名；基线内 ⇒ EXIT 0 但逐条 WARN；基线里已有、实际已不再命中 ⇒ 默认 EXIT 0 + `可收紧基线` WARN，`--require-no-stale` 时 EXIT 1；`--write-baseline` 只在显式传参时写盘，并打印 `写入了 N 条`。
 - 基线文件 `tools/verification-comment-anchor-baseline.json`：**1427 条、197 个文档、316,705 字节**（`#1119` 时刻的读数；2026-11-09 已在 `af39bfe6` 上重收为 1422 条 / 200 文档 / 315,546 字节，新旧对照与逐条 `added`／`removed` 见 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`，本页其余读数保持当时原样、不追改），`accepted` 为 `gy-r90-comment-anchor-shadow-batch`。`why` 原文：「逐字引用判据注释原文」在本仓是合法证据形态的一类（例如证据页引用 workflow 注释说明不变量），这批历史命中未经逐条人工裁定，先整批登记为影子基线；闸门只拦基线之外的新增，修掉一条再由 `--write-baseline` 收紧。
 
@@ -60,11 +60,11 @@
 | html-comment | 1 |
 | **合计** | **1427** |
 
-- 1427 条里有 682 条是区间锚点（`to != from`），745 条是单行；本工具只按 `from` 首行判类型，不判区间尾行。
+- 1427 条里有 682 条是区间锚点（`to != from`），745 条是单行；本工具只按 `from` 首行判类型，不判区间尾行。（2026-11-09 位移配对片修订：**是否计入**仍按 `from`，但 `kind` 与告警正文改按窗口内首个行为行判，`kind=range-covers-code` 并标注「区间证据行」，见 `docs/verification/gy-r90-comment-anchor-relocation-20261109.md` §五。）
 - 基线生成时的读数（基线在其上生成的 `6497031` 树、本页尚未合入；`node tools/verify-verification-comment-anchors.mjs` 默认口径）：`candidates=8556 comment=1427 code=6371 blank=137 out-of-range=16 unresolved=284 fenced=314 duplicate=7`，扫描 `documents=359`（只数 `docs/verification/**/*.md`）。`unresolved` 中 `ambiguous=284`；`comment=1427` 与基线条数相等 ⇒ 基线外新增 0、EXIT 0。
 - 本页合入后的读数（`9862bb7b` 树、含本页自身）：`candidates=8584 comment=1427 code=6399 blank=137 out-of-range=16 unresolved=284 fenced=314 duplicate=7`，`documents=360`。本页自身贡献 +28 个 candidates、+1 个文档，且这 28 条全部落在代码行（`code` 6371→6399），故 `comment` 仍是 1427、基线不必为本页重写。
 - 上面两条各自绑定一棵树与一个时刻，**不是** main 的当前读数；main 前进到 `af39bfe6` 后的重收读数（`candidates=8842 comment=1422`、`documents=365`）见 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`。
-- 掩码收紧前的朴素读数：把 `tools/verify-verification-comment-anchors.mjs:99` 的「整行以 `/*` 开头才开块状态」换回「行内出现 `/*` 就开状态」，同一棵 `6497031` 树上 `comment` 由 1427 涨到 **1683**、`code` 由 6371 跌到 6115，基线外新增 **256** 条。256 条全部是对 `packages/contracts/openapi.json` 的误判（例如 `"x-scope": "sources:write",`、`"description": "SCOPE_DENIED, …"`），不是被删掉的真实锚点；测试 ⑥（`tests/unit/verify-verification-comment-anchors.test.mjs:182`）钉死这个回归。复现见本页 §五 末段。
+- 掩码收紧前的朴素读数：把 `tools/verify-verification-comment-anchors.mjs:115` 的「整行以 `/*` 开头才开块状态」换回「行内出现 `/*` 就开状态」，同一棵 `6497031` 树上 `comment` 由 1427 涨到 **1683**、`code` 由 6371 跌到 6115，基线外新增 **256** 条。256 条全部是对 `packages/contracts/openapi.json` 的误判（例如 `"x-scope": "sources:write",`、`"description": "SCOPE_DENIED, …"`），不是被删掉的真实锚点；测试 ⑥（`tests/unit/verify-verification-comment-anchors.test.mjs:182`）钉死这个回归。复现见本页 §五 末段。
 - 基线是**冻结**，不是裁定：它只回答「这批在 2026-11-09 已经存在」，不回答「每一条都该保留」。逐条修掉后从基线删条目并重跑 `--write-baseline`，是后续收紧路径。
 
 ## 四、变异读数（证明闸门真能红）
@@ -91,7 +91,7 @@ node tools/verify-verification-comment-anchors.mjs --write-baseline
 ```text
 git worktree add <tmp> --detach 6497031677a6ca0d7c453d18a6415ad3e68fce69
 # 把当前 main 的 tools/verify-verification-comment-anchors.mjs 与旧基线放进 <tmp>；
-# 再把 tools/verify-verification-comment-anchors.mjs:99 的 `startsWith('/*')` 改成 `includes('/*')`：
+# 再把 tools/verify-verification-comment-anchors.mjs:115 的 `startsWith('/*')` 改成 `includes('/*')`：
 node <tmp>/tools/verify-verification-comment-anchors.mjs --scan docs/verification
 # ⇒ comment=1683、基线外新增 256（多出来的全是对 packages/contracts/openapi.json 的误判）
 node <tmp>/tools/verify-verification-comment-anchors.mjs --scan docs/verification   # 原判据

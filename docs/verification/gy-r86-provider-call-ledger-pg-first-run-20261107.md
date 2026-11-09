@@ -84,7 +84,7 @@ node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postg
 | --- | --- |
 | P3-1 §2 里「表原样还在」只由 `to_regclass` 非空支撑 | **已加固**：判据改成「表在 **且** 记账行数与中止前**相等**」——只断言表存在（甚至只断言「行数 > 0」）都允许「表在、行没了/少了一半」。变异自证：在 `ROLLBACK` 之后插一句删空表，判据红在「中止后表与记账行必须原样还在（不是只剩空表/少行）」 |
 | P3-2 §2 的 `[K] 9 条约束 + job_idx 在场（实际约束 10 条）` 里 9 与 10 并列却不说明第 10 条 | 本页不改动那行读数（它是当次实跑的原样转录），在此说明：**第 10 条是 `export_id` → `public.exports(id)` 的外键**（前 9 条 = 8 条命名 CHECK/UNIQUE + 主键 `provider_call_ledger_pkey`） |
-| P3-3 抬头删掉「未接线」后，单看本文件可能被读成 CI 已覆盖 | **已加固**：抬头补一句「本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`）」（R87 起该句已改为「已接线」，见 §7） |
+| P3-3 抬头删掉「未接线」后，单看本文件可能被读成 CI 已覆盖 | **已加固**：抬头补一句「本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`）」（R87 起该句已改为「已接线」，见 §7；2026-11-09 订正：接线提交 `841bc1c3`（#1070，2026-11-08）——该臂挂在 `.github/workflows/real-pg-integration.yml` 的 job `real-pg-ledger-17.11`（job 键在第 1455 行、`name:` 在第 1456 行），执行行是第 1523 行） |
 
 加固后本臂复跑仍 `[√] ALL PASS`、exit 0；除每次运行随机的 `[F]` 夹具 UUID 外，输出逐行相同（读数表 §2 无需回填：本次加固不改任何被记录的读数）。
 

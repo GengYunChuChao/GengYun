@@ -62,7 +62,7 @@ throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终态（${record.state}�
 | `apps/admin/src/lib/admin-content-view-model.mjs:319` | `READ_FAILURE_CODE_LABELS` 增中文文案（该表要求与 `ERROR_CODES` 完全同集） |
 | `tests/unit/contract-code-name-pairs.test.mjs:493`、`tests/unit/contract-code-name-pairs.test.mjs:530` | 28 → 29（两处硬编码计数钉子） |
 | `docs/architecture/ai-ops-spec-status.md:61`、`docs/architecture/ai-ops-spec-status.md:107` | 「错误码单源 28 码」→ 29、「恰好 28 个错误码」→ 29 |
-| `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:100` | `DOCUMENTED_EXCEPTIONS` 删掉 `'CONSENT_WITHDRAWN'`，只留 `['OBJECT_CANCELLED']`（该测要求例外表成员必须**不在**契约闭集） |
+| `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:106` | `DOCUMENTED_EXCEPTIONS` 删掉 `'CONSENT_WITHDRAWN'`，只留 `['OBJECT_CANCELLED']`（该测要求例外表成员必须**不在**契约闭集） |
 
 **契约影响**：`CONSENT_WITHDRAWN` 落在 **403** 档（撤回后继续处理是权限问题，与既有 `CONSENT_REQUIRED` 同档），与 `public.exports.error_code` 同名，便于逐行对账。`services/api/src/jobs/registry.ts:244-246` 的「failed/timed_out 必须带契约 `error_code`」约束因此可被合法满足（新码在闭集内）；数据库侧 `error_code` 列是 `varchar(80)` + 长度 CHECK，**无闭集约束，故无迁移**。
 
@@ -220,7 +220,7 @@ stderr 有一行既有噪音 `GY-I16 识别终态历史写入失败（端口=wir
 | `docs/verification/gy-r83-i29-consent-negatives-20261107.md:19` | 第 535 / 537 行 | `tests/integration/egress-ledger-pg.mjs:567` / `tests/integration/egress-ledger-pg.mjs:569` | 403 断言行 / `countExports` 断言行 |
 | `docs/verification/gy-r83-i29-consent-negatives-20261107.md:21` | 第 514 / 522 / 530 行 | `tests/integration/egress-ledger-pg.mjs:537` / `tests/integration/egress-ledger-pg.mjs:545` / `tests/integration/egress-ledger-pg.mjs:553` | `synthetic.hang()` / `DELETE` 调用 / `error_code` 断言 |
 | `docs/verification/gy-r83-i29-consent-negatives-20261107.md:22` | 第 533 行 | `tests/integration/egress-ledger-pg.mjs:565` | `writebackCount === 0` 断言 |
-| `docs/verification/gy-r71-comment-strip-20261030.md:143`、`docs/verification/gy-r71-comment-strip-20261030.md:152` | 第 162 行 | `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:168` | 去注释正则（带 `://` 前缀豁免）所在行 |
+| `docs/verification/gy-r71-comment-strip-20261030.md:143`、`docs/verification/gy-r71-comment-strip-20261030.md:152` | 第 162 行 | `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:175` | 去注释正则（带 `://` 前缀豁免）所在行 |
 | `docs/verification/gy-i15-messages-chain-20261021.md:108` | `miniprogram/utils/states.js` 第 150 行 | `miniprogram/utils/states.js:151` | 机械 +1（本片在 `miniprogram/utils/states.js:38` 插了一行 `CONSENT_WITHDRAWN` 登记），旧 150 与现 151 同为 `/**` 行 |
 | `docs/verification/gy-r82-i29-ac3-code-evidence-20261106.md:28` | `services/api/src/errors.ts` 第 126 行 | `services/api/src/errors.ts:127` | 机械 +1（本片在 `services/api/src/errors.ts:14` 插了一行 `PrivacyError` import），旧 126 与现 127 同为 `export function buildErrorEnvelope(` |
 
