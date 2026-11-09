@@ -265,7 +265,7 @@
   （只吐八个证据面列、固定排序、终态不可回退）；授权在 `deploy/postgres-cvm/sql/20-login-roles.sql:414`（REVOKE PUBLIC）与
   `:416`（GRANT EXECUTE 给 `gengyun_api_runtime`，该表对运行时仍 `forbidden`，见 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1134`），
   函数形状断言在同文件 `:1803`；真库臂在 `tests/integration/third-party-deletion-pg.mjs:1`（自述 P1，子判据 E-S4-P1-A..E 见 `:27`），
-  由 `.github/workflows/real-pg-integration.yml:253` 在 CI 跑（PG 17.11、现建空库；原页引 `:203` 实测是 message-events 臂的注释）。
+  由 `.github/workflows/real-pg-integration.yml:259` 在 CI 跑（PG 17.11、现建空库；原页引 `:203` 实测是 message-events 臂的注释）。2026-11-09 订正：原句引第 253 行（已过期，保留以便追溯）——第 253 行是同一条臂上方注释块的第二行（注释原文「# 断言 `public` 下无表）。它自建 5 个 NOLOGIN 域组…」），真正执行该臂的 `- run:` 行是第 259 行，接线提交 `8b5b8afe`（#610，2026-10-26）。
 - **证据（2026-10-26 起；2026-10-28 复核重取）**：`git grep -n third_party_deletions -- services/api/src` = 6 行 / 2 文件（端口
   `privacy/third-party-deletion-pg.ts` 5 行（第 8／14／59／79／142 行）、写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行注释（第 8 行），两者对表零 DML/SELECT）；`git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = **15 行**（原页记「0 行」；
   实测 `:158/:162/:166/:167/:336/:339/:562/:567/:1991/:1998/:2002/:2004/:2009/:2538/:2547`）；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口 `services/api/src/privacy/third-party-deletion-pg.ts:141`、实现 `:312`、`privacy/user-data-deletion.ts` 一处注释）⇒ **写侧零调用者**（2026-11-05 复核改判：该 grep 今天是 **8 行 / 3 文件**——`privacy/third-party-deletion-dispatch.ts` 四行、端口接口与实现 `privacy/third-party-deletion-pg.ts` 两行（第 141／312 行）、`privacy/user-data-deletion.ts` 两行注释；唯一生产调用者在 `privacy/third-party-deletion-dispatch.ts:544` `await writePort.subscribeThirdPartyDeletion(payload);`（PR #860，`7a25d900`），故「写侧零调用者」自 GY-R73 起不成立，本行「3 行」为 2026-10-28 旧读数，今日不得再引）。
