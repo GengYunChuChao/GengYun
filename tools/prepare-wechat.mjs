@@ -355,6 +355,10 @@ try {
     'data/seed-weed-master.js',
     'data/seed-province-index.js',
     'data/seed-control-timing.js',
+    // GY-R92 时间文案（9 个页面与 history-api 都 require 它）：漏加会让副本里 12 处 require 悬空；
+    // 页面侧被 try/catch 吞掉、只表现为时间不显示。追加在末尾是有意的：本文件的既有行号被
+    // docs/ui-state-inventory.md:352 等锚点引用，插在中间会牵动那些锚点。
+    'utils/time-format.js',
   ];
   // 打包清单不是「写下来就算」：先把「源码树有没有地区质心数据」与「清单有没有登记它」对齐，
   // 不一致就当场失败（存在却漏登记 ⇒ 标准包静默 unavailable；登记了却不存在 ⇒ 复制阶段 ENOENT）。
@@ -426,6 +430,10 @@ try {
   // 生成物里的 apiBaseUrl 就是**客户端拼接基址**（客户端以 `runtime.apiBaseUrl + '/auth/…'` 等自行拼接）：
   // 指向真实本地 API 时须含业务前缀（如 http://127.0.0.1:3100/api/v1），诊断替身用 origin 形态即可。
   writeFileSync(join(out, 'miniprogram/config/runtime.js'), 'module.exports = ' + JSON.stringify({ mode: runtime.mode, apiBaseUrl: runtime.apiBaseUrl }) + '\n');
+  // 复制清单漏项不能等到开发者工具里才以 MODULE_NOT_FOUND 暴露：成功提示之前先扫一遍相对 require。
+  const { assertRequireClosure } = await import('./lib/require-closure.mjs');
+  const closure = assertRequireClosure({ copyRoot: out, entries: files });
+  console.log('相对 require 闭合：' + closure.scannedFiles + ' 个文件，' + closure.requires + ' 条相对 require，悬空 0 条。');
   console.log(mode.toUpperCase() + ' import root: ' + out);
   console.log(mode === 'local'
     ? 'Local client base (runtime.apiBaseUrl): ' + runtime.apiBaseUrl + ' ; diagnostic stub only; enable the personal domain exception only in this isolated project if needed.'
