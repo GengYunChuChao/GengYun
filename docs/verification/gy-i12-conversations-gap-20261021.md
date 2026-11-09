@@ -104,7 +104,7 @@ const candidate = composer.compose({
 });
 ```
 
-而 `composer` 的实现是 `service.ts:243-279` 的 `createDeterministicAnswerComposer()`：`kind: 'deterministic_guard_only'`（`service.ts:245`），只按 `RELEVANCE_RULE = 'cjk-bigram+word-match/1'`（`service.ts:202`）做**字面重合**筛选，把命中条目的标题+摘录拼成骨架（`COMPOSER_MAX_CITATIONS = 3` 在 `:227`，`COMPOSER_EXCERPT_MAX = 400` 在 `:230`），正文里自带「（未接真实模型·确定性检索结果·规则 …）」字样，`dose_cards: []` 恒空。
+而 `composer` 的实现是 `service.ts:243-279` 的 `createDeterministicAnswerComposer()`：`kind: 'deterministic_guard_only'`（`service.ts:245`），只按 `RELEVANCE_RULE = 'cjk-bigram+word-match/1'`（`service.ts:202`）做**字面重合**筛选，把命中条目的标题+摘录拼成骨架（`COMPOSER_MAX_CITATIONS = 3` 在 `:227`，`COMPOSER_EXCERPT_MAX = 400` 在 `:230`），正文里自带「（未接真实模型·确定性检索结果）」字样（2026-11-09 GY-R92 起检索规则标识只留 `rule_version` / `note`，不再进正文），`dose_cards: []` 恒空。
 
 **②「`retrieval.ts` 的检索源是 stub 还是 real」**
 

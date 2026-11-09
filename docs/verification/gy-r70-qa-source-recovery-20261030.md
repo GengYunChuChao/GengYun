@@ -116,8 +116,11 @@
 1. `model_version`：真实模型是 `model/<model>#live-1`；摘录是 `unimplemented:no-real-model/text-qa-deterministic`
    （`services/api/src/conversations/service.ts:90-91`）。
 2. `prompt_version`：真实模型是 `prompt/citation-bind/1`；摘录侧**不含** `citation-bind`。
-3. 正文首行：确定性回答器自带 `（未接真实模型·确定性检索结果·规则 …）` 字样 ——
+3. 正文首行：确定性回答器自带 `（未接真实模型·确定性检索结果）` 字样 ——
    **即便客户端只渲染正文**，也不会把摘录读成模型输出。
+   （2026-11-09 GY-R92 起：检索规则标识 `cjk-bigram+word-match/1` 只留在诊断字段
+   `rule_version` / `composer.note`，**不再**出现在正文里；本页原引的「·规则 …」随之作废，
+   `excerptMarker` 判据同轮改为匹配 `（未接真实模型·确定性检索结果）`。）
 
 **不能 —— 在运维面上**：`GET /health` 只查 `api` 与 `database`（`services/api/src/routes/health.ts:11-34`），
 没有任何问答/AI 接线读数。"配了模型却接不上账本"有**一条 warn**；**"完全没配 `CHAT_LLM_*`"一条都没有**
@@ -155,7 +158,7 @@
 | # | 改哪一行（临时，全部已 `git checkout` 还原） | 红在哪（逐字） | 恢复后 |
 | --- | --- | --- | --- |
 | ① | `ai/chat-wiring.ts` 的账本与门 `if (input.egressLedger === null \|\| …)` ⇒ `if (false)` | `A1`：`装配结局与四与门不一致：injected=false chat=true ledger=false inflight=false mode=real（实得 live）`；连带 `A2`、`B6`、`D5`、`E2` | 23/23 绿 |
-| ② | `conversations/service.ts` 去掉确定性正文里的 `（未接真实模型·确定性检索结果·规则 …）` | `B1`、`B4`、`C4`、`D5` 红（`excerptMarker` 判据） | 23/23 绿 |
+| ② | `conversations/service.ts` 去掉确定性正文里的 `（未接真实模型·确定性检索结果）` | `B1`、`B4`、`C4`、`D5` 红（`excerptMarker` 判据） | 23/23 绿 |
 | ③ | `conversations/guard.ts` 跳过 `sameSourceRef` 逐字段核对 | `C3` 红（三条空壳来源全部被放行成 `answered`） | 23/23 绿 |
 | ④ | `ai/error-map.ts` 把 `rate_limited` 的码改成 `PROVIDER_UNAVAILABLE` | `D0`（`HTTP 429 的契约码`）、`D2`、`D6` 红 | 23/23 绿 |
 | ⑤ | `ai/chat-live-adapter.ts` 去掉"检索集合为空 ⇒ 不外发"短路 | `B3`（`检索集合为空时不得为了"问一句"而外发`）、`E4`（`无依据时不得花钱问模型"知不知道"`）红 | 23/23 绿 |
