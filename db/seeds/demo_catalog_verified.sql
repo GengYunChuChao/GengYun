@@ -12,6 +12,9 @@
 -- 这是什么，不是什么
 --   * 卡片文字**只**来自 `db/seeds/seed_reference.sql` 写入的 `public.species` 行
 --     （中文名 / 学名 / 别名），不新增任何识别结论、防治建议或用药指引；
+--   * 正文（`knowledge_versions.body`）**不写**实现细节：演示里这段会被当成知识正文
+--     念给观众听，所以只写「这是演示占位说明」+ 非生产数据声明，不写本文件名、
+--     `db/seeds/*.sql` 路径、表名或派生过程；
 --   * `reviewed_by` 指向**演示侧占位账号**：login_name 里写明「演示占位，非真人」，
 --     credential_hash 是不可用的占位串（登不进来）。它**不是**真人审核，
 --     **不是**第三方审核，也不代表任何机构背书；
@@ -146,9 +149,8 @@ SELECT m.knowledge_id,
        '【演示资料·非生产数据】' || s.canonical_name
          || coalesce('（学名 ' || nullif(btrim(s.scientific_name), '') || '）', '')
          || coalesce('；别名：' || nullif(array_to_string(ARRAY(SELECT jsonb_array_elements_text(s.aliases)), '、'), ''), '')
-         || '。本卡片由 db/seeds/demo_catalog_verified.sql 从仓库既有物种参考表'
-         || '（db/seeds/seed_reference.sql 的 species 行）派生，只用于本机演示首页；'
-         || '不含识别结论、防治建议或用药指引，也不代表任何第三方审核。',
+         || '。本条为演示用占位说明，用于展示「资料卡 → 检索 → 带引用回答」的链路；'
+         || '不含识别结论、防治建议与用药指引，也不代表任何第三方审核。',
        'species',
        'd0000000-0000-4000-8000-00000000b002'::uuid,
        '[]'::jsonb,

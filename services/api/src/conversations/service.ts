@@ -301,10 +301,10 @@ export function createDeterministicAnswerComposer(): AnswerComposer {
           : `（本会话追问：上文只取自本会话最近 ${history.length} 轮提问（上限 ${CONTEXT_MAX_TURNS} 轮），` +
             '不跨会话；引用仍只按本问取自本次检索集合）\n';
       return {
-        // 正文自带「未接真实模型」字样：即便客户端只看正文，也不会把它读成模型输出；引用按来源对象去重（同一来源可挂多条知识）。
+        // 正文自带「未接真实模型」字样：即便客户端只看正文，也不会把它读成模型输出；引用按来源对象去重（同一来源可挂多条知识）。检索规则标识只进诊断字段（rule_version / note）——正文是要念给观众听的，不塞实现细节。
         text:
           followUp +
-          `（未接真实模型·确定性检索结果·规则 ${RELEVANCE_RULE}）依据本次资料检索集合中与提问有字面重合的条目：\n` +
+          '（未接真实模型·确定性检索结果）依据本机资料库中与提问字面重合的条目：\n' +
           lines.join('\n'),
         citations: [...new Map(ranked.map(({ item }) => [JSON.stringify(item.source), item.source])).values()],
         dose_cards: [],
