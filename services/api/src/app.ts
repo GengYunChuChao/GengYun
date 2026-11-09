@@ -1029,7 +1029,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           inFlight: privacyInFlight,
           executionMode: config.executionMode,
           dataType,
-          capability,
+          capability, log: (event) => app.log.info(event),
         });
   const recognitionEgress = mediaEgress('weed_recognition', 'weed');
   const speechEgress = mediaEgress('voice_question', 'asr');
