@@ -100,6 +100,7 @@ maxTokens: 1024, // GY-R94：512 与「思考」共用预算，实测 100 次里
 - 新增 `tests/unit/recognitions-openai-vision-corpses.test.mjs`（233 行，9 条，从 `tests/unit/recognitions-openai-vision-corpses.test.mjs:97` 到 `tests/unit/recognitions-openai-vision-corpses.test.mjs:219`）：① 7/7 结构类解出闭集内候选；② 5 个预算类仍 `null` 且不抛错；②′ 空串/空白不抛错；③ 正常对象 / ```json 围栏 / 数组根都不受影响；④ 恶意与闭集外 id 不产出候选；④′ 字符串感知的括号配平；⑤ 请求体 `max_tokens === 1024`；⑥ 失败观测带三项读数且**不含正文**；⑥′ 结构类失败被归因成"stop + 非零长度"。
 - 既有 `tests/unit/recognitions-openai-vision.test.mjs` 13 条不动、全绿（它本来就没有 512 断言）。
 - `node --test "tests/unit/recognitions-*.test.mjs"` ⇒ **167 tests / 167 pass / 0 fail**。
+- `node tests/integration/recognitions-http.mjs` ⇒ **exit 0**（`PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memory store)`；含 `uncertain` 与并发同键只用 1 次 provider 调用两条）。PG 依赖的两条（`recognition-chain-e2e`、`recognitions-pg`）本次没跑——它们要独占一个 PG 库，会和正在跑的演示库抢资源，留给 CI。
 - `npm run typecheck --workspace @gengyun/api` ⇒ 无输出（clean）。
 
 ### 5.2 端到端（同一张照片、串行、间隔 2 s）
