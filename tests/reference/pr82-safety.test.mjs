@@ -54,6 +54,10 @@ function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice
   });
   const font = { exports: {} };
   vm.runInNewContext(readPage('utils/font-scale.js'), { module: font });
+  // GY-R92：referencedetail 用 `require('../../utils/time-format')` 渲染来源取得时间。登记**真实模块**，
+  // 让时间文案仍由真源码决定；空壳或只替 formatDate 会让页面在真依赖缺失时仍绿。
+  const time = { exports: {} };
+  vm.runInNewContext(readPage('utils/time-format.js'), { module: time });
   const profileApi = {
     binding: () => ({ token: 't', epoch: 1 }),
     current: () => true,
@@ -89,6 +93,7 @@ function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice
   const pageDependencies = new Map([
     ['../../utils/page-gate', gate.exports],
     ['../../utils/font-scale', font.exports],
+    ['../../utils/time-format', time.exports],
     ['../../utils/auth', auth],
     ['../../utils/profile-api', profileApi],
     ['../../utils/reference', realReference],
