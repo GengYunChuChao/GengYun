@@ -32,7 +32,7 @@ export function prepareLocalDev({root,postgresBin,apiPort=3100,pgPort=55436}) {
  writeFileSync(join(wechat,'miniprogram/config/runtime.js'),"module.exports="+JSON.stringify({mode:'local',apiBaseUrl:`http://127.0.0.1:${apiPort}/api/v1`})+'\n');
  function edit(file,changes){const path=join(wechat,'miniprogram',file);let text=readFileSync(path,'utf8');for(const [a,b] of changes)text=text.replace(a,b);writeFileSync(path,text);}
  edit('utils/debug.js',[["runtime.apiBaseUrl + '/__local__/status'",`'http://127.0.0.1:${apiPort}/__local__/status'`],['本地替身连接成功；登录、数据库、AI及业务均未接入。','本地 API 与 PostgreSQL 已连接；微信身份为合成测试，AI 未接入。']]);
- edit('pages/home/home.js',[['开发准备工程：','本地联调（合成微信身份，真实 PostgreSQL）：']]);
+ edit('pages/home/home.js',[['演示用：','本地联调（合成微信身份，真实 PostgreSQL）：']]);
  edit('pages/login/login.js',[['登录成功。','本地合成身份登录成功。']]);
  return out;
 }
