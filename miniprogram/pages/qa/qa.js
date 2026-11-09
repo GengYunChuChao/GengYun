@@ -599,7 +599,7 @@ Page({
         promptVersion: gate.answer.prompt_version,
         ruleVersion: gate.answer.rule_version
       },
-      citations: qaApi.citationsView(gate.answer),
+      citations: qaApi.citationsView(gate.answer).map(c => Object.assign({}, c, { updated_at: require('../../utils/time-format').formatDateTime(c.updated_at) })),
       doseCards: qaApi.doseCardsView(gate.answer),
       answerGateCode: '',
       answerGateMessage: ''
