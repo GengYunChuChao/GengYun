@@ -266,9 +266,9 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
  * 撤销本身由账本 `revokeInFlight` 完成，之后任何 `markSent` / `guardWriteback`
  * 都会在原子边界上被拒。
  *
- * **持久账本适配（GY-I27 第二片）**：两个方法返回 Promise 并 `await` 账本的 `revokeInFlight`
- * （PostgreSQL 实现是一条原子 UPDATE；同步实现的 await 是零成本）。调用方（授权服务）
- * 必须 `await` —— 否则撤销失败会变成未处理的 rejection。
+ * **持久账本适配**：两个方法返回 Promise 并 `await` 账本的 `revokeInFlight`（PostgreSQL 实现在
+ * 账本自己的 `withTransaction` 里完成 `exports`/`jobs` 两句，自带 4s `lock_timeout`，**不加入**
+ * 授权服务的 `transaction()`；同步实现的 await 是零成本）。调用方必须 `await`，否则失败会变成未处理 rejection。
  *
  * 接线方（`services/api`）注入本对象后即可删掉 `OBJECT_UNAVAILABLE` 兜底；
  * **不注入时行为与今天逐字一致**（仍然 fail-closed，不伪造取消成功）。

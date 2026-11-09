@@ -26,8 +26,8 @@ function evidence(value: unknown, synthetic: boolean): boolean {
 /**
  * Internal SQL step: caller must already hold account/session locks in consent service.
  *
- * `egressRevoker`（接线单）：注入后，「已有业务依赖的授权变更」改为**先撤销在途外发**
- * 再写新 epoch；未注入 ⇒ 保持既有 `OBJECT_UNAVAILABLE` fail-closed 兜底（逐字不变）。
+ * `egressRevoker`（接线单）：注入后，「已有业务依赖的授权变更」先由账本在**自己的事务**里
+ * 撤销在途外发，再写新 epoch；未注入 ⇒ 保持既有 `OBJECT_UNAVAILABLE` fail-closed 兜底。
  */
 export async function persistConsentGrant(client: PoolClient, userId: string, hmacKey: string, input: ConsentGrantRequest, allowSynthetic: boolean, egressRevoker: EgressRevoker | null = null): Promise<Row> {
   if (!['recording','media_processing','external_inference','public_posting'].includes(input.purpose)
@@ -82,13 +82,13 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
     return current;
   }
   const expected = current ? number(current.revision) : 1;
-  // 授权变更消费者（接线单）：注入后先撤销在途外发；未注入 ⇒ 保持既有 fail-closed 兜底。
+  // 授权变更消费者：注入后先由账本自己的事务撤销在途外发；未注入 ⇒ 保持既有 fail-closed 兜底。
   const deps = (await client.query(`SELECT EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1)
     OR EXISTS(SELECT 1 FROM public.exports WHERE user_id=$1)
     OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1) AS present`, [userId])).rows[0];
   if (deps?.present) {
     if (!egressRevoker) throw new ApiError('OBJECT_UNAVAILABLE', '已有业务依赖的授权变更消费者尚未接入');
-    // 与撤回同口径：消费者必须先真的撤销在途外发；账本未就绪或失败 ⇒ **如实拒绝**（fail-closed），
+    // 与撤回同口径：消费者必须先在账本自己的事务里真的撤销在途外发；账本未就绪或失败 ⇒ **如实拒绝**（fail-closed），
     // 不把驱动错误冒泡成 PROVIDER_UNAVAILABLE。
     try {
       await egressRevoker.onConsentWithdrawn({ userId, purpose: input.purpose });

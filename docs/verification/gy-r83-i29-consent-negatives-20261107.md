@@ -81,13 +81,13 @@
 2. **不证明 7 日在线／30 日备份的留存行为。** 本片不推进任何时钟，`valid_until` 只放了 1 小时窗口；时间流逝后的留存/清除由 `tests/integration/retention-clock-drill-pg.mjs` 那一族负责。
 3. **不证明 `evidence_ref`／`content_sha256` 由谁签、签得对不对。** 本片政策全是 `fixture://policy/terms`、`fixture://policy/review`、`content_sha256='a'*64`，只是让 synthetic 校验通过；签名与评审归属是运维/评审流程的事。
 4. **不证明生产装配可用。** `allowSyntheticGrantPolicy` 只在测试 harness 打开；生产 app 拒绝 synthetic 政策的读数是 `tests/integration/consent-grant-pg.mjs:106`，不是本片。
-5. **不证明作业表被终止。** `services/api/src/privacy/ledger-pg.ts:864-883` 的 `revokeInFlight` 只 `UPDATE public.exports`，不动 `jobs`；本片与既有用例都没钉 `jobs` 行（见 §6 第 1 条）。
+5. **不证明作业表被终止。** `services/api/src/privacy/ledger-pg.ts:865-899` 的 `revokeInFlight` 只 `UPDATE public.exports`，不动 `jobs`；本片与既有用例都没钉 `jobs` 行（见 §6 第 1 条）。
 6. **不证明跨用户隔离。** 三条用例各只用一个用户，跨用户的账本/撤回隔离不在本片。
 
 ## 6. 残留缺口（如实登记，本片不修）
 
-1. **「撤回是否终止已受理的 job」的读面仍无断言**：`tests/integration/egress-ledger-pg.mjs:532` 撤回后只 `waitFor(() => terminalJobState(...))` 等「任意终态」，没有断言该终态的 `state`／`error_code`；而 `services/api/src/privacy/ledger-pg.ts:864-883` 只把 `exports` 置 `failed`，`jobs` 表不在其 UPDATE 范围内。要钉住这一点，需要有 `GET /jobs/{id}` 的读面断言 + 明确「撤回是否应级联 job」的产品口径 —— 解锁人是账本在途接线单的 owner，不是本片。
-2. **`revokeInFlight` 的跨用户／跨用途过滤缺负控制**：`services/api/src/privacy/ledger-pg.ts:864-883` 里 `user_id=$1` 与 `required_consents ? $2` 两处过滤都没有「另一个用户/另一个用途的 export 不受影响」的用例。
+1. **「撤回是否终止已受理的 job」的读面仍无断言**：`tests/integration/egress-ledger-pg.mjs:532` 撤回后只 `waitFor(() => terminalJobState(...))` 等「任意终态」，没有断言该终态的 `state`／`error_code`；而 `services/api/src/privacy/ledger-pg.ts:865-899` 只把 `exports` 置 `failed`，`jobs` 表不在其 UPDATE 范围内。要钉住这一点，需要有 `GET /jobs/{id}` 的读面断言 + 明确「撤回是否应级联 job」的产品口径 —— 解锁人是账本在途接线单的 owner，不是本片。
+2. **`revokeInFlight` 的跨用户／跨用途过滤缺负控制**：`services/api/src/privacy/ledger-pg.ts:865-899` 里 `user_id=$1` 与 `required_consents ? $2` 两处过滤都没有「另一个用户/另一个用途的 export 不受影响」的用例。
 3. **CI 覆盖是「搭车」而非「新接线」**：新用例落在 `tests/integration/consent-grant-pg.mjs`，而该文件已由 `.github/workflows/consent-grant-postgres.yml:35` 在真库 job 里跑、`.github/workflows/consent-grant-postgres.yml:37` 提供 `CONSENT_GRANT_TEST_URL` ⇒ 三条新用例**不需要**改 CI 就进了流水线。代价是它们与既有的 28 组同生共死：该 job 没有 skip 分支——缺 `CONSENT_GRANT_TEST_URL`／PG 时 `tests/integration/consent-grant-pg.mjs:11-15` 会立刻断言失败（`.github/workflows/real-pg-integration.yml:843-844` 自述该组脚本「没有 SKIP、没有 77：真库没起来就是红」），所以新用例与既有 28 组一样，真库没起来就红、不会静默跳过。另外该文件仍不在 `package.json` 的 `test:integration:http` 链里（那条链要求无 PG 可跑），`tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 条目保持原样未动。
 4. **撤回侧只补了「无该用途记录」这一面**：`If-Match` 与当前 revision 不符的 `REVISION_CONFLICT` 已由 `tests/integration/consent-grant-pg.mjs` 与 `tests/integration/auth-privacy-pg.mjs` 的既有断言覆盖，本片未重复造。
 

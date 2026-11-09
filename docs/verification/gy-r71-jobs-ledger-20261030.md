@@ -76,7 +76,7 @@
 
 ### 2.1 一条语句、两种幂等
 
-`services/api/src/jobs/ledger.ts:265` 的 `JOB_LEDGER_UPSERT_SQL`：
+`services/api/src/jobs/ledger.ts:283` 的 `JOB_LEDGER_UPSERT_SQL`（#29 起冲突分支另含撤回墓碑谓词，以代码为准）：
 
 ```sql
 INSERT INTO public.jobs
@@ -162,7 +162,7 @@ ON CONFLICT (id) DO UPDATE
 - `synthesis`：全仓没有任何合成作业表（迁移里 `synthesis` 只作为导出键形状与收藏历史的
   `target_type` 取值出现），作业态同样只在内存。
 
-两源的理由与"以后怎么接"写在 `services/api/src/jobs/ledger.ts:99` 的 `UNWIRED_SOURCES_REASON`
+两源的理由与"以后怎么接"写在 `services/api/src/jobs/ledger.ts:108-111` 的 `UNWIRED_SOURCES_REASON`
 （由 `tests/unit/ai-ops-ledger-pins.test.mjs` 的钉子①b 钉住：源集合必须恰是「四源已接 + 两源有理由」）。
 
 ---
@@ -307,7 +307,7 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 |---|---|---|---|---|
 | ⑤ | **摘掉 `jobs` 的处理器注册** | 删掉 `services/api/src/privacy/user-data-deletion.ts:1099` 起那整块 `if (input.jobsStore !== undefined) { coordinator.registerModule(JOBS_DELETION_MODULE, …) }` | `tests/unit/jobs-ledger-deletion.test.mjs` 多条同时红；正控制那条的报错原文是 `Error [PrivacyError]: 删除处理器未覆盖全部必需模块：jobs`（`packages/privacy/deletion-modules.mjs:140`）—— 「闭集里有、处理器没有」在**受理那一刻**就拒，不会静默少清一个域 | 恢复该块 → `pass 6 / fail 0` |
 | ⑥ | **摘掉 `app.ts` 的注入** | 删掉 `services/api/src/app.ts:2264` 的 `...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore }),` | `tests/unit/deletion-registration-coverage.test.mjs` 红：``AssertionError: `app.ts` 必须恰好注入一次 `jobsStore`（`...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore })`）：删掉或挪走 ⇒ 闭集缩回 8 项，而协议层与其它用例都不会报错`` | 恢复该行 → `pass 7 / fail 0` |
-| ⑦ | **把那条 `DELETE` 的语义改掉**（不是删调用，而是让「删」变成「什么也没删」） | 把 `services/api/src/jobs/ledger.ts:387` 的字面量改成 `DELETE FROM public.jobs WHERE owner_id = $1::uuid AND false` | `✖ SQL 字面钉子：删的是 public.jobs 里该 owner 的行` → `AssertionError: Expected values to be strictly equal: actual: 'DELETE FROM public.jobs WHERE owner_id = $1::uuid AND false'`（`tests 6 / pass 5 / fail 1`，exit 1） | 改回 → `pass 6 / fail 0` |
+| ⑦ | **把那条 `DELETE` 的语义改掉**（不是删调用，而是让「删」变成「什么也没删」） | 把 `services/api/src/jobs/ledger.ts:463` 的字面量改成 `DELETE FROM public.jobs WHERE owner_id = $1::uuid AND false` | `✖ SQL 字面钉子：删的是 public.jobs 里该 owner 的行` → `AssertionError: Expected values to be strictly equal: actual: 'DELETE FROM public.jobs WHERE owner_id = $1::uuid AND false'`（`tests 6 / pass 5 / fail 1`，exit 1） | 改回 → `pass 6 / fail 0` |
 
 ⑦ 是这轮**新补出来的洞**，值得单独记一句：⑤⑥ 只证「处理器在、注入在」，而假池是按**导入的常量**判形状
 （`text !== JOB_LEDGER_PURGE_SQL`），所以只要常量自己被改成加谓词／换表／换成 `SELECT`，假池照样照着
@@ -353,10 +353,10 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 
 | 项 | 事实 |
 |---|---|
-| 语句 | `DELETE FROM public.jobs WHERE owner_id = $1::uuid`（`services/api/src/jobs/ledger.ts:387`，与写入语句同一文件：谁写台账、谁删台账不会分叉成两份口径） |
+| 语句 | `DELETE FROM public.jobs WHERE owner_id = $1::uuid`（`services/api/src/jobs/ledger.ts:463`，与写入语句同一文件：谁写台账、谁删台账不会分叉成两份口径） |
 | 范围 | 该主体在台账里的**全部**作业行 —— `ocr` / `recognition` / `transcription` / `answer` 四个源全在这张表里，不再按 `kind` 分四刀（理由见下） |
 | 行数 | `pg` 的 `rowCount` 真实值；拿不到就抛（`rowCount` 缺失且没有 `RETURNING` 行 ⇒ 抛「拿不到真实删除行数」，⛔ 不把「不知道」报成 0） |
-| 边界 | 空主体 / 纯空白主体**调用即抛**，一条 SQL 都不发（`services/api/src/jobs/ledger.ts:396` 起），⛔ 不退化成「删全部」 |
+| 边界 | 空主体 / 纯空白主体**调用即抛**，一条 SQL 都不发（`services/api/src/jobs/ledger.ts:472` 起），⛔ 不退化成「删全部」 |
 | 幂等 | 同一主体重复调用第二次删 0 行、不抛（注销重放/重试的既有口径） |
 
 ### 10.2 谁在删、和谁同序
