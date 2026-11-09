@@ -1005,7 +1005,7 @@ Page({
       state: job.state,
       stateTitle: identifyApi.describeJobState(job.state).title,
       selectedSpeciesId: record.selected_species_id,
-      at: new Date().toISOString()
+      at: require('../../utils/time-format').formatClock(new Date()), atISO: new Date().toISOString()
     })
     const trimmed = items.slice(0, HISTORY_MAX)
     if (writeHistory(ownerKey, trimmed) !== true) return

@@ -302,7 +302,7 @@ Page({
         stateLabel: STATE_LABELS[state] || state,
         revision: record ? record.revision : 0,
         policyVersion: record ? record.policyVersion : '',
-        changedAt: record ? record.changedAt : '',
+        changedText: record ? record.changedText : '',
         actionKind: actionKind,
         actionLabel: actionKind === 'withdraw' ? '撤回' : '授予',
         actionDisabled: !available,
