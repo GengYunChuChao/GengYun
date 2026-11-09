@@ -52,7 +52,7 @@ function scratchProject() {
 
 function localConfig(project) {
   const path = join(project, 'debug.local.json');
-  writeFileSync(path, JSON.stringify({ mode: 'local', bindHost: '127.0.0.1', port: 4318, apiBaseUrl: 'http://127.0.0.1:4318' }));
+  writeFileSync(path, JSON.stringify({ mode: 'local', bindHost: '127.0.0.1', port: 4318, apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }));
   return path;
 }
 

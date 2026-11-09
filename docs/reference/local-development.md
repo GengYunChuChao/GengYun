@@ -94,9 +94,30 @@ node tools/prepare-wechat.mjs local --config config/debug.local.json
 node tools/local-debug-server.mjs --config config/debug.local.json
 ```
 
-- 导入 `.local/wechat-local`；诊断替身默认 `http://127.0.0.1:4318`，`apiBaseUrl` 是**客户端拼接基址**（客户端自行拼 `/auth/…`、`/me/profile`），所以接真实本地 API 时必须写成 `http://127.0.0.1:<api端口>/api/v1`，否则登录会打到 `/auth/wechat` 而 404。
-- 输出已存在时拒绝覆盖；终端 Ctrl+C 停。`release` 生成关闭网络的安全准备副本，不能直接用于比赛。
+- 导入 `.local/wechat-local`；诊断替身默认 `http://127.0.0.1:4318`，`apiBaseUrl` 是**客户端拼接基址**（客户端自行拼 `/auth/…`、`/me/profile`），所以接真实本地 API 时必须写成 `http://127.0.0.1:<api端口>/api/v1`，否则登录会打到 `/auth/wechat` 而 404。2026-11 起脚本**直接拒绝**不带 `/api/v1` 的基址并给出应写的值（**不静默补全**）；`config/debug.local.json.example` 已改成带前缀形态，诊断替身对两种前缀都服务（见 `tools/local-debug-server.mjs`）。
+- 输出已存在时拒绝覆盖（演示要重来用 `--force`，见下）；终端 Ctrl+C 停。`release` 生成关闭网络的安全准备副本，不能直接用于比赛。
 - 本页已改为以现役 `tools/local-dev/*` 为主路径；旧替身**不是**“本地开发”的等价替代。工具／手机与历史兼容记录见[原微信调试记录](../archive/development-2026-10-10/docs/local-wechat-debug.md)；仓库其它位置（`README.md`、`docs/development-guide.md`、`docs/archive/`、`docs/ui-demo/`、`.github/workflows/local-wechat.yml`）仍按旧替身叙述，未在本页范围内同步。
+
+### 本机演示：`--no-urlcheck` 与 `--force`
+
+副本继承共享工程的 `setting.urlCheck: true`，开发者工具因此必然报「不在以下 request 合法域名列表」，以前只能在工具里手动勾「详情 → 本地设置 → 不校验合法域名…」。两条旗标把这一段固定进脚本（`node tools/prepare-wechat.mjs --help` 打印同样的说明）：
+
+```powershell
+# 1) 生成副本：域名校验只在这个副本里关闭；目录已存在时用 --force 重建（默认仍拒绝覆盖）
+node tools/prepare-wechat.mjs local --config config/debug.local.json --no-urlcheck --force
+# 2) 起本地栈：API 监听端口必须与配置里的 apiBaseUrl 一致（只验接线可用 stub，见 TROUBLESHOOTING）
+npm run dev:api
+# 3) 打开开发者工具：--project 必须是绝对路径（相对路径报 code 10 项目路径不存在，退出码却仍是 0）
+& "D:\微信web开发者工具\cli.bat" open --project "$PWD\.local\wechat-local"
+```
+
+| 旗标 | 作用 | 边界 |
+| --- | --- | --- |
+| `--no-urlcheck` | 只把**副本** `project.config.json` 的 `setting.urlCheck` 写成 `false`：工具里那条「不在以下 request 合法域名列表」不再出现，也不用再手动勾 | ⛔ 仅供本机演示／测试号。正式提交前不要开；源 `project.config.json` 一个字节都不改，本脚本的硬闸门仍要求源 `urlCheck === true`，`release` 副本直接拒绝该旗标 |
+| `--force` | 目标目录已存在时先删再生成，演示可以反复重来 | 只删 `<repo>/.local/` 下本次要生成的那一个目录；删除前校验目标确实在 `.local` 之下，其余路径一律不动 |
+| 默认（不加旗标） | 与加旗标之前逐字一致：`urlCheck` 仍为 `true`、目录已存在仍拒绝覆盖 | 回归用例 `tests/unit/prepare-wechat-demo.test.mjs` 锁住这三条，并逐字节比对源文件未改 |
+
+生成结束后脚本会打印「下一步」三条命令（起栈／打开开发者工具／勾选项）与副本位置。副本固定落在 `.local/wechat-local`，`.gitignore` 已忽略 `.local/`，所以源工程的 `git status` 保持干净。
 
 ## 已知不一致与缺陷
 
