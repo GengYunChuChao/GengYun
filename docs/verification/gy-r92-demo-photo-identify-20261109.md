@@ -181,7 +181,7 @@
 | 3 | `node tools/verify-contract-status.mjs` | `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。` | 0 |
 | 4 | `npm run test:docs` | `PASS: 识别 5 页 / 跳过 381 页（扫描面 386 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` | 0 |
 | 5 | `node tools/verify-g-drill-readings.mjs --check` | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 626（glob 合计 596）；生长型读数按**下界**判（--tolerant-growth），其中 8 条滞后已逐行打印` | 0 |
-| 6 | `git merge-tree --write-tree --name-only origin/main HEAD` | 退出码 0；输出只有一行树 SHA、没有冲突文件名（树 SHA 随提交变：补闸门表前 `6db26a2d…`、补完 `f499c729…`，两次都只打印一行） | 0 |
+| 6 | `git merge-tree --write-tree --name-only origin/main HEAD` | 退出码 0；输出只有一行树 SHA、没有冲突文件名（树 SHA 随提交与 `origin/main` 一起变：`6db26a2d…` → `f499c729…`；推送时发现 main 已从 `ee0b6320` 前进到 `c777b353`，对新的 main 再跑是 `bcb95946…`，每次都只打印一行） | 0 |
 
 第 1 条第一次跑是红的：本页把 `/health` 的原文压成一行 JSON，里面 `latency_ms` 与 `uptime_s` 两个字段的数值被扫成两条「归不到路径的裸锚点」（BARE_ORPHAN 基线外新增 2 条）。改成缩进展开的 JSON 后转绿——**代码块里冒号紧跟数字也会被当锚点**，这条记在这里免得下次重踩。
 第 2 条要求 HEAD 与 `origin/main` 不同：提交之前跑会红在 `notStrictEqual` 上，提交后转绿。
