@@ -33,7 +33,7 @@
 | 4 | 截止时间 | `services/api/src/conversations/service.ts:1003-1156`（`scheduleAnswer`） | `claimTurnJob`（只从 `queued` 起，重复受理 no-op）；`now > job_deadline_at` ⇒ 直接结算 | `timed_out` + `PROVIDER_TIMEOUT` |
 | 5 | 问题侧筛查 | 同上 | `riskScreen.screenQuestion`：命中/无法判定 ⇒ 整轮拒答（不检索、不生成、不进守卫） | 回答行 `status='blocked'` + `check_state='blocked'` + 固定话术（**不是**错误码） |
 | 6 | 检索集合 | 同上 + `services/api/src/conversations/retrieval.ts:178-224` | 与 `/knowledge` **同一个**读面实例；条目来源**逐字段**校验；`validity≠valid` / `review_status='rejected'` 出集合 | 来源字段缺失/非 uuid/来源 id≠条目 id ⇒ 503 `PROVIDER_UNAVAILABLE`(retryable:false)；读面缺令牌 ⇒ `SESSION_REQUIRED` |
-| 7 | 生成（唯一生成点） | `services/api/src/ai/chat-wiring.ts:52-98` 选路 ⇒ 确定性回答器 或 `services/api/src/ai/chat-live-adapter.ts` | 四与门（见 §2.1）决定谁生成；真实模型路径必须先过 `services/api/src/privacy/task-egress.ts:286-339` 的 `reserve → assertExecutable → markSent → 外发 → saveResult` | 见 §4 失败矩阵 |
+| 7 | 生成（唯一生成点） | `services/api/src/ai/chat-wiring.ts:52-98` 选路 ⇒ 确定性回答器 或 `services/api/src/ai/chat-live-adapter.ts` | 四与门（见 §2.1）决定谁生成；真实模型路径必须先过 `services/api/src/privacy/task-egress.ts:349-402` 的 `reserve → assertExecutable → markSent → 外发 → saveResult` | 见 §4 失败矩阵 |
 | 8 | 输出守卫 | `services/api/src/conversations/guard.ts`（引用核对 `services/api/src/conversations/guard.ts:254-267`、正文链接复核 `services/api/src/conversations/guard.ts:323-346`） | 引用必须**逐字段等于**集合内那条来源；正文里的 `[n]`/URL 越界 ⇒ 整条阻断（不洗白） | `status='blocked'` + 固定话术（不是错误码）；`answered` 的空正文 ⇒ `PROVIDER_UNAVAILABLE`(retryable:false) |
 | 9 | 落库 + 读面 | `services/api/src/conversations/service.ts:976-1001`（**唯一盖章点**）→ `services/api/src/jobs/routes.ts:51-62` | 版本串在此写进回答行；作业投影 `services/api/src/conversations/job.ts:48-62`，出口由 `services/api/src/jobs/registry.ts:177` 按九键重建 | 形状闸门不过 ⇒ 503 `PROVIDER_UNAVAILABLE`(retryable:false)，**不落库** |
 

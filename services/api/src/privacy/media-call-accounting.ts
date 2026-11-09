@@ -1,21 +1,19 @@
 /**
  * GY-R83 · `#1003`：**把「这一次外发烧了多少、用的是哪套剖面」记到账上**的记账层。
  *
- * ## 位置（为什么是「包在提供者外面」而不是改服务层）
- * 识别域的真实外发已经在 `privacy/task-egress.ts::MediaJobEgress.provider()` 的闭包里（那里拿到
- * `exportId` 与 `jobId`，并已完成 `markSent`）。本层**再包一层**，在**同一次调用**的入口/出口计时，
- * 从返回值里读 `usage` 与剖面版本串，写一行 `public.provider_call_ledger`。
+ * ## 位置（GY-R94 起包在 `MediaJobEgress.provider()` 的**内层**）
+ * 真实外发在 `privacy/task-egress.ts::MediaJobEgress.provider()` 的闭包里，同一张预留行内
+ * 可能派发两次（首发 + 一次重发），每次都要各记一行 —— 所以本层必须在它的**内层**，在**每次派发**
+ * 的入口/出口计时，从返回值里读 `usage` 与剖面版本串，写一行 `public.provider_call_ledger`。
  *
- * ## `export_id` 必须在**调用之前**取（P0：取晚了就一行都写不进去）
- * 内层时序是「按对象找预留行 → `linkJob` → `assertExecutable` → **`markSent`** → 调提供者」
- * （`task-egress.ts:121-131`），而 `ledger-pg.ts:690` 的谓词带 `state='reserved'` 与
- * `cancelled_at IS NULL` ⇒ **`markSent` 之后按对象回查恒查不到这一行**。所以本层在
- * `await 内层调用`**之前**读一次 `findReservedByObject`，把 `export_id` 拿在手上，等调用返回后
- * 再按这个 id 写行。反过来（先调、后查）与包在第几层无关：决定成败的是**回查时点**——
- * 实测后果是每一行都折成 `provider_call_ledger_unresolved`、表里恒 0 行。
- * `tests/unit/recognitions-ledger-composition.test.mjs`（真 `createMediaJobEgress` × 真本层）
- * 就是钉这一点的用例：把取 id 挪回调用之后，它必红。
- * 这是**读**一次既有谓词（与 `task-egress.ts` 用的是同一个方法），不是新建一套归属判定。
+ * ## `export_id` 从哪来（由**派发层**下传，回查只做兜底）
+ * `task-egress.ts::MediaJobEgress.provider()` 每次派发都把 `exportId` 传进入参：同一张预留行内的
+ * 两次派发必须记到**同一行** `export_id` 上（`attempt` 由 0055 的 SQL 派生 1、2）。
+ * ⛔ 不靠回查：`ledger-pg.ts:690` 的谓词带 `state='reserved'`，`markSent` 之后（更不必说重发时）
+ * 按对象回查**恒查不到**这一行 —— 回查只留给「调用方没传 `exportId`」的旧路径。
+ * 实测后果：走回查且取晚了 ⇒ 每一行都折成 `provider_call_ledger_unresolved`、表里恒 0 行。
+ * `tests/unit/recognitions-ledger-composition.test.mjs`（一行、`export_id` 正确）与
+ * `tests/unit/recognitions-vision-retry.test.mjs`（两次派发两行）分别钉住这一点的两半。
  *
  * ## 两条硬规矩（各有一条用例钉住）
  * 1. ⛔ **不改判**：记账失败**绝不**影响识别结果。外发已经发生、候选已经拿到；记账是记账的问题，
@@ -189,7 +187,8 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     });
 
   /**
-   * 取这次外发的 `export_id` —— **必须在调用内层之前**跑（理由见文件头「取晚了就一行都写不进去」）。
+   * 取这次派发的 `export_id`：**派发层下传的优先**（`input.exportId` —— 重发时唯一可靠的来源），
+   * 没传才回查一次预留行，且回查必须在调用内层之前跑（理由见文件头）。
    *
    * ⛔ 不抛：读失败 / 查不到都折成 `null` + `readings.failed` + 一条安全事件，调用方照常外发。
    */
@@ -197,7 +196,10 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     jobId: string;
     mediaId: string;
     mediaRevision: number;
+    exportId?: string;
   }): Promise<string | null> {
+    // 同一张预留行内的第二次派发：那一行已不是 `reserved`，回查必然落空 ⇒ 直接用下传值。
+    if (typeof input.exportId === 'string' && input.exportId !== '') return input.exportId;
     try {
       // 读侧也套客户端上限；底层驱动的 `statement_timeout` 另有 5s 的池级上限。
       const record = await withDeadline(
@@ -311,8 +313,11 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     jobId: string;
     mediaId: string;
     mediaRevision: number;
+    /** 派发层下传的外发预留行（`task-egress.ts::provider()`），见 `resolveExportId`。 */
+    exportId?: string;
   }): Promise<unknown> => {
-    // ⛔ 这两行的顺序不可换：内层会先 `markSent`，之后按对象回查再也不可能命中（见文件头）。
+    // ⛔ 顺序不可换：内层会先 `markSent`，之后按对象回查再也不可能命中（见文件头）。
+    // 有下传的 `exportId` 时这里不读账本（重发那一次只能靠下传值）。
     const exportId = await resolveExportId(input);
     // `startedAt` = 外发**进入**时刻：它既是 `sent_at`（0055 :362-363 的口径），也是耗时起点。
     // ⛔ 必须在读账本**之后**取：读预留行是本层自己的前置开销，算进 `duration_ms` 会把它撑大。

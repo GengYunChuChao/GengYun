@@ -80,7 +80,7 @@ return null;
 maxTokens: 1024, // GY-R94：512 与「思考」共用预算，实测 100 次里 5 次被 finish_reason=length 截断；1024 组 20 次 0 次
 ```
 
-请求体仍取剖面值（`services/api/src/recognitions/openai-vision-adapter.ts:244` 的 `max_tokens: OPENAI_VISION_FROZEN_PROFILE.maxTokens`），没有第二处硬编码；仓内 `maxTokens` / `max_tokens` 的其余命中都不属于视觉剖面（chat 适配器 800、`ai-config` 128 与两条离线用例的 128）。**这是本机演示口径的一次调参，不是能力承诺**：它把"思考挤掉作答"的概率压到本口径下没再复现（20 次、另加 §5.2 的 30 次直连与 15 次端到端），不证明任何模型在任何输入下都不再撞上限。
+请求体仍取剖面值（`services/api/src/recognitions/openai-vision-adapter.ts:251` 的 `max_tokens: OPENAI_VISION_FROZEN_PROFILE.maxTokens`），没有第二处硬编码；仓内 `maxTokens` / `max_tokens` 的其余命中都不属于视觉剖面（chat 适配器 800、`ai-config` 128 与两条离线用例的 128）。**这是本机演示口径的一次调参，不是能力承诺**：它把"思考挤掉作答"的概率压到本口径下没再复现（20 次、另加 §5.2 的 30 次直连与 15 次端到端），不证明任何模型在任何输入下都不再撞上限。
 
 ### 4.3 观测端口
 

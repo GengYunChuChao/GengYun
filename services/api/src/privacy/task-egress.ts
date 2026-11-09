@@ -53,6 +53,47 @@ export interface MediaJobEgress {
   cancelVersion(input: { exportId: string; userId: string; objectVersion: number; reason?: string }): Promise<{ cancelled: boolean; alreadyCancelled: boolean; cancelledCount: number }>;
 }
 
+// ── GY-R94：同一张预留内的**一次**重发（只覆盖「已发出、但拿不到可用结果」）─────────────
+//
+// 为什么重发落在这一层：`public.exports` 的状态机是 `reserved → sent → failed|outcome_unknown`
+// （`ledger-pg.ts` 的 `markSent` 只认 `reserved`、`guardWriteback` 只认 `sent|reserved`）。
+// 把「第二次派发」放在**服务层**，第二次会在 `resolveObject`（谓词带 `state='reserved'`）当场被拒，
+// 永远打不到供应商；放进**适配器**则撞 `maxRetries === 0` 的冻结剖面（任何重发都是一次新预留）。
+// 所以重发只能落在 `markSent` 之后、终态写入之前的这段窗口里：整段窗口内那一行仍是 `sent`，
+// 终态只写一次，状态机一个分支都不动。代价是记账层必须在**本层内层**（每次派发各记一行，
+// 靠本层下传的 `exportId` 归属；见 `media-call-accounting.ts` 的 `resolveExportId`）。
+/** 重发窗口的总时限（从**首次派发**起算，不是单次调用超时）：作业层整体上限。 */
+export const REDISPATCH_TOTAL_BUDGET_MS = 35_000;
+/** 一张预留内最多派发几次（首发 + 一次重发）。⛔ 不是"重试次数"配置项，不许调大。 */
+const MAX_DISPATCH_ATTEMPTS = 2;
+/** 与作业截止点之间留的余量：少于它就不值得再建一次连。 */
+const REDISPATCH_DEADLINE_MARGIN_MS = 500;
+
+/**
+ * 这次返回值能不能再派发一次：**只认**供应商侧明说的「已发出、但没有可用结果」
+ * （`kind:'failed'` 且 `retryable === true`）。抛错、4xx/429/5xx、超时、闸门拒绝、媒体读不出
+ * 一律不算 —— 那些重发也只会把同一个码再撞一次，或者根本没发出过一包。
+ */
+function redispatchable(outcome: unknown): boolean {
+  const value = outcome as { kind?: unknown; retryable?: unknown } | null;
+  return value !== null && typeof value === 'object' && value.kind === 'failed' && value.retryable === true;
+}
+
+/**
+ * 还有没有重发的预算：用**第一次**的实际耗时当第二次的预估（同一张图、同一个端点，量级一致）。
+ * 两个闸：作业层整体上限 `REDISPATCH_TOTAL_BUDGET_MS`（从首次派发起算）与作业截止点
+ * （`input.deadlineAt`，由域服务下传；没有截止点时只受前者约束）。
+ */
+function redispatchBudgetLeft(
+  input: { dispatchStartedAt: number; attemptDurationMs: number; deadlineAt: number | null },
+  nowMs: number,
+): boolean {
+  const projectedFinish = nowMs + input.attemptDurationMs;
+  if (projectedFinish - input.dispatchStartedAt > REDISPATCH_TOTAL_BUDGET_MS) return false;
+  if (input.deadlineAt !== null && projectedFinish > input.deadlineAt - REDISPATCH_DEADLINE_MARGIN_MS) return false;
+  return true;
+}
+
 /**
  * 媒体类任务（识别 / 转写 / 标签 OCR）的外发守卫。
  *
@@ -139,7 +180,7 @@ export function createMediaJobEgress(deps: {
       providerUnavailableReason = inner?.unavailableReason ?? null;
       if (!engaged) return inner;
       const wrapped = { ...inner } as Record<string, unknown>;
-      wrapped[method] = async (input: { jobId?: string; mediaId: string; mediaRevision: number }) => {
+      wrapped[method] = async (input: { jobId?: string; mediaId: string; mediaRevision: number; deadlineAt?: number }) => {
         const record = await resolveObject({ objectId: input.mediaId, objectRevision: input.mediaRevision });
         if (record === null) {
           // 未登记即派发 ⇒ 拒绝（fail-closed），不产生任何外发。
@@ -155,32 +196,54 @@ export function createMediaJobEgress(deps: {
           purpose,
           capability,
           exportId: record.id,
+          attempt: 1,
           ...(typeof input.jobId === 'string' ? { jobId: input.jobId } : {}),
         });
-        let outcome: unknown;
-        try {
-          outcome = await (inner as unknown as Record<string, (value: unknown) => Promise<unknown>>)[method]!(input);
-        } catch (error) {
-          const code = failureCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
-          await ledger.markFailed(record.id, { errorCode: code }).catch(() => {});
-          emit({ event: 'egress_failed', dataType, purpose, capability, exportId: record.id, errorCode: code });
-          throw error;
-        }
-        const failure = failureCodeOf(outcome);
-        if (failure !== null) {
+        const dispatchStartedAt = Date.now();
+        const deadlineAt = typeof input.deadlineAt === 'number' && Number.isFinite(input.deadlineAt) ? input.deadlineAt : null;
+        let attempt = 1;
+        for (;;) {
+          const attemptStartedAt = Date.now();
+          let outcome: unknown;
+          try {
+            // 重发前把「还允许发吗」重新查一遍（撤回同意 / 注销账号 / 取消任务可能刚发生）。
+            // ⛔ 首发不重查：上面刚查过，且这一行刚 `markSent`。
+            if (attempt > 1) await assertExecutableOrWithdrawn(inFlight, ledger, record);
+            // 下传 `exportId` / `attempt`：记账层靠前者把每次派发都记到**同一张预留**上（attempt 1、2 各一行）。
+            outcome = await (inner as unknown as Record<string, (value: unknown) => Promise<unknown>>)[method]!({
+              ...input,
+              exportId: record.id,
+              attempt,
+            });
+          } catch (error) {
+            const code = failureCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
+            await ledger.markFailed(record.id, { errorCode: code }).catch(() => {});
+            emit({ event: 'egress_failed', dataType, purpose, capability, exportId: record.id, errorCode: code, attempt });
+            throw error;
+          }
+          const failure = failureCodeOf(outcome);
+          if (failure === null) {
+            // 保存前重查 + 结果写入（与校验同事务）；被拒 ⇒ 抛错 ⇒ 域服务不保存结果（零写入）。
+            await saveResultOrWithdrawn(inFlight, ledger, {
+              exportId: record.id,
+              userId: sent.userId,
+              objectVersion: sent.objectRevision,
+              result: summarizeEgressOutcome(outcome),
+            });
+            emit({ event: 'egress_saved', dataType, purpose, capability, exportId: record.id, attempt });
+            return outcome;
+          }
+          // GY-R94：只有「已发出、但拿不到可用结果」才再打一次，且必须还有预算（见文件上方的两个 helper）。
+          const budget = { dispatchStartedAt, attemptDurationMs: Date.now() - attemptStartedAt, deadlineAt };
+          if (attempt < MAX_DISPATCH_ATTEMPTS && redispatchable(outcome) && redispatchBudgetLeft(budget, Date.now())) {
+            attempt += 1;
+            emit({ event: 'egress_retry', dataType, purpose, capability, exportId: record.id, errorCode: failure, attempt });
+            continue;
+          }
           await ledger.markFailed(record.id, { errorCode: failure });
-          emit({ event: 'egress_failed', dataType, purpose, capability, exportId: record.id, errorCode: failure });
+          emit({ event: 'egress_failed', dataType, purpose, capability, exportId: record.id, errorCode: failure, attempt });
           return outcome;
         }
-        // 保存前重查 + 结果写入（与校验同事务）；被拒 ⇒ 抛错 ⇒ 域服务不保存结果（零写入）。
-        await saveResultOrWithdrawn(inFlight, ledger, {
-          exportId: record.id,
-          userId: sent.userId,
-          objectVersion: sent.objectRevision,
-          result: summarizeEgressOutcome(outcome),
-        });
-        emit({ event: 'egress_saved', dataType, purpose, capability, exportId: record.id });
-        return outcome;
       };
       return wrapped as unknown as T;
     },
@@ -525,9 +588,9 @@ export function createChatEgress(deps: {
 // 装配点只有一处（`mediaEgress` 那三行），把「记账层 + 台账」跟着「外发账本」一起出口，
 // 装配处就能在**既有 import 行**里取到它们，净增 0 行。
 //
-// ⛔ 只是转出：本文件**没有**任何行为变化 —— 上面 `MediaJobEgress` / `ChatEgress` 的
-// 时序、读写、错误折叠一个字都没动（识别记账在**外层**组合，见 `media-call-accounting.ts`
-// 头注释里「为什么包在外面」）。
+// ⛔ 只转出这两个符号，不在本层新增归属判定：识别记账仍归 `media-call-accounting.ts`。
+// GY-R94 起它组合在本文件的 `provider()` **内层**（同一张预留行内可能派发两次，每次各记一行，
+// 靠本层下传的 `exportId` 归属）；装配处见 `app.ts` 的 `provider:` 那一行。
 export { createProviderCallLedger } from './provider-call-ledger-pg.ts';
 export type { ProviderCallLedger, ProviderCallInvocationState } from './provider-call-ledger-pg.ts';
 export { withProviderCallAccounting } from './media-call-accounting.ts';

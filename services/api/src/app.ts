@@ -1127,10 +1127,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const recognitionService = createRecognitionService({
     store: recognitionStore ?? (config.executionMode === 'real' && pool !== null ? createPostgresRecognitionStore({ pool }) : createMemoryRecognitionStore()),
     // GY-I27 第二片：识别域的提供者包装在**装配处**完成（该域的服务由本文件构建）；
-    // `real` 才接管派发，替身/演示原样返回（不记账）。
+    // `real` 才接管派发，替身/演示原样返回（不记账）。GY-R94：记账在 egress **内层**（每次派发各一行）。
     provider: recognitionEgress === undefined
       ? recognitionProviderResolved
-      : withProviderCallAccounting(recognitionEgress.provider(recognitionProviderResolved, 'recognize'), { ledger: createProviderCallLedger(pool ?? null), exportLedger: egressLedger, capability: 'weed', executionMode: config.executionMode, log: event => app.log.warn(event) }),
+      : recognitionEgress.provider(withProviderCallAccounting(recognitionProviderResolved, { ledger: createProviderCallLedger(pool ?? null), exportLedger: egressLedger, capability: 'weed', executionMode: config.executionMode, log: event => app.log.warn(event) }), 'recognize'),
     media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode, recognitionMediaPorts),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     // GY-I16 #16 跨线接线：识别任务终态 → 服务端识别历史（见上方 `recognitionTerminalHistory`）。

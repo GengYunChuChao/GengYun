@@ -117,11 +117,13 @@ test('HTTP 状态映射：429 配额 / 500 不可用 / 401 不可用 / 422 结�
   }
 });
 
-test('回包不可解析 ⇒ PROVIDER_OUTCOME_UNKNOWN', async () => {
+test('回包不可解析 ⇒ PROVIDER_OUTCOME_UNKNOWN 且标记可重发', async () => {
   const p = provider({
     fetchImpl: async () => new Response(JSON.stringify({ choices: [{ message: { content: '不是 JSON' } }] }), { status: 200 }),
   });
-  assert.deepEqual(await p.recognize(JOB), { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' });
+  // GY-R94：200 + 内容解析不出 ⇒ 「已发出但拿不到可用结果」这一支，`retryable` 置真，
+  // 由派发层决定再打一次；对 4xx/429/5xx、超时、闸门拒绝与本文件其余负例一律不置。
+  assert.deepEqual(await p.recognize(JOB), { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: true });
 });
 
 test('成功回包 ⇒ completed + 闭集过滤 + 分数夹紧 + 名次从 1 开始', async () => {

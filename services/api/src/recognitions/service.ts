@@ -538,7 +538,7 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
       timer = setTimeout(() => resolve({ kind: 'timeout' }), remaining);
     });
     const call = provider
-      .recognize({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision })
+      .recognize({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision, deadlineAt: job.deadlineAt.getTime() })
       .then((value) => ({ kind: 'value' as const, value }))
       .catch((error: unknown) => ({ kind: 'threw' as const, error }));
     try {

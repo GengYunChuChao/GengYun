@@ -228,7 +228,14 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
     modelVersion: OPENAI_VISION_PROTOCOL,
     available: true,
     unavailableReason: null,
-    async recognize({ jobId, mediaId, mediaRevision }): Promise<OpenAiVisionOutcome> {
+    async recognize({ jobId, mediaId, mediaRevision, attempt }): Promise<OpenAiVisionOutcome> {
+      // 第几次派发（1 基）：由外发闸门在同一张预留行内下传，最多 2（`privacy/task-egress.ts` 的重发循环）。
+      // 观测里的 `sendAttempts` **就是**它 —— ⛔ 不是本适配器自己数的：一次 `recognize` 仍然只发一包，
+      // 它自己也绝不重发（`maxRetries === 0` 的冻结剖面不变）。
+      const sendAttempts = attempt === 2 ? 2 : 1;
+      const observe = (partial: Partial<LiveRecognitionObservation> & { state: ProviderCallState }): void => {
+        options.onObservation?.(r80Observation({ sendAttempts, ...partial }));
+      };
       // ① build（本地）：本地拒绝不占预算、不建连。
       let image: Uint8Array;
       try {
@@ -260,7 +267,7 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
       // ② reserve（闸门，必须在建连之前）。
       let ticket;
       try {
-        ticket = await liveGate.reserve({ authorization, attemptKey: `${jobId}:${mediaId}#${mediaRevision}` });
+        ticket = await liveGate.reserve({ authorization, attemptKey: `${jobId}:${mediaId}#${mediaRevision}${sendAttempts > 1 ? `#${sendAttempts}` : ''}` });
       } catch (error) {
         return { kind: 'failed', code: liveGateRefusalToErrorCode(error) };
       }
@@ -288,14 +295,16 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
           providerErrorCode: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN',
           resultMayHaveBeenProcessed: true,
         });
-        options.onObservation?.(r80Observation({ state: timedOut ? 'TIMEOUT' : 'OUTCOME_UNKNOWN', providerErrorCode: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true, elapsedMs: now() - startedAt, candidateCount: 0 }));
-        return { kind: 'failed', code: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN' };
+        observe({ state: timedOut ? 'TIMEOUT' : 'OUTCOME_UNKNOWN', providerErrorCode: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true, elapsedMs: now() - startedAt, candidateCount: 0 });
+        // 超时**不**标 retryable：作业已到点，闸门给不出第二次预算（见 `task-egress.ts` 的预算判据）。
+        return { kind: 'failed', code: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN', ...(timedOut ? {} : { retryable: true }) };
       }
 
       if (!response.ok) {
         const failureCode = errorCodeForStatus(response.status);
         await liveGate.settle(ticket, { state: 'HTTP_ERROR', providerErrorCode: failureCode, resultMayHaveBeenProcessed: response.status >= 500 });
-        options.onObservation?.(r80Observation({ state: 'HTTP_ERROR', providerErrorCode: failureCode, httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 }));
+        observe({ state: 'HTTP_ERROR', providerErrorCode: failureCode, httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 });
+        // ⛔ 不标 retryable：4xx/429 是确定性拒绝，5xx 是供应商自己坏了；重发只会把同一个码再撞一次。
         return { kind: 'failed', code: failureCode };
       }
 
@@ -304,7 +313,9 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
         payload = await response.json();
       } catch {
         await liveGate.settle(ticket, { state: 'OUTCOME_UNKNOWN', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true });
-        return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' };
+        observe({ state: 'OUTCOME_UNKNOWN', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 });
+        // 回包连信封都不是 JSON：已发出、结果未知 ⇒ 可重发一次（与「200 但解析不出候选」同一支）。
+        return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: true };
       }
       const root = payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : null;
       const choices = root === null ? null : root['choices'];
@@ -315,21 +326,20 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
       if (parsed === null) {
         // 供应商回了 200 但没给出可解析的候选 ⇒ 结果未知（绝不把「没读懂」当成功）。
         await liveGate.settle(ticket, { state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true });
-        options.onObservation?.(r80Observation({ state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0, ...contentDiagnostics }));
-        return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' };
+        observe({ state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0, ...contentDiagnostics });
+        // 这一支就是 GY-R94 的重发对象：已建连、已回包、只是拿不到可用结果 ⇒ 同一预留内再打一次。
+        return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: true };
       }
 
       // ④ settle（无论成败）。
       const candidates = normalizeOpenAiVisionCandidates(parsed, allowedIds);
       await liveGate.settle(ticket, { state: 'BUSINESS_RESPONSE', providerErrorCode: null, resultMayHaveBeenProcessed: true });
-      options.onObservation?.(
-        r80Observation({
-          state: 'BUSINESS_RESPONSE',
-          httpStatus: response.status,
-          elapsedMs: now() - startedAt,
-          candidateCount: candidates.length,
-        }),
-      );
+      observe({
+        state: 'BUSINESS_RESPONSE',
+        httpStatus: response.status,
+        elapsedMs: now() - startedAt,
+        candidateCount: candidates.length,
+      });
       const reason = typeof parsed['reason'] === 'string' ? parsed['reason'] : '';
       if (candidates.length === 0) {
         // 空候选是「正常调用但没结果」：本分支**不**上报 `no_result`（那由调用方按 `branch` 语义决定），

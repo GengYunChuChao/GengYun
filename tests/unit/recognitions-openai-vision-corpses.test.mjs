@@ -108,10 +108,10 @@ test('① 结构类尸体：7/7 解出闭集内候选，不再 PROVIDER_OUTCOME_
   }
 });
 
-test('② 预算类尸体：仍返回 null（PROVIDER_OUTCOME_UNKNOWN），不抛错', async () => {
+test('② 预算类尸体：仍返回 null（PROVIDER_OUTCOME_UNKNOWN 且可重发），不抛错', async () => {
   for (const file of BUDGET_CORPSES) {
     const outcome = await replyWith(bodyOf(file)).recognize(JOB);
-    assert.deepEqual(outcome, { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' }, file);
+    assert.deepEqual(outcome, { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: true }, file);
   }
 });
 
@@ -205,7 +205,7 @@ test('⑥ 失败观测带 finish_reason / completion_tokens / content.length，�
     onObservation: (observation) => observations.push(observation),
     fetchImpl: async () => new Response(bodyOf('budget-truncated-string.txt'), { status: 200 }),
   }).recognize(JOB);
-  assert.deepEqual(budget, { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' });
+  assert.deepEqual(budget, { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: true });
   assert.equal(observations.length, 1);
   assert.equal(observations[0].state, 'RESPONSE_EVIDENCE_INCOMPLETE');
   assert.equal(observations[0].finishReason, 'length');
@@ -226,7 +226,7 @@ test('⑥′ 结构类废尸失败时也能被归因成「结构类」（stop + 
       usage: { completion_tokens: 12 },
     }), { status: 200 }),
   }).recognize(JOB);
-  assert.deepEqual(outcome, { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' });
+  assert.deepEqual(outcome, { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: true });
   assert.equal(observations[0].finishReason, 'stop');
   assert.equal(observations[0].completionTokens, 12);
   assert.equal(observations[0].contentLength, '{"species_id":'.length);

@@ -137,7 +137,7 @@ const candidate = composer.compose({
 | --- | --- | --- | --- |
 | 1 | `services/api/src/ocr/provider.ts` | `PROVIDER_FAILURE_CODES`（`:21-27`）+ `OcrProvider{executionMode,modelVersion,available,unavailableReason,extract()}`（`:35-44`）+ `createRealOcrProvider`（`:168-182`，缺凭据 `available=false`、`extract()` 恒 `PROVIDER_UNAVAILABLE`）+ `createOcrProvider`（`:185-194` 按模式选） | **抄骨架（fail-closed 的形状）**，但它的真实分支是空壳：本片只需要它的「缺凭据一律不可用、绝不回退替身」这条纪律 |
 | 2 | 受理前 fail-closed 动作 | `services/api/src/ocr/service.ts:459-463`：`if (!provider.available) throw new ApiError('PROVIDER_UNAVAILABLE', provider.unavailableReason ?? '…', { retryable: false })` | **必抄**：问答域对应位置是 `createTurn` 受理口（202 之前），不是异步执行体内 |
-| 3 | `services/api/src/recognitions/provider.ts` + `services/api/src/privacy/task-egress.ts` | 域 provider + 外发包装器（`task-egress.ts:57-64` `createMediaJobEgress`，`:50` `provider<T>(inner, method: 'recognize' \| 'transcribe')`） | **抄外发合规链**，但 `method` 联合目前**不含** `answer`/`compose`（`task-egress.ts:50`），必须扩（§5.6） |
+| 3 | `services/api/src/recognitions/provider.ts` + `services/api/src/privacy/task-egress.ts` | 域 provider + 外发包装器（`task-egress.ts:98-105` `createMediaJobEgress`，`:50` `provider<T>(inner, method: 'recognize' \| 'transcribe')`） | **抄外发合规链**，但 `method` 联合目前**不含** `answer`/`compose`（`task-egress.ts:50`），必须扩（§5.6） |
 | 4 | **`services/api/src/tts/live-ports.ts`（最像）** | 240 行「注入式真实适配器」：`LiveCallGate{reserve,settle}`（`:90-98`，reserve-then-send）+ `LIVE_GATE_REFUSALS`（`:33-43`）+ `LIVE_GATE_ERROR_CODES`（`:107-112`）+ `LIVE_OBSERVATION_ERROR_CODES`（`:119`）+ `RealTtsPorts`（`:189-208`，字段**全必填、无默认值**） | **主样板**：它解决的正是问答域要解决的问题 —— 「真实发送能力如何在不污染应用装配路径的前提下存在」 |
 | 5 | `tools/ai-config.mjs` allowlist | `:10` `llm: { endpoint:'https://api.deepseek.com/chat/completions', auth:'Bearer', model:'deepseek-flash', keyEnv:'DEEPSEEK_API_KEY' }`；`configurationIssues` 对 llm 要求 `model` 精确相等、`apiKeyEnv==='DEEPSEEK_API_KEY'`、`maxOutputTokens===128 && stream===false`、`thinking==='disabled'`、`timeoutMs∈[1000,20000]`、`maxRetries===0`、`maxVerificationCalls===2`、`env==='dev'`、`privacy.allowUserDataForTraining===false && privacy.sendRealUserDataBeforeConsent===false` | **配置快照的唯一合法来源**：`live-ports.ts:153-157` 的注释规定，真实适配器的 profile 必须先过 `configurationIssues(config,'llm')` 零 issue。但该 allowlist 目前只服务 `tools/`，**应用侧引用它需要监工裁决**（§6 R-1） |
 
@@ -236,7 +236,7 @@ if (!answerProvider.available) {
 
 1. `services/api/src/privacy/task-egress.ts:45` 的 `provider<T>(inner, method: 'recognize' | 'transcribe')` **method 联合不含 `answer`/`compose`** ⇒ 必须扩联合，并在 `apps` 侧装配处（`app.ts:955-957` 是识别域的先例）把问答 provider 包一层。
 2. `services/api/src/privacy/grant-pg.ts:68` 的接收方 capability 闭集**已含 `'llm'`**（`['weed','ocr','asr','tts','llm','moderation']`），`grant-pg.ts:60` 要求 `external_inference` 必须有已核验接收方（否则 `CONSENT_REQUIRED`）⇒ 数据模型侧不需要新迁移，但**运维侧必须登记一个 `capability='llm'` 的接收方**。
-3. `task-egress.ts:84-108` 的 `reserveForAcceptance` 在 `!providerAvailable` 时**在任何账本变更之前**抛 `PROVIDER_UNAVAILABLE`（`retryable:false`）⇒ 这条现成的顺序（reserve → assertExecutable → markSent → 调用 → saveResult）问答域必须照抄，不能「先发了再记」。
+3. `task-egress.ts:150-176` 的 `reserveForAcceptance` 在 `!providerAvailable` 时**在任何账本变更之前**抛 `PROVIDER_UNAVAILABLE`（`retryable:false`）⇒ 这条现成的顺序（reserve → assertExecutable → markSent → 调用 → saveResult）问答域必须照抄，不能「先发了再记」。
 
 ### 5.7 需要的 env
 
@@ -342,8 +342,8 @@ services/api/src/tts/live-ports.ts:119             LIVE_OBSERVATION_ERROR_CODES
 services/api/src/tts/live-ports.ts:153-175         profile 校验（endpoint/timeout/retries）
 services/api/src/tts/live-ports.ts:189-208         RealTtsPorts（全必填）
 services/api/src/privacy/task-egress.ts:45         provider<T>(inner, method) —— 联合需扩
-services/api/src/privacy/task-egress.ts:57-64      createMediaJobEgress
-services/api/src/privacy/task-egress.ts:84-108     reserveForAcceptance（账本变更前 fail-closed）
+services/api/src/privacy/task-egress.ts:98-105      createMediaJobEgress
+services/api/src/privacy/task-egress.ts:125-149     reserveForAcceptance（账本变更前 fail-closed）
 services/api/src/privacy/grant-pg.ts:60            external_inference 需已核验接收方
 services/api/src/privacy/grant-pg.ts:68            接收方 capability 闭集（含 'llm'）
 tools/ai-config.mjs:10                             llm allowlist（endpoint/model/keyEnv）

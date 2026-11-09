@@ -57,8 +57,34 @@ export type ProviderOutcome =
    * 非闭集成员会被判为协议违规（`failed` / `PROVIDER_OUTCOME_UNKNOWN`）。
    */
   | { kind: 'completed'; candidates: unknown; uncertainty_reasons?: unknown; branch?: FailureBranch }
-  /** 提供者失败：由 service 映射为 failed / timed_out，绝不落 succeeded。 */
-  | { kind: 'failed'; code: ProviderFailureCode };
+  /**
+   * 提供者失败：由 service 映射为 failed / timed_out，绝不落 succeeded。
+   *
+   * `retryable`（可选，默认 false）：**这一次派发**是否「已发出、但拿不到可用结果」——
+   * 即请求确实建连并拿到了回包，只是没有可用的业务结果（例如 200 但正文解析不出候选）。
+   * 只有为 `true` 时，外发闸门才允许**在同一预留内**再派发一次（`task-egress.ts` 的重发循环）；
+   * ⛔ 4xx / 429 / 5xx、超时、闸门拒绝、媒体读不出、未发一包 —— 一律**不标**，绝不重发。
+   */
+  | { kind: 'failed'; code: ProviderFailureCode; retryable?: boolean };
+
+/**
+ * 一次识别派发的入参。
+ *
+ * `deadlineAt` / `exportId` / `attempt` 由**派发层**（`privacy/task-egress.ts` 的外发闸门）
+ * 在**同一张预留行**内下传，⛔ 不由客户端/路由构造：`exportId` 决定这次调用记到哪一行外发预留，
+ * `attempt` 是这张预留内第几次派发（1 基）。两个字段都只服务于内部记账与可观测性，不进公开契约。
+ */
+export interface RecognitionDispatchInput {
+  jobId: string;
+  mediaId: string;
+  mediaRevision: number;
+  /** 作业截止时刻（epoch 毫秒）。适配器不消费；闸门用它判断还有没有余量再派发一次。 */
+  deadlineAt?: number;
+  /** 本次派发所属的外发预留行（账本 `export_id`）。 */
+  exportId?: string;
+  /** 本次预留内的第几次派发（1 基）：1 = 首发，2 = 唯一一次重发。 */
+  attempt?: number;
+}
 
 export interface RecognitionProvider {
   readonly executionMode: ExecutionMode;
@@ -68,7 +94,7 @@ export interface RecognitionProvider {
   readonly available: boolean;
   /** 不可用原因（不含凭据原文）。 */
   readonly unavailableReason: string | null;
-  recognize(input: { jobId: string; mediaId: string; mediaRevision: number }): Promise<ProviderOutcome>;
+  recognize(input: RecognitionDispatchInput): Promise<ProviderOutcome>;
 }
 
 /** stub 替身使用的合成物种 id（与真实目录 id 命名空间隔离，避免被误读为真实识别）。 */

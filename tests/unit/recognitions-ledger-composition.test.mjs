@@ -4,11 +4,12 @@
  *
  * ## 为什么非要有这一支（审查 P1-1）
  * `recognitions-usage-accounting.test.mjs` 的假账本恒回 `{ id, state:'reserved' }` —— 它**不模拟
- * `markSent`**，所以对「记账层在哪一刻取 `export_id`」完全没有牙：把取 id 挪到调用之后，那一支
- * 仍然全绿，而生产装配（`app.ts:1133`：记账层包在 egress **外层**）下会一行都写不进去。
- * 这一支把两层**真装在一起**（与生产同序：`withProviderCallAccounting(egress.provider(inner, 'recognize'), …)`），
- * 假账本的筛选逐字照抄 `ledger-pg.ts:690` 的谓词，并用一个**可变 `state`** 模拟
- * `markSent` 的 `'reserved' → 'sent'` 迁移 —— 于是「取 id 早于 markSent」成了可断言的事实。
+ * `markSent`**，所以对「记账层从哪儿拿到 `export_id`」完全没有牙：把归属改坏，那一支仍然全绿，
+ * 而生产装配下会一行都写不进去。这一支把两层**真装在一起**（GY-R94 起与生产同序：
+ * `egress.provider(withProviderCallAccounting(inner, …), 'recognize')` —— 记账在 egress **内层**，
+ * 每次派发各一行），假账本的筛选逐字照抄 `ledger-pg.ts:690` 的谓词，并用一个**可变 `state`**
+ * 模拟 `markSent` 的 `'reserved' → 'sent'` 迁移 —— 于是「`export_id` 由派发层下传、回查只可能在
+ * `markSent` 之前命中」成了可断言的事实。
  *
  * ## 钉住的四件事
  * 1. 成功路径：写 **1 行**，`invocation_state='sent'`，`export_id` 就是那张预留行；
@@ -162,8 +163,9 @@ function readingsOf() {
 }
 
 /**
- * 按**生产同序**装配：`createMediaJobEgress` → `egress.provider(inner, 'recognize')` →
- * `withProviderCallAccounting(...)`（记账层在**外**层，与 `app.ts:1133` 一致）。
+ * 按**生产同序**装配（GY-R94 起）：`withProviderCallAccounting(inner, …)` 先包一层，
+ * 再由 `egress.provider(accounted, 'recognize')` 包在最外 —— 记账在 egress **内层**，于是同一张
+ * 预留行内的两次派发各写一行（`attempt` 1、2 由 0055 的 SQL 派生）。装配点见 `app.ts` 的 `provider:`。
  */
 function compose({ executionMode = 'real', recognize, callLedger, readings, log } = {}) {
   const exports = exportsLedgerOf();
@@ -175,15 +177,18 @@ function compose({ executionMode = 'real', recognize, callLedger, readings, log 
     capability: 'weed',
   });
   const inner = providerOf(recognize);
-  const accounted = withProviderCallAccounting(egress.provider(inner, 'recognize'), {
-    ledger: callLedger ?? callLedgerOf(),
-    exportLedger: exports,
-    capability: 'weed',
-    executionMode,
-    readings,
-    log,
-  });
-  return { exports, egress, inner, accounted, callLedger };
+  const dispatch = egress.provider(
+    withProviderCallAccounting(inner, {
+      ledger: callLedger ?? callLedgerOf(),
+      exportLedger: exports,
+      capability: 'weed',
+      executionMode,
+      readings,
+      log,
+    }),
+    'recognize',
+  );
+  return { exports, egress, inner, accounted: dispatch, callLedger };
 }
 
 const COMPLETED = {
@@ -231,9 +236,10 @@ test('组合臂：成功路径写 1 行 sent（export_id 取自调用前读到�
   assert.deepEqual(row.usage, { prompt_tokens: 1000, completion_tokens: 40, total_tokens: 1040 });
   assert.equal(row.providerConfigVersion, `${PROFILE}#vision-model-test@1a2b3c4d`);
   assert.equal(row.modelVersion, PROFILE);
-  // ★ 取 id 的时点：两次 `findReservedByObject`（egress 一次 + 记账层一次）都必须看到 `reserved`。
-  //   取 id 若挪到调用之后，记账层那次会看到 `sent` ⇒ 命中不了谓词 ⇒ 0 行（变异 E）。
-  assert.deepEqual(exports.reads.map((read) => read.state), ['reserved', 'reserved']);
+  // ★ 归属来源（GY-R94 起）：`export_id` 由派发层下传，记账层**不**再回查预留行 ——
+  //   预留行只被 egress 读到一次，且那次必须在 `markSent` 之前（回查一旦挪到 markSent 之后，
+  //   `state='reserved'` 谓词恒不命中 ⇒ 0 行、读数 failed=1）。
+  assert.deepEqual(exports.reads.map((read) => read.state), ['reserved']);
   assert.ok(
     exports.trace.lastIndexOf('markSent') > exports.trace.lastIndexOf('findReservedByObject'),
     `取 id 必须早于 markSent（实际顺序：${exports.trace.join(' → ')}）`,
