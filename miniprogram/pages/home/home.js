@@ -7,7 +7,7 @@ const publicHome = require('../../utils/public-home-api')
 const HOME_ENTRIES = [
   { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
   { key: 'ocr', iconClass: 'gy-icon--tag', title: '农药标签识别', desc: '拍包装，读出药名与成分' },
-  { key: 'voice', iconClass: 'gy-icon--mic', title: '语音提问', desc: '合成播报已接服务端；录音转写（ASR）尚未接线' }
+  { key: 'voice', iconClass: 'gy-icon--mic', title: '语音提问', desc: '听语音播报的答复' }
 ]
 
 // 全局执行模式只能证明明确的替身环境，不能证明单项供应商能力可用。
@@ -29,7 +29,7 @@ Page({
   // SVG path 数据）；数量保持三个已确认入口，不为对齐 demo 的四宫格补虚构入口。
   data: { fontScale: 1, guest: true, entries: entriesForMode(null), local: false, busy: false, loggedIn: false, diagPassed: null,
     previewStatus: 'loading', previewItems: [], previewNote: '', previewMessage: '', previewErrorCode: '',
-    status: '开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。' },
+    status: '演示用：内容来自演示资料，仅供参考，不能作为用药依据。' },
   onShow: function () {
     this._active = true
     const action = this._action = (this._action || 0) + 1
