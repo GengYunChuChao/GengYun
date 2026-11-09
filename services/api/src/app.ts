@@ -132,7 +132,7 @@ import { createChatEgress, createMediaJobEgress, createProviderCallLedger, withP
 // GY-R28 W7（#12）：文字问答的真实模型适配器与装配决策（供应商细节只在这两个文件里）。
 import { planConversationChat } from './ai/chat-wiring.ts';
 import { createSynthesisEgress, type SynthesisEgress } from './privacy/synthesis-egress.ts';
-import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs';
+import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs'; import { redactLogRecord, redactErrorForLog, scrubInlineText } from '../../../packages/privacy/redact.mjs';
 import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
@@ -790,11 +790,11 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
 export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisMediaWiring, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, mediaStore: mediaStoreOption, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
-    // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
-    // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
+    // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经写下的日志；
+    // 因此坐标不进日志必须在这里做；全局脱敏（键名 + 值形态双层）只递归纯对象，Request/Reply 类实例原样透传给 serializers —— 否则 method/url/statusCode（prototype getter）会被整层丢掉。
     logger: config.logLevel === 'silent' ? false : {
       level: config.logLevel,
-      serializers: { req: requestLogFields },
+      serializers: { req: requestLogFields, err: redactErrorForLog, msg: scrubInlineText }, formatters: { log: (object) => redactLogRecord(object) as Record<string, unknown> },
       // 仅测试注入；不传时逐字节保持默认行为（写进程 stdout，不新建文件、不改级别与格式）。
       ...(logStream === undefined ? {} : { stream: logStream }),
     },

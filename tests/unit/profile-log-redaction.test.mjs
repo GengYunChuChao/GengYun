@@ -212,8 +212,23 @@ test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得�
   );
   const config = readFileSync(resolve(root, 'services/api/src/config.ts'), 'utf8');
   assert.equal(config.includes('logStream'), false, '配置层不得暴露日志捕获开关');
-  // 默认（不传 logStream）时 logger 选项只有 level + serializers，不新增文件/级别/格式开关。
+  // 默认（不传 logStream）时 logger 选项不得出现「文件/级别/传输」这类新开关，也不得自带默认 stream。
+  //
+  // ⚠ 2026-11-09（GY-R91 · #29 缺口③ 全局日志脱敏管道）**有据变更，不是放宽**：此前本钉子钉的是
+  //   `serializers: { req: requestLogFields }` 这段逐字文本。本片在共享出口加了三样东西，都要钉住而不能
+  //   只把断言删掉：
+  //     ① `formatters.log = redactLogRecord`（全局脱敏；只递归纯对象，类实例透传给 serializers）；
+  //     ② `serializers.err = redactErrorForLog`（Error 的 message/stack/cause 过行内擦除）；
+  //     ③ `serializers.msg = scrubInlineText`（pino 在 formatters/serializers 之前就把首个 Error 参数的
+  //        message 抄进 msg，只擦 err 时 msg 仍漏）。
+  //   主旨不变并**加强**：`level` 仍只来自 `config.logLevel`、`stream` 仍只在 `logStream` 非 undefined 时
+  //   注入、且整个 logger 选项里不得出现任何 transport / destination / 文件落盘键。
   const source = readFileSync(resolve(root, 'services/api/src/app.ts'), 'utf8');
-  assert.match(source, /serializers: \{ req: requestLogFields \}/);
+  assert.match(source, /level: config\.logLevel,/);
+  assert.match(source, /serializers: \{ req: requestLogFields, err: redactErrorForLog, msg: scrubInlineText \}/);
+  assert.match(source, /formatters: \{ log: \(object\) => redactLogRecord\(object\) as Record<string, unknown> \}/);
   assert.match(source, /\.\.\.\(logStream === undefined \? \{\} : \{ stream: logStream \}\)/);
+  for (const banned of ['transport:', 'destination:', 'pino.destination', 'stream: process.stdout']) {
+    assert.equal(source.includes(banned), false, `logger 选项不得出现 ${banned}（那会变成新的落盘/传输开关）`);
+  }
 });
