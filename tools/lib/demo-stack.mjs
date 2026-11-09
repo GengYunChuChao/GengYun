@@ -739,8 +739,103 @@ export function parseConsentReadiness(output) {
 export const CONSENT_EMPTY_WARNING =
   '识别动线会 403：没有已核验政策，用 --demo 或先跑 import-consent-policy/recipient';
 
-/** pid 文件内容：带上实例标记与端口，`down`/`status` 靠它判断「这是不是本工具起的」。 */
-export function buildPidRecord({ pid, port, mode, instanceId, startedAt, logFile }) {
+/**
+ * API 启动器真正认的两个「真实接线」批准开关。
+ * 只认这两个名字、其余参数被忽略（`services/api/src/server.ts:38-52`），所以这里的字面量必须与它一致：
+ * 写错了不会报错，只会静默地 fail-closed（媒体域 503 / 审核域不开）。
+ */
+export const APPROVAL_FLAGS = Object.freeze({
+  media: '--approve-real-media-wiring',
+  moderation: '--approve-moderation-live-wiring',
+});
+
+/** 批准项只有三种状态：`true` 带了、`false` 没带、`null` 不知道（旧 pid 文件 / 命令行读不到）；不许猜。 */
+function normalizeApprovals(value) {
+  if (!value || typeof value !== 'object') return null;
+  return { media: value.media === true, moderation: value.moderation === true };
+}
+
+/**
+ * 本次调用**要求**的批准项：与真正拼进命令行的参数同源派生，
+ * 免得出现「日志说批了、进程命令行里没有」这种自己骗自己。
+ */
+export function desiredApprovals({ demo = false, mode } = {}) {
+  const args = buildApiApprovalArgs({ demo, mode });
+  return {
+    media: args.includes(APPROVAL_FLAGS.media),
+    moderation: args.includes(APPROVAL_FLAGS.moderation),
+  };
+}
+
+/** 从进程命令行读批准项：拿到命令行才是真值；拿不到（平台/权限）返回 null = 不知道。 */
+export function detectApprovals(commandLine) {
+  if (typeof commandLine !== 'string' || commandLine.trim() === '') return null;
+  const argv = commandLine.split(/\s+/u);
+  return {
+    media: argv.includes(APPROVAL_FLAGS.media),
+    moderation: argv.includes(APPROVAL_FLAGS.moderation),
+  };
+}
+
+/**
+ * 当前实例的批准项：**先看活进程的命令行**（唯一真值），读不到才回退 pid 记录里的持久化字段。
+ * 两边都没有 ⇒ `{approvals: null, source: 'unknown'}`，调用方必须显式处理「不知道」，不能当 false 用。
+ */
+export function resolveApprovals({ commandLine = null, record = null } = {}) {
+  const live = detectApprovals(commandLine);
+  if (live !== null) return { approvals: live, source: 'command-line' };
+  const persisted = normalizeApprovals(record?.approvals);
+  if (persisted !== null) return { approvals: persisted, source: 'pid-record' };
+  return { approvals: null, source: 'unknown' };
+}
+
+/**
+ * 「栈已就绪」的短路口径：这次 `up` 要不要动那个已经在跑的 API。
+ * - `reuse`：批准项已经满足（含「这次没要求，旧实例多带了」——撤批准不是正确性要求，不打断）；
+ * - `restart`：缺批准（或旧记录/命令行读不到批准项）⇒ 必须重启，否则演示第一步就 503。
+ */
+export function planRunningStack({ record = null, commandLine = null, demo = false, mode } = {}) {
+  const desired = desiredApprovals({ demo, mode });
+  const { approvals: current, source } = resolveApprovals({ commandLine, record });
+  const keys = ['media', 'moderation'];
+  const missing = current === null
+    ? keys.filter((key) => desired[key] === true)
+    : keys.filter((key) => desired[key] === true && current[key] !== true);
+  const extra = current === null ? [] : keys.filter((key) => desired[key] !== true && current[key] === true);
+
+  if (missing.length > 0) {
+    return {
+      action: 'restart',
+      reason: current === null ? 'approvals-unknown' : 'missing-approval',
+      missing,
+      extra,
+      current,
+      desired,
+      source,
+    };
+  }
+  return {
+    action: 'reuse',
+    reason: extra.length > 0 ? 'extra-approval' : 'same-profile',
+    missing: [],
+    extra,
+    current,
+    desired,
+    source,
+  };
+}
+
+/** 「已就绪但缺批准」重启后给用户看的原文；测试与运行手册都引这一条，避免三处各写一遍。 */
+export function approvalRestartLines(plan) {
+  const names = (plan?.missing ?? []).map((key) => APPROVAL_FLAGS[key]).join(' ');
+  if (plan?.reason === 'approvals-unknown') {
+    return [`  检测到既有实例的批准项无法确认（命令行读不到），已重启 API（数据目录保留）`];
+  }
+  return [`  检测到既有实例未带 ${names}，已重启 API（数据目录保留）`];
+}
+
+/** pid 文件内容：实例标记、端口、档位与批准项，`down`/`status` 靠它判断「这是不是本工具起的」。 */
+export function buildPidRecord({ pid, port, mode, instanceId, startedAt, logFile, demo = false, approvals = null }) {
   return {
     schema: DEMO_SCHEMA,
     pid,
@@ -749,6 +844,8 @@ export function buildPidRecord({ pid, port, mode, instanceId, startedAt, logFile
     instanceId,
     startedAt,
     logFile,
+    demo: demo === true,
+    approvals: normalizeApprovals(approvals),
   };
 }
 
@@ -766,7 +863,13 @@ export function parsePidRecord(text) {
   if (!Number.isInteger(parsed.pid) || parsed.pid <= 0) return null;
   if (!Number.isInteger(parsed.port) || parsed.port <= 0 || parsed.port > PORT_MAX) return null;
   if (typeof parsed.instanceId !== 'string' || parsed.instanceId === '') return null;
-  return parsed;
+  // 旧版本写的 pid 文件没有这两个字段：`demo` 当 false、`approvals` 当 null（不知道），
+  // 而不是当「没批准」——那会让 status 对着一个其实批过的实例说谎。
+  return {
+    ...parsed,
+    demo: parsed.demo === true,
+    approvals: normalizeApprovals(parsed.approvals),
+  };
 }
 
 /** 命令行里是否含本实例标记（`down` 只杀带标记的进程，防 pid 复用误杀）。 */
@@ -776,10 +879,17 @@ export function commandHasInstance(commandLine, instanceId) {
   return commandLine.includes(`${INSTANCE_FLAG}${instanceId}`);
 }
 
-/** `status` 的三行结论：进程 / 端口 / 健康。 */
+/** `status` 的三行结论：进程 / 端口 / 健康。进程行顺带报「这个实例到底带没带媒体批准」。 */
 export function statusLines({ api, port, health }) {
+  const approvalText = api?.running
+    ? `，媒体批准=${
+      api.approvals === null || api.approvals === undefined
+        ? '未知'
+        : api.approvals.media === true ? '已带' : '未带'
+    }${api.approvals?.moderation === true ? '，审核批准=已带' : ''}`
+    : '';
   const processLine = api?.running
-    ? `进程：API 在跑（pid ${api.pid}${api.mode ? `，mode=${api.mode}` : ''}${api.owned ? '' : '，⚠ 不是本工具起的'}）`
+    ? `进程：API 在跑（pid ${api.pid}${api.mode ? `，mode=${api.mode}` : ''}${approvalText}${api.owned ? '' : '，⚠ 不是本工具起的'}）`
     : `进程：API 未运行${api?.pidFile === false ? '（无 pid 文件）' : ''}`;
 
   const portLine = port?.listening
