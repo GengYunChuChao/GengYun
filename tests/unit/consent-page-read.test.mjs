@@ -93,6 +93,25 @@ function loadModule(sourcePath, deps, wx, extraGlobals) {
   return sandbox.module.exports;
 }
 
+/**
+ * 依赖表里的 `./time-format`：读**真实**源文件在独立 realm 里求值再交回去。
+ *
+ * GY-R92 起 `consent-api.js` 的 `consentView()` 用 `require('./time-format').formatDateTime(...)` 渲染
+ * `withdrawnText` / `changedText`；这里必须登记真模块 —— 塞一个 `{ formatDateTime() { return '' } }`
+ * 之类的替身，等于把「时间显示口径」整条测没了（红的时候也只会红在别处）。
+ * `time-format.js` 自身没有 require，所以不需要再给依赖表。
+ */
+function realTimeFormat() {
+  const sandbox = { module: { exports: {} }, console };
+  sandbox.exports = sandbox.module.exports;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(join(ROOT, 'miniprogram/utils/time-format.js'), 'utf8'), sandbox, {
+    filename: 'miniprogram/utils/time-format.js',
+  });
+  return sandbox.module.exports;
+}
+
 function createHarness(options) {
   const settings = options || {};
   const requests = [];
@@ -118,6 +137,7 @@ function createHarness(options) {
   const api = loadModule('miniprogram/utils/consent-api.js', {
     './auth': auth,
     '../config/runtime': { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' },
+    './time-format': realTimeFormat(),
   }, wx);
   return { auth, api, requests, cleared, delegated, wx };
 }
@@ -159,10 +179,20 @@ test('读取：成功封套 ⇒ 只用契约查询参数，cursor 为空时不�
   assert.equal(request.header['Cache-Control'], 'no-cache', '读面必须显式不缓存');
   request.success({ statusCode: 200, data: envelope([record()], null, 'real') });
   const result = await pending;
-  assert.deepEqual(plain(result.items), [record()]);
+  assert.deepEqual(plain(result.items), [record()], '数据层不许被格式化污染：清单里仍是契约原样的 ISO');
   assert.equal(result.nextCursor, null);
   assert.equal(result.mode, 'real');
-  assert.deepEqual(plain(h.api.consentView(record())).purposeLabel, '录音', '用途名只来自契约枚举短名');
+  const view = plain(h.api.consentView(record()));
+  assert.deepEqual(view.purposeLabel, '录音', '用途名只来自契约枚举短名');
+  // GY-R92：显示层是人读串、数据层仍是原始 ISO —— 两者都得留着，缺一边都是回归。
+  // 人读口径按 `formatDateTime` 的形态断言（今天/昨天 HH:mm、MM-DD HH:mm、YYYY-MM-DD HH:mm），
+  // 不钉具体时区；数据层则必须逐字保持服务端原字符串。
+  const humanTime = /^(今天|昨天|\d{2}-\d{2}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2}$/;
+  assert.equal(view.changedAt, '2026-10-20T08:00:00Z', 'changedAt 是数据层，必须保持服务端原字符串');
+  assert.match(view.changedText, humanTime, 'changedText 是显示层，必须是 time-format 的人读口径（不许原样印 ISO）');
+  const withdrawnView = plain(h.api.consentView(record({ state: 'withdrawn', withdrawn_at: '2026-10-21T09:30:00Z' })));
+  assert.equal(withdrawnView.withdrawnAt, '2026-10-21T09:30:00Z', 'withdrawnAt 仍是数据层的原始 ISO');
+  assert.match(withdrawnView.withdrawnText, humanTime, 'withdrawnText 也要走同一个人读口径');
 });
 
 test('读取：封套少 meta ⇒ INVALID_RESPONSE，且不得退化成空列表', async () => {
