@@ -139,10 +139,16 @@ HTTP=200   预览条数 0
 
 ```text
 $ node tools/demo-stack.mjs down --port 38110 --pg-port 55510     → exit 0
-  API：已停（pid …）
+  API：已停（pid 27172）
   PG：已停（fast）
+  数据目录保留（下次 up 直接复用；要重来用 reset --yes）
   复核：API 端口 38110 已释放；PG 端口 55510 已释放
+
+$ Get-NetTCPConnection -LocalPort 38110,55510 -State Listen
+（无输出 ⇒ 两个端口都没有监听）
 ```
+
+记录一个使用坑：5.2 之后我又跑过一次 `up --seed-demo`，是为了验「已经灌过就跳过」这条（它会把栈重新拉起来：API 27172 / PG 72788，15:24 启动），而我当时以为已经收工。复核时 `Get-NetTCPConnection` 仍看到这两个监听，再跑一次 `down` 才真正停掉并确认无监听。所以 **`down` 打印「已释放」只说明那一刻的探测通过；跑过几次 `up` 就要复核几次端口**，上面最后两行才是真正收工的读数。日志：`…\.pg17\demo-stack-logs\down-20261109-final.log`。
 
 ## 六、闸门
 
@@ -157,8 +163,8 @@ PASS: --strict 下没有基线之外的新增（…）     # exit 0；UNDECLARED
 
 $ node --test tests/unit/doc-anchor-relocation-identity.test.mjs
 ℹ tests 37   ℹ pass 36   ℹ fail 0   ℹ skipped 1
-# 唯一 SKIP 是主用例本身：明细原文「本次文档提交只有新增行，没有锚点位移面（3 个纯新增 hunk）」
-# ——本次没有改任何既有锚点的行号，所以位移恒等没有判定面；不是被判松，另有 A2/A4 等负控制钉住「该红的仍红」
+# 唯一 SKIP 是主用例本身：本次改动没有触及任何既有锚点的行号，位移恒等没有判定面
+# （SKIP 明细会给出具体原因与纯新增 hunk 数）；不是被判松，另有 A2/A4 等负控制钉住「该红的仍红」
 
 $ npm run test:docs
 PASS: 识别 5 页 / 跳过 373 页（扫描面 378 页：docs/verification）——读数七条判据全部自洽   # exit 0
@@ -186,6 +192,7 @@ PASS: 识别 5 页 / 跳过 373 页（扫描面 378 页：docs/verification）�
 5. **没验证 `--seed-demo` 与 `--reset` 组合之外的恢复路径**。文件末尾的回滚 SQL 是注释块，没有真跑过；只验了 `reset --yes` 这条「全删」路径。
 6. **PG 端口 55520 被别的实例占着**（`demo-walk-pgdata`，pid 69652），负控制因此改到 38133/55533 跑；这不影响结论，但说明本机同时存在其他 PG 实例，`up` 前仍应看端口探测那两行。
 7. **`reset` 期间别在状态目录里开着日志文件**：我第一次把 `Tee-Object` 的日志写在 `…\.pg17\demo-stack\` 里，`reset --yes` 因 Windows 文件占用报 `EPERM`（工具报的是「未预期的错误」，不好看但没造成数据问题）。日志改放 `…\.pg17\demo-stack-logs\` 后一切正常。这是使用姿势问题，本轮没有改 `reset` 的删除逻辑。
+8. **收工前一度留下一个在跑的实例**：见 5.5。我为了验「已灌过会跳过」又 `up` 了一次，那次把栈拉起来了；后续复核发现有监听，再 `down` 才停掉。这条是本轮的操作记录，不是工具行为断言——我没有复现出「`down` 该停没停」的确定性场景，因此没为它改 `down`。
 
 ## 九、复现
 
