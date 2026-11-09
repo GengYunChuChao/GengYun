@@ -102,6 +102,9 @@ try {
     // `utils/reference.js` —— 看着在测真页面，其实测了替身。未登记 ⇒ 显式失败并带依赖名。
     const pageDependencies = new Map([
       ['../../utils/font-scale', () => load('utils/font-scale.js', {})],
+      // GY-R92：referencedetail 等页面用行内 require('../../utils/time-format') 渲染来源取得时间。
+      // 载入**真实模块**（不填空壳），否则时间文案不再由真源码决定；未登记项仍会显式失败并带依赖名。
+      ['../../utils/time-format', () => load('utils/time-format.js', {})],
       ['../../utils/auth', () => cold],
       ['../../utils/page-gate', () => gate],
       ['../../utils/profile-api', () => profileApi],
