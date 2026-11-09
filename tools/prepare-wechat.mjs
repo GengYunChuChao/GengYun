@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { resolve, join, dirname, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readLocalConfig, configArgument } from './local-debug-config.mjs';
@@ -11,6 +11,42 @@ const APP_ID_PATTERN = /^wx[0-9a-f]{16}$/;
 const TEST_ACCOUNT_URL = 'https://mp.weixin.qq.com/wxamp/sandbox?doc=1';
 /** 组件必需文件：微信原生自定义组件缺任一都会在编译期报「未找到组件」；`.wxss` 可选。 */
 const COMPONENT_REQUIRED_EXTS = ['.js', '.json', '.wxml'];
+
+/** 生成物根目录：本脚本唯一写盘的地方；`--force` 也只允许删这里的直接子目录。 */
+const LOCAL_ROOT = join(root, '.local');
+/**
+ * 客户端拼接基址的业务前缀：`services/api/src/contract.ts` 的全部端点都以 `/api/v1` 开头，
+ * 而客户端是拿 `runtime.apiBaseUrl` 直接拼 `/auth/wechat` 这类路径的，基址漏了前缀就必然 404。
+ */
+const API_BASE_SUFFIX = '/api/v1';
+/**
+ * 微信开发者工具 CLI 的候选位置：只用于打印「下一步」里的打开命令，不参与任何校验。
+ * 第一个是 2026-10 本机实测可用的安装路径；装在别处就换成自己的 `cli.bat`。
+ */
+const DEVTOOLS_CLI_CANDIDATES = Object.freeze([
+  'D:\\微信web开发者工具\\cli.bat',
+  'C:\\Program Files (x86)\\Tencent\\微信web开发者工具\\cli.bat',
+]);
+
+/** 用法行：参数非法时的报错带它，新旗标必须在这里可见。 */
+const USAGE = 'Usage: node tools/prepare-wechat.mjs local --config <file> [--appid <wx…>] [--no-urlcheck] [--force] | release [--force]';
+/** `--help` 正文：本机演示流程的全部前提写在这里，不靠读源码猜。 */
+const HELP = [
+  USAGE,
+  '',
+  'local：生成 .local/wechat-local 诊断副本（客户端接本地 API，是否联网由副本 runtime.js 决定）。',
+  '  --config <file>   被忽略的本地配置（模板：config/debug.local.json.example）。',
+  '                    apiBaseUrl 必须以业务前缀 /api/v1 结尾（如 http://127.0.0.1:3000/api/v1）；',
+  '                    漏写不会自动补全，脚本直接失败并给出应写的值。',
+  '  --appid <wx…>     只改副本的 appid（换上自己扫码的测试号），共享工程不动。',
+  '  --no-urlcheck     只把副本 project.config.json 的 setting.urlCheck 写成 false：',
+  '                    开发者工具不再拦「不在以下 request 合法域名列表」，省掉手动勾选。',
+  '                    ⚠ 仅供本机演示/测试号使用；正式提交前不要开，也不要写回共享工程。',
+  '  --force           目标目录已存在时先删除再生成（只删 <repo>/.local/ 下这一个生成目录）。',
+  'release：生成 .local/wechat-release 副本（runtime 关闭网络、urlCheck 保持 true），不是可提交的正式包。',
+  '',
+  '默认行为与旧版一致：不加旗标时 urlCheck 仍为 true、目标已存在仍拒绝覆盖。',
+].join('\n');
 
 function compareReferences(left, right) {
   const a = left.from + '|' + left.name;
@@ -122,14 +158,84 @@ function takeAppId(args) {
   return { appId, rest };
 }
 
+/**
+ * 摘出本机演示用的两个开关旗标：`--no-urlcheck`（只放松副本的域名校验）与 `--force`（重建副本）。
+ * 两者都只影响**被忽略的生成副本**：源 `project.config.json` 与共享 `runtime.js` 全程只读。
+ * 取值的写法（`--no-urlcheck=true`）直接拒绝，避免有人以为能用它把 urlCheck 设回 true。
+ */
+function takeDemoFlags(args) {
+  const rest = [];
+  let noUrlCheck = false;
+  let force = false;
+  for (const arg of args) {
+    if (arg === '--no-urlcheck') { noUrlCheck = true; continue; }
+    if (arg === '--force') { force = true; continue; }
+    if (arg.startsWith('--no-urlcheck=') || arg.startsWith('--force=')) {
+      throw new Error('--no-urlcheck 与 --force 是开关，不接受取值（写成 `--no-urlcheck`／`--force` 即可）；未生成任何目录。');
+    }
+    rest.push(arg);
+  }
+  return { noUrlCheck, force, rest };
+}
+
+/** 开发者工具 CLI：本机能找到就用真实路径，找不到退回文档里写的默认安装位置（不影响任何校验）。 */
+function devtoolsCli() {
+  for (const candidate of DEVTOOLS_CLI_CANDIDATES) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return DEVTOOLS_CLI_CANDIDATES[0];
+}
+
+/**
+ * `--force` 删除前的最后一道闸：目标必须是 `<repo>/.local` 的**直接子目录**且就是本次要生成的目录名。
+ * 路径全部由 join(LOCAL_ROOT, 'wechat-' + mode) 拼出来，这条断言在正常路径上恒真——
+ * 它守的是「将来有人改了 out 的拼法，别让一次 --force 把仓库其他部分删掉」。
+ */
+function assertRemovableOutput(out, expectedName) {
+  const inside = relative(LOCAL_ROOT, out);
+  const contained = inside !== '' && inside !== '..' && !inside.startsWith('..' + sep)
+    && !isAbsolute(inside) && resolve(LOCAL_ROOT, inside) === resolve(out);
+  if (!contained || inside !== expectedName) {
+    throw new Error('拒绝删除：目标目录不在 <repo>/.local 之下（' + out + '）；未删除任何文件。');
+  }
+}
+
+/**
+ * 生成结束后打印「下一步」：演示流程只有三步（起栈 → 打开开发者工具 → 勾选项）。
+ * 放在输出末尾是为了省掉「生成完还要回去翻文档改配置」——这正是 `--no-urlcheck` 要消掉的来回。
+ */
+function printNextSteps({ out, apiBaseUrl, noUrlCheck }) {
+  console.log('');
+  console.log('下一步（本机演示）：');
+  console.log('  1) 起本地栈：npm run dev:api（API 监听端口必须与副本基址一致：' + apiBaseUrl + '）');
+  console.log('  2) 打开开发者工具（--project 必须是绝对路径：相对路径会报 code 10 项目路径不存在，而退出码仍是 0）：');
+  console.log('     & "' + devtoolsCli() + '" open --project "' + out + '"');
+  console.log('  3) 勾选项：' + (noUrlCheck
+    ? '副本已写入 setting.urlCheck=false，「详情 → 本地设置 → 不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」应当已是勾选状态，不用再手动勾。'
+    : '若仍报「不在以下 request 合法域名列表」，在「详情 → 本地设置」勾「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」，或重新生成时加 --no-urlcheck 免手改。'));
+  console.log('  副本在 ' + displayPath(root, LOCAL_ROOT) + '/ 下，已被 .gitignore 忽略；共享工程与 release 副本一个字节都没改。');
+}
+
 try {
   const [mode, ...argv] = process.argv.slice(2);
-  if (!['local', 'release'].includes(mode)) throw new Error('Usage: node tools/prepare-wechat.mjs local --config <file> [--appid <wx…>] | release');
+  // `--help`／`-h` 只打印用法：不做任何校验、不产生任何目录，退出码 0（故此处显式结束进程）。
+  if (mode === '--help' || mode === '-h' || mode === 'help') {
+    console.log(HELP);
+    process.exit(0);
+  }
+  if (!['local', 'release'].includes(mode)) throw new Error(USAGE);
   // release 副本固定沿用共享工程的官方 AppID：覆盖只服务于本地调试，越界即拒。
   if (mode === 'release' && argv.some(arg => arg.startsWith('--appid'))) throw new Error('release 不接受 --appid：release 副本固定使用共享工程官方 AppID。协作者本地调试请用 `local --config <file> --appid wx…`。');
-  const { appId: appIdOverride, rest: args } = mode === 'local' ? takeAppId(argv) : { appId: null, rest: argv };
+  const { noUrlCheck, force, rest: flagArgs } = takeDemoFlags(argv);
+  // release 副本必须是「共享工程原样 + 断网」：放松域名校验只服务本机演示，出现在 release 里就是配置错。
+  if (mode === 'release' && noUrlCheck) throw new Error('release 不接受 --no-urlcheck：release 副本必须保持 setting.urlCheck=true（域名校验开启）。本机演示请用 `local --config <file> --no-urlcheck`。');
+  const { appId: appIdOverride, rest: args } = mode === 'local' ? takeAppId(flagArgs) : { appId: null, rest: flagArgs };
   const runtime = mode === 'local' ? readLocalConfig(configArgument(args)) : { mode: 'disabled', apiBaseUrl: '' };
   if (mode === 'release' && args.length) throw new Error('Release does not accept a local configuration.');
+  // 基址必须自带业务前缀：客户端拿它直接拼 `/auth/wechat`，漏写不会报错，只会在运行时 404。
+  if (mode === 'local' && !runtime.apiBaseUrl.endsWith(API_BASE_SUFFIX)) {
+    throw new Error('apiBaseUrl 必须以业务前缀 ' + API_BASE_SUFFIX + ' 结尾：当前配置是 ' + JSON.stringify(runtime.apiBaseUrl) + '，应写成 ' + new URL(runtime.apiBaseUrl).origin + API_BASE_SUFFIX + '（端口换成你的本地 API 端口）。客户端按 runtime.apiBaseUrl 直接拼接 /auth/wechat 等路径，漏写前缀会打到 /auth/wechat 得 404；未生成任何目录。');
+  }
   const config = JSON.parse(readFileSync(join(root, 'project.config.json'), 'utf8'));
   if (config.compileType !== 'miniprogram' || config.miniprogramRoot !== 'miniprogram/' || config.setting.urlCheck !== true) throw new Error('Shared project must use native miniprogram and domain validation.');
   const sharedAppId = config.appid;
@@ -137,9 +243,14 @@ try {
   if (sharedRuntime !== "// Shared source always has networking disabled. Local preparation writes only an ignored copy.\nmodule.exports = { mode: 'disabled', apiBaseUrl: '' }\n") throw new Error('Shared runtime changed. Refuse to package a possible local/stub configuration.');
   // 组件目录从 usingComponents 派生（在任何目录被创建之前完成校验）：新增组件无需再改本脚本。
   const components = componentDirectories(join(root, 'miniprogram'));
-  const out = join(root, '.local', 'wechat-' + mode);
-  // Refuse reuse so personal overrides or stale generated files cannot survive preparation.
-  if (existsSync(out)) throw new Error('Output already exists: ' + out + '. Keep it for inspection or remove that exact generated directory before preparing again.');
+  const out = join(LOCAL_ROOT, 'wechat-' + mode);
+  // 默认仍拒绝复用：personal overrides 与陈旧生成物不能悄悄留下。`--force` 才重建，且只删这一个生成目录。
+  if (existsSync(out)) {
+    if (!force) throw new Error('Output already exists: ' + out + '. Keep it for inspection, pass --force to regenerate it (only that generated directory is removed), or remove it yourself before preparing again.');
+    assertRemovableOutput(out, 'wechat-' + mode);
+    rmSync(out, { recursive: true, force: true });
+    console.log('已删除旧副本（--force）：' + displayPath(root, out));
+  }
   mkdirSync(out, { recursive: true });
   const app = JSON.parse(readFileSync(join(root, 'miniprogram/app.json'), 'utf8'));
   const files = [
@@ -305,6 +416,10 @@ try {
   // 只有**生成副本**的 appid 允许覆盖；共享工程两份 project.config.json 全程只读
   // （tests/local-debug.test.mjs 按字节比对原文，覆盖值不可能回流到仓库）。
   if (appIdOverride !== null) config.appid = appIdOverride;
+  // 同理，域名校验只在**副本的这份 config 对象**里放松：源 project.config.json 一字未改
+  // （上方硬闸门仍要求源 urlCheck === true，改坏源文件会让本脚本直接拒绝生成）。
+  // 仅供本机演示/测试号：发布路径（release 副本、CI、提审）必须保持校验开启。
+  if (noUrlCheck) config.setting.urlCheck = false;
   writeFileSync(join(out, 'project.config.json'), JSON.stringify(config, null, 2) + '\n');
   // 生成物里的 apiBaseUrl 就是**客户端拼接基址**（客户端以 `runtime.apiBaseUrl + '/auth/…'` 等自行拼接）：
   // 指向真实本地 API 时须含业务前缀（如 http://127.0.0.1:3100/api/v1），诊断替身用 origin 形态即可。
@@ -321,4 +436,5 @@ try {
   console.log('服务端必须同号：WECHAT_APP_ID 必须等于上面这个 AppID，WECHAT_APP_SECRET 必须是同一个号后台生成的密钥；两者不配对时 code2session 必然返回 appid/secret 不匹配类错误，登录一定失败。');
   console.log('测试号申请入口（没有「小程序项目成员」资格也能扫码登录）：' + TEST_ACCOUNT_URL + ' ；该页需在浏览器登录微信公众平台后由前端渲染。');
   if (appIdOverride !== null) console.log('注意：测试号 openid 与正式号不同，服务端身份摘要把 appId 与 openid 一起做 HMAC，故测试号账号/数据与正式环境不互通，不能作为正式验收证据。');
+  if (mode === 'local') printNextSteps({ out, apiBaseUrl: runtime.apiBaseUrl, noUrlCheck });
 } catch (error) { console.error(error.message); process.exitCode = 1; }
