@@ -128,6 +128,7 @@ export function parseArgs(argv = []) {
     pgBin: null,
     timeoutMs: 90_000,
     reset: false,
+    seedDemo: false,
     yes: false,
     demo: false,
     lines: 40,
@@ -150,6 +151,10 @@ export function parseArgs(argv = []) {
     }
     if (token === '--reset') {
       options.reset = true;
+      continue;
+    }
+    if (token === '--seed-demo') {
+      options.seedDemo = true;
       continue;
     }
     if (token === '--yes' || token === '-y') {
@@ -213,6 +218,12 @@ export function parseArgs(argv = []) {
     throw new UsageError(`--mode 只能是 ${MODES.join(' 或 ')}，收到「${options.mode}」`);
   }
   if (options.timeoutMs < 1000) throw new UsageError('--timeout-ms 至少 1000');
+  // 显式开关配错模式时直接报错，不静默忽略：否则用户以为灌了演示资料、实际没灌。
+  if (options.seedDemo && options.mode !== 'real') {
+    throw new UsageError(
+      `--seed-demo 只在 real 模式生效（当前 --mode ${options.mode}：stub 不写业务资料）；去掉 --seed-demo 或改用 --mode real`,
+    );
+  }
 
   return options;
 }
@@ -239,6 +250,8 @@ export function usage() {
     '  --lines <n>        logs 打印行数，默认 40',
     '  --demo             演示档：把三个 feature flag 置为开启（仅本机演示；幂等）',
     '  --reset            up 前先重来一遍（停栈 + 删数据目录）',
+    '  --seed-demo        （real）额外导入演示资料种子 db/seeds/demo_catalog_verified.sql；',
+    '                     默认不开。灌入的是**演示用资料**（非生产数据），不代表第三方审核',
     '  --yes, -y          reset 的确认开关',
     '',
     '示例：',
@@ -779,7 +792,7 @@ export function statusLines({ api, port, health }) {
 }
 
 /** `up`/`status` 之后给用户看的「下一步」：开发者工具里要做什么。 */
-export function nextStepsLines({ mode, apiPort }) {
+export function nextStepsLines({ mode, apiPort, seedDemo = false }) {
   const base = `http://127.0.0.1:${apiPort}`;
   return [
     '',
@@ -789,9 +802,11 @@ export function nextStepsLines({ mode, apiPort }) {
     `     其中 apiBaseUrl 写 ${base}/api/v1，port 写 ${apiPort}，bindHost 写 127.0.0.1`,
     '  2) 开发者工具 → 导入项目 → 选 prepare-wechat 打印的 LOCAL import root 目录',
     '  3) 模拟器里点「首页」：只有 real 模式才是 200；stub 模式首页必然 503（这是既有契约，不是本栈故障）',
-    mode === 'real'
-      ? '  4) 首页可能显示「暂无资料」：库内已核对来源为 0 条，属资料接入缺项（见运行手册「首页为什么是空的」）'
-      : '  4) 现在起的是 stub：首页会 503，本栈只用于验证「进程/端口/健康」链路是否通',
+    mode !== 'real'
+      ? '  4) 现在起的是 stub：首页会 503，本栈只用于验证「进程/端口/健康」链路是否通'
+      : seedDemo
+        ? '  4) 本次带 --seed-demo：首页应显示演示卡片（文字标了「演示资料·非生产数据」，不是生产数据）'
+        : '  4) 首页可能显示「暂无资料」：库内已核对来源为 0 条，属资料接入缺项（见运行手册「首页为什么是空的」）',
     '',
     `本机自检：curl.exe -s -o NUL -w "%{http_code}" ${base}/health     （应输出 200；/api/v1/health 是 404）`,
   ];

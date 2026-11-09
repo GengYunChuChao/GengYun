@@ -66,10 +66,30 @@ export function createMediaJobEgress(deps: {
   dataType: string;
   purpose?: string;
   capability: string;
+  /**
+   * 成功/失败路径的**应用日志出口**（可选）。不传 ⇒ 零行为变化（既有调用点与替身模式不受影响）。
+   * 只有 `engaged`（`real`）且注入时才发事件；事件只含状态 token / id，
+   * ⛔ 不含对象内容、URL、prompt、模型输出、坐标或任何用户文本。
+   */
+  log?: (event: Record<string, unknown>) => void;
 }): MediaJobEgress {
   const { ledger, inFlight, executionMode, dataType, capability } = deps;
   const purpose = deps.purpose ?? 'external_inference';
   const engaged = executionMode === 'real';
+  const log = deps.log;
+
+  /**
+   * 唯一发点：`engaged` 且注入 `log` 才发；日志出口自己抛错不穿过业务
+   * （日志是旁路，不能把已受理/已外发的任务改判）。
+   */
+  const emit = (event: Record<string, unknown>): void => {
+    if (!engaged || log === undefined) return;
+    try {
+      log(event);
+    } catch {
+      // 日志失败不影响业务。
+    }
+  };
   let providerAvailable = false;
   let providerUnavailableReason: string | null = null;
 
@@ -90,6 +110,7 @@ export function createMediaJobEgress(deps: {
       if (!engaged) return null;
       // 红线：real 且真实传输未接入 ⇒ **在任何账本变更之前** fail-closed（503，可重试）。
       if (!providerAvailable) {
+        emit({ event: 'egress_refused', dataType, purpose, capability, errorCode: 'PROVIDER_UNAVAILABLE' });
         throw new PrivacyError(
           'PROVIDER_UNAVAILABLE',
           providerUnavailableReason ?? '真实外发传输未接入：real 模式 fail-closed',
@@ -109,6 +130,7 @@ export function createMediaJobEgress(deps: {
         recipientId,
         sourceVersion: null,
       });
+      emit({ event: 'egress_reserved', dataType, purpose, capability, exportId: record.id });
       return { exportId: record.id };
     },
 
@@ -121,22 +143,33 @@ export function createMediaJobEgress(deps: {
         const record = await resolveObject({ objectId: input.mediaId, objectRevision: input.mediaRevision });
         if (record === null) {
           // 未登记即派发 ⇒ 拒绝（fail-closed），不产生任何外发。
+          emit({ event: 'egress_failed', dataType, purpose, capability, errorCode: 'OBJECT_UNAVAILABLE' });
           throw new PrivacyError('OBJECT_UNAVAILABLE', '无外发预留（未登记的外发被拒绝）');
         }
         if (typeof input.jobId === 'string') await ledger.linkJob({ exportId: record.id, jobId: input.jobId });
         await assertExecutableOrWithdrawn(inFlight, ledger, record);
         const sent = await ledger.markSent(record.id);
+        emit({
+          event: 'egress_sent',
+          dataType,
+          purpose,
+          capability,
+          exportId: record.id,
+          ...(typeof input.jobId === 'string' ? { jobId: input.jobId } : {}),
+        });
         let outcome: unknown;
         try {
           outcome = await (inner as unknown as Record<string, (value: unknown) => Promise<unknown>>)[method]!(input);
         } catch (error) {
           const code = failureCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
           await ledger.markFailed(record.id, { errorCode: code }).catch(() => {});
+          emit({ event: 'egress_failed', dataType, purpose, capability, exportId: record.id, errorCode: code });
           throw error;
         }
         const failure = failureCodeOf(outcome);
         if (failure !== null) {
           await ledger.markFailed(record.id, { errorCode: failure });
+          emit({ event: 'egress_failed', dataType, purpose, capability, exportId: record.id, errorCode: failure });
           return outcome;
         }
         // 保存前重查 + 结果写入（与校验同事务）；被拒 ⇒ 抛错 ⇒ 域服务不保存结果（零写入）。
@@ -146,6 +179,7 @@ export function createMediaJobEgress(deps: {
           objectVersion: sent.objectRevision,
           result: summarizeEgressOutcome(outcome),
         });
+        emit({ event: 'egress_saved', dataType, purpose, capability, exportId: record.id });
         return outcome;
       };
       return wrapped as unknown as T;
