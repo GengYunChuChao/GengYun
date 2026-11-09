@@ -24,9 +24,9 @@
 import type { ProviderOutcome, RecognitionProvider } from './provider.ts';
 import { RECOGNITION_GATE_AUTHORIZATION, RecognitionWiringError, createProcessRecognitionGate } from './live-ports.ts';
 import type { LiveRecognitionObservation, RealRecognitionPorts, RecognitionImageSource } from './live-ports.ts';
-import type { ProviderCallState } from '../tts/live-ports.ts';
+import { liveGateRefusalToErrorCode, type ProviderCallState } from '../tts/live-ports.ts';
 import { assertRecognitionEndpoint, requireLiveRecognitionImage } from './live-adapter.ts';
-import { liveGateRefusalToErrorCode } from '../tts/live-ports.ts';
+import { contentJsonCandidates, parseVisionJsonObject, readVisionContentDiagnostics } from './openai-vision-content.ts';
 import { providerConfigVersionOf, readCallMetadata } from './call-metadata.ts';
 
 /**
@@ -61,7 +61,7 @@ export const OPENAI_VISION_FROZEN_PROFILE = Object.freeze({
   maxCandidates: 3,
   maxRetries: 0,
   temperature: 0,
-  maxTokens: 512,
+  maxTokens: 1024, // GY-R94：512 与「思考」共用预算，实测 100 次里 5 次被 finish_reason=length 截断；1024 组 20 次 0 次（见 docs/verification/gy-r94-vision-parse-hardening-20261110.md）。
 } as const);
 
 /** 本剖面对候选分数的写入字段名（契约字段由 `decideOutcome` 校验，这里只填）。 */
@@ -110,13 +110,13 @@ function parseContentJson(content: unknown): Record<string, unknown> | null {
   if (typeof content !== 'string' || content.trim() === '') return null;
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(content);
   const text = (fenced ? (fenced[1] ?? content) : content).trim();
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
+  // GY-R94：不再「整串一次定生死」，改走解析阶梯（见 `openai-vision-content.ts`）：
+  // L1 整串 → L2 首个括号平衡对象 → L3 根数组取首元素 → L4 末尾缺 `}` 时补一个再试。
+  for (const candidate of contentJsonCandidates(text)) {
+    const parsed = parseVisionJsonObject(candidate);
+    if (parsed !== null) return parsed;
   }
+  return null;
 }
 
 /** 把模型的一段回答收成 `candidates`（闭集过滤 + 分数夹紧 + 上限截断）。 */
@@ -311,11 +311,11 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
       const first = Array.isArray(choices) && choices.length > 0 ? choices[0] : null;
       const message = first !== null && typeof first === 'object' ? (first as Record<string, unknown>)['message'] : null;
       const content = message !== null && typeof message === 'object' ? (message as Record<string, unknown>)['content'] : null;
-      const parsed = parseContentJson(content);
+      const parsed = parseContentJson(content); const contentDiagnostics = readVisionContentDiagnostics(root, first, content);
       if (parsed === null) {
         // 供应商回了 200 但没给出可解析的候选 ⇒ 结果未知（绝不把「没读懂」当成功）。
         await liveGate.settle(ticket, { state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true });
-        options.onObservation?.(r80Observation({ state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 }));
+        options.onObservation?.(r80Observation({ state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0, ...contentDiagnostics }));
         return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' };
       }
 

@@ -91,8 +91,8 @@ export interface LiveRecognitionGate {
   settle(ticket: LiveRecognitionTicket, outcome: LiveRecognitionSettlement): Promise<void>;
 }
 
-/** 一次真实调用的**安全观测**（不含请求正文、不含凭据、不含图片内容）。 */
-export interface LiveRecognitionObservation {
+/** 一次真实调用的**安全观测**（不含请求正文、不含凭据、不含图片内容；失败归因三项见文件末尾的 `LiveRecognitionContentDiagnostics`）。 */
+export interface LiveRecognitionObservation extends LiveRecognitionContentDiagnostics {
   readonly protocol: string;
   readonly state: ProviderCallState;
   readonly errorCode: LiveObservationErrorCode | null;
@@ -230,4 +230,27 @@ export function createProcessRecognitionGate(options: {
       };
     },
   };
+}
+
+/**
+ * 一次真实调用的**失败归因读数**（`openai-vision-v1` 首次接线；字段可选，其余提供者不填）。
+ *
+ * 为什么需要它：120 次直连实测的 12 次失败分成两类——**预算类**（`max_tokens` 与「思考」共用，
+ * `finish_reason=length`，`content=""` 或断在字符串中间）与**结构类**（`finish_reason=stop`，
+ * 正文有候选但解析不出）。两者都落 `PROVIDER_OUTCOME_UNKNOWN`，只看旧观测分不清是哪种；
+ * 三项读数一齐看就能一眼归因：`length` ⇒ 预算类；`stop` + `contentLength > 0` ⇒ 结构类。
+ *
+ * ⛔ `contentLength` 是**字符数**，不是正文；本接口不允许携带 `message.content`。
+ *
+ * 为什么声明在文件末尾而不是 `LiveRecognitionObservation` 体内：`docs/**` 的锚点钉住了
+ * `live-ports.ts:184`／`:191`／`:197`／`:200`／`:205`（进程闸门的判据行），在接口体内插三行
+ * 会让这些锚点整体下移；类型声明在 TS 里不要求前置。
+ */
+export interface LiveRecognitionContentDiagnostics {
+  /** `choices[0].finish_reason`（`stop` / `length` / …）；没读到为 `null`。 */
+  readonly finishReason?: string | null;
+  /** `usage.completion_tokens`（**含**思考 token）；没读到为 `null`。 */
+  readonly completionTokens?: number | null;
+  /** `message.content` 的字符数（内容缺失或非字符串为 `null`）。 */
+  readonly contentLength?: number | null;
 }
