@@ -1,6 +1,6 @@
 # 注释锚点影子闸门接线到单元测试（R90，2026-11-09）
 
-> 读数快照：2026-11-09（Asia/Hong_Kong），本分支 base `origin/main` `a40fba6cacef43b2c746f90f6f1d89484fa34c14`（此前一版读数取自 `a30c8adb`；两者在本页引用的计数上逐字相同：命中 1422、基线 1422、`documents=371`，加了 `#1135` 那页后只有 `candidates` 从 9382 变 9387）。本片只做一件事：给 `tools/verify-verification-comment-anchors.mjs` 补一条**在真仓上跑整道闸门**的单元测试，让它从「有工具、没接线」变成「CI 里真的会红」。工具口径、1422 条基线的构成、逐条收紧路径见 `docs/verification/gy-r90-verification-comment-anchor-guard-20261109.md` 与 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`，本页不重复，也不改那些结论。
+> 读数快照：2026-11-09（Asia/Hong_Kong），本分支 base `origin/main` `a40fba6cacef43b2c746f90f6f1d89484fa34c14`（此前一版读数取自 `a30c8adb`；两者在本页引用的计数上逐字相同：命中 1422、基线 1422、`documents=371`，加了 `#1135` 那页后只有 `candidates` 从 9382 变 9387）。（2026-11-09 修订：§二 的两个耗时数字与 §四 末段的位移结论已按实测改写。）本片只做一件事：给 `tools/verify-verification-comment-anchors.mjs` 补一条**在真仓上跑整道闸门**的单元测试，让它从「有工具、没接线」变成「CI 里真的会红」。工具口径、1422 条基线的构成、逐条收紧路径见 `docs/verification/gy-r90-verification-comment-anchor-guard-20261109.md` 与 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`，本页不重复，也不改那些结论。
 
 ## 一、为什么需要：工具在，但没有任何作业在真仓上跑它
 
@@ -16,15 +16,15 @@
   - `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs:115` 判据 ②（防「扫了个寂寞」）；
   - `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs:187` 判据 ③（防「永远红」）；
   - `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs:222` 判据 ④（负控制）。
-- 真仓那一跑是 `spawnSync(process.execPath, ['tools/verify-verification-comment-anchors.mjs'], { cwd: 仓库根 })`，超时 60 s（实测整道闸门 3.5–4.2 s）。不 import `main()`、不换夹具：扫的就是当前这棵树。
-- 真仓读数只跑一次（① 与 ② 共用同一次输出），整份文件实测 5.7 s：`node --test tests/unit/verification-comment-anchor-gate-on-repo.test.mjs` ⇒ 4/4 pass。
+- 真仓那一跑是 `spawnSync(process.execPath, ['tools/verify-verification-comment-anchors.mjs'], { cwd: 仓库根 })`，超时 60 s（实测整道闸门 3.5–3.9 s，5 次：3.55 / 3.57 / 3.61 / 3.64 / 3.87 s；规模 `documents=372`、`candidates=9529`、`comment=1422`；2026-11-09 在本分支实测，机器 Windows 11 10.0.26200 / Intel i7-12650H 10C16T / Node v24.16.0）。不 import `main()`、不换夹具：扫的就是当前这棵树。
+- 真仓读数只跑一次（① 与 ② 共用同一次输出），整份文件实测 4.6–5.0 s（3 次：4.55 / 4.74 / 4.96 s，同机同规模）：`node --test tests/unit/verification-comment-anchor-gate-on-repo.test.mjs` ⇒ 4/4 pass。
 - 全程只读真仓：⛔ 不写仓内文件、⛔ 不改基线。① 用基线文件 sha256 断言「跑前跑后字节相同」，确保这条测试自己不会变成第二个写盘入口。
 
 ## 三、四条判据与实测读数
 
 | 判据 | 断言 | 本片读数 |
 | --- | --- | --- |
-| ① 正向（主判据） | `EXIT 0`；无 `-FAIL` 行、无 `ERR:` 行、无 `NEW` 行；`基线外新增 0`、`可收紧 0`；`--require-no-new=on`、`--require-no-stale=off`；`-PASS:` 行存在；基线 sha256 前后一致 | `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0 |
+| ① 正向（主判据） | `EXIT 0`；无 `-FAIL` 行、无 `ERR:` 行、无 `NEW` 行；`基线外新增 0`、`可收紧 0`；`--require-no-new=on`、`--require-no-stale=off`；`-PASS:` 行存在；基线 sha256 前后一致 | `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0；同次运行另有 `RELOCATED 0 条`、`区间锚点 679 条 / 窗口内有行为行 403 条` |
 | ② 防「扫了个寂寞」 | `本次命中` == 基线 JSON 条目数；`documents` ≥ 300；基线 `scope` 逐字等于 `docs/verification/**/*.md` | 1422 == 1422（基线 entries=1422）；`documents=371`（含本页） |
 | ③ 防「永远红」 | 真仓读数里 `--require-no-stale=off`；临时夹具里把基线内锚点的目标行从注释改成行为行 ⇒ 默认 EXIT 0 + `STALE` + `可收紧 1`；加 `--require-no-stale` 才 EXIT 1 | 见 §四 D 段 |
 | ④ 负控制 | 同一临时目录、同一临时基线：注入指向注释行的锚点 ⇒ EXIT 1 + `基线外新增 1` + `NEW` 行点名 `doc:line -> target:line`；同一条改指行为行 ⇒ EXIT 0 且命中回到基线条目数 | 见 §四 A/B/C |
@@ -96,7 +96,9 @@ VERIFICATION-COMMENT-ANCHOR-FAIL: 基线有 1 条已不再命中（见上面的 
 [EXIT 1]
 ```
 
-同一条「已修」的事实，默认口径 EXIT 0（只提示）、显式 `--require-no-stale` 才 EXIT 1 —— 这就是判据 ③ 想钉的「不是永远红」：文档插删行导致的键位移不会被误判成红，真要收紧时才有开关。
+同一条「已修」的事实，默认口径 EXIT 0（只提示）、显式 `--require-no-stale` 才 EXIT 1 —— 这就是判据 ③ 想钉的「不是永远红」。
+
+> **本节修订（2026-11-09，位移配对上线后）**：这里原来写的是「文档插删行导致的键位移不会被误判成红」，与当时的实测**相反**：旧键是 `doc|line|target|from` 四元组，文档插一行就让整页锚点变成「基线外新增」，而 `--require-no-new` 默认开 ⇒ EXIT 1。修法与完整读数见 `docs/verification/gy-r90-comment-anchor-relocation-20261109.md`：判定先按身份 `(doc, target, from, kind)` 做多重集配对，文档行号只作位置；配对上的记 `RELOCATED`（只告警、不改退出码），配不上的才是 `NEW`（仍判红）。R1 原文读数——真页 `gy-r28-contract-line-anchors-20261021.md` 第 10 行插入一行无关散文后：`本次命中 45、基线 45、基线外新增 0、可收紧 0`、`RELOCATED 45 条`、EXIT 0；同一夹具换回修前版本的工具则是 `基线外新增 45、可收紧 45`、EXIT 1。
 
 ## 五、变异自证：新测试自己会红
 
@@ -137,12 +139,12 @@ identity        node --test tests/unit/doc-anchor-relocation-identity.test.mjs  
 merge-tree      git merge-tree --write-tree origin/main <本分支 head>（无冲突）                                                                        EXIT 0
 ```
 
-- 本片不改 `.github/**`、不改 `tools/**`、不改 `tools/verification-comment-anchor-baseline.json`：`git show --numstat` 只有 `tests/unit/...test.mjs` 与 `docs/verification/gy-r90-comment-anchor-gate-wiring-20261109.md` 两个新增文件。
+- （#1137 切片的事实；2026-11-09 的位移配对片确实改了 `tools/verify-verification-comment-anchors.mjs` 与本页两处结论，见 relocation 页）本片不改 `.github/**`、不改 `tools/**`、不改 `tools/verification-comment-anchor-baseline.json`：`git show --numstat` 只有 `tests/unit/...test.mjs` 与 `docs/verification/gy-r90-comment-anchor-gate-wiring-20261109.md` 两个新增文件。
 - identity 这条闸门在「HEAD 恰好等于 `origin/main`」的 detached 树上会自己报红（`base 与 HEAD 同一提交…不允许静默通过`），本片先在交付分支上 commit 再跑，读数取的是有 diff 的那棵树。
 
 ## 七、这道工具有哪些参数（负控制按它们做才不需要改工具）
 
-| 参数 | 语义（读 `tools/verify-verification-comment-anchors.mjs:316` 的 `parseArgs`） |
+| 参数 | 语义（读 `tools/verify-verification-comment-anchors.mjs:416` 的 `parseArgs`） |
 | --- | --- |
 | `--root <dir>` | 换根。扫描根、文件名索引、基线解析都跟着它走（`--baseline` 是相对它解析的） |
 | `--scan <path>` | 扫描面，默认 `docs/verification` |
@@ -150,11 +152,11 @@ merge-tree      git merge-tree --write-tree origin/main <本分支 head>（无�
 | `--accepted <text>` | 写基线时记的 `accepted` 标记 |
 | `--why <text>` | 写基线时记的理由 |
 | `--write-baseline` | **唯一**写盘入口；不传就绝不改基线（本片的临时基线靠它生成） |
-| `--require-no-new` / `--no-require-no-new` | 基线外新增是否判红，缺省开（`tools/verify-verification-comment-anchors.mjs:312` 是判定式） |
+| `--require-no-new` / `--no-require-no-new` | 基线外新增是否判红，缺省开（`tools/verify-verification-comment-anchors.mjs:412` 是判定式） |
 | `--require-no-stale` | 可收紧条目是否判红，缺省关 |
 | `--help` / `-h` | 用法 |
 
-未知参数会打 `ERR: 未知参数：…` 并以 EXIT 2 结束。读数列的格式（`-GATE` 行的两个开关显示）在 `tools/verify-verification-comment-anchors.mjs:420`。
+未知参数会打 `ERR: 未知参数：…` 并以 EXIT 2 结束。读数列的格式（`-GATE` 行的两个开关显示）在 `tools/verify-verification-comment-anchors.mjs:543`。
 
 ## 八、不声称
 
@@ -162,7 +164,7 @@ merge-tree      git merge-tree --write-tree origin/main <本分支 head>（无�
 - 不声称它覆盖 `docs/architecture/**`：那是主工具 `verify-doc-anchors.mjs` 的 `--symbol` 面；本闸门只扫 `docs/verification/**/*.md`。
 - 不声称 1422 条基线内锚点都是错的。基线是冻结的现状，不是裁定；本片只让「基线之外的新增」在 CI 里变红。
 - 不声称 `本次命中 == 基线条目数` 能防住所有假绿：它防的是「扫描面塌成空集」这一类；基线整体被改写成「与实际一致」的另一种假绿不归它管（那需要人工逐条裁定，见工具的 `accepted`/`why`）。
-- 不声称本片提高了闸门的判定强度或更换了注释判别口径：判别逻辑一行未动。
+- 不声称本片提高了闸门的判定强度或更换了注释判别口径：#1137 切片里判别逻辑一行未动；2026-11-09 的位移配对片改了判定面（新增 `RELOCATED` 分类、区间锚点改按窗口内首个行为行判 kind），那部分的读数与不声称以 `docs/verification/gy-r90-comment-anchor-relocation-20261109.md` 为准。
 - 不声称负控制的夹具等价于全仓：它只复制了一篇真证据页与它引用的一个真源文件，用来证明「真仓形态下这条通路会红」，不重复工具单测里那 6 个夹具分支。
 
 ## 九、运行方式

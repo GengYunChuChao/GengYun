@@ -25,6 +25,22 @@
  * 基线里有、本次已不是注释行的条目 ⇒ 打印「可收紧基线」提示（缺省 WARN；`--require-no-stale` 可改判红）。
  * `--write-baseline` 只在显式传参时写盘，并打印「写入了 N 条」。
  *
+ * 位移配对（2026-11-09 修订，事故见 `docs/verification/gy-r90-comment-anchor-relocation-20261109.md`）：
+ * 旧键 `doc|line|target|from` 把**文档行号**编进去，于是「在锚点上方插一行散文」会让整页锚点换键，
+ * 全部落到「基线外新增」⇒ 纯位移被误判成红。现在键拆两半：
+ *   - **身份** = `doc|target|from|kindClass`（去掉文档行号，`kindClass` 只分 comment/code）；
+ *   - **位置** = 文档行号 `line`。
+ * 判定先按身份做**多重集**配对（同一身份可能出现多次，必须按重数配对，不能用 Set 去重）：
+ *   同身份、文档行号相同 ⇒ `SAME`（打印 WARN）；
+ *   同身份、文档行号不同 ⇒ `RELOCATED`（新分类，**缺省只告警、不判红**，另起一行读数）；
+ *   当前侧身份重数多于基线 ⇒ 多出来的仍算 `NEW`（**承重判据，缺省 EXIT 1，不降级**）；
+ *   基线侧多出来 ⇒ `STALE`（缺省 WARN，`--require-no-stale` 可改判红）。
+ *
+ * 区间锚点的判定行（同一片修订）：`to > from` 时不再只看 `from` 行——取**窗口内首个行为行**
+ * （非空、且不是注释行）作证据行；有则 `kind=range-covers-code`、`text` 引用该行为行原文，
+ * 并在 WARN/RELOCATED 行标注「区间证据行 N」。是否计入注释锚点仍按 `from` 行判：字节面上的
+ * 「锚点落在注释行」这个契约不变，改的只是「区间里真正承载证据的那一行」与它的 kind 标签。
+ *
  * 用法：
  *   node tools/verify-verification-comment-anchors.mjs
  *   node tools/verify-verification-comment-anchors.mjs --write-baseline
@@ -122,6 +138,20 @@ function readTargetInfo(root, relativePath, cache) {
 }
 
 /**
+ * 区间锚点的证据行：`[from, to]` 里**首个行为行**（非空、且 `commentKindsOf` 判成代码行）。
+ * 为什么不是直接看 `from`：`path:1337-1342` 的 1337 常是「判据注释」的块首，真正承载证据的是
+ * 1338 那一行代码；只按 `from` 判 kind 会把这类锚点一律算成注释锚点，并把注释原文当成证据引用。
+ * 返回 `null` = 整个窗口都是注释/空行（此时沿用 `from` 行的 kind）。
+ */
+export function findRangeEvidenceLine(lines, kinds, from, to) {
+  for (let line = from; line <= to; line += 1) {
+    if ((lines[line - 1] ?? '').trim() === '') continue;
+    if ((kinds[line - 1] ?? null) === null) return line;
+  }
+  return null;
+}
+
+/**
  * 全量扫描：返回 `{ documents, anchors, unresolved, outOfRange, counts }`。
  * `anchors` 每条 = `{ doc, line, target, from, to, kind, text, bare }`；
  * `counts` 的六格互斥：`comment` / `code` / `blank` / `outOfRange` / `unresolved` / `fenced`；
@@ -214,6 +244,11 @@ export function collectCommentAnchors({ root = TOOL_ROOT, scan = DEFAULT_SCAN } 
         counts.code += 1;
         continue;
       }
+      // 区间锚点：证据行取窗口内首个行为行（见 findRangeEvidenceLine 的说明）；
+      // 是否算注释锚点仍按 `from` 判，改的只是「哪一行承载证据」与 kind 标签。
+      const evidenceFrom = reference.to > reference.from
+        ? findRangeEvidenceLine(lines, kinds, reference.from, reference.to)
+        : null;
       const key = `${docPath}|${reference.docLine}|${resolved.relative}|${reference.from}`;
       if (seen.has(key)) {
         counts.duplicate += 1;
@@ -221,14 +256,16 @@ export function collectCommentAnchors({ root = TOOL_ROOT, scan = DEFAULT_SCAN } 
       }
       seen.add(key);
       counts.comment += 1;
+      const evidenceRaw = evidenceFrom === null ? raw : (lines[evidenceFrom - 1] ?? raw);
       anchors.push({
         doc: docPath,
         line: reference.docLine,
         target: resolved.relative,
         from: reference.from,
         to: reference.to,
-        kind,
-        text: raw.trim().slice(0, 120),
+        kind: evidenceFrom === null ? kind : 'range-covers-code',
+        evidenceFrom,
+        text: evidenceRaw.trim().slice(0, 120),
         bare: reference.bare === true,
       });
     }
@@ -243,9 +280,24 @@ function compareAnchors(a, b) {
   return a.doc.localeCompare(b.doc) || a.line - b.line || a.target.localeCompare(b.target) || a.from - b.from;
 }
 
-/** 基线条目键：题目要求的四元组 `doc + line + target + from`；`to` 不参与匹配（区间尾部改动不该洗白整条）。 */
+/**
+ * 基线条目键（**位置敏感**的旧四元组 `doc + line + target + from`）。
+ * 2026-11-09 起它只用于「同一位置是否仍在」的簿记；闸门判定改用 `identityKey` + 多重集配对，
+ * 否则「文档插一行散文」会让整页锚点换键、全被判成 NEW（见文件头「位移配对」）。
+ */
 export function baselineKey(entry) {
   return `${entry.doc}|${entry.line}|${entry.target}|${entry.from}`;
+}
+
+/**
+ * 身份键（**位置无关**）：`doc|target|from|kindClass`，去掉文档行号。
+ * `kind` 只取粗类 comment/code——细分 kind（jsdoc / line-comment / block-comment /
+ * range-covers-code）是描述性的，若进身份键，注释风格改写或本片对区间 kind 的修订
+ * 会让冻结条目整体掉出配对、被误判成 NEW。
+ */
+export function identityKey(entry) {
+  const kindClass = entry.kind === null || entry.kind === undefined || entry.kind === 'code' ? 'code' : 'comment';
+  return `${entry.doc}|${entry.target}|${entry.from}|${kindClass}`;
 }
 
 export function loadBaseline(root = TOOL_ROOT, baselinePath = DEFAULT_BASELINE) {
@@ -286,13 +338,21 @@ export function describeStale(entry, { root = TOOL_ROOT, fileIndex = null } = {}
   if (resolved.status !== 'resolved') return '目标文件已无法解析';
   const { lines, kinds } = readTargetInfo(root, resolved.relative, new Map());
   if (entry.from < 1 || entry.from > lines.length) return '目标行号越界';
-  if ((kinds[entry.from - 1] ?? null) !== null) return `目标行仍是注释行（基线键含文档行号 ${entry.line}，疑似文档插删行导致键位移）`;
+  if ((kinds[entry.from - 1] ?? null) !== null) return `目标行仍是注释行（基线文档行 ${entry.line} 未配到同身份条目：锚点可能已删/改编，或目标行位移后仍无法配对）`;
   return '目标行已不是注释行（疑似已修）';
 }
 
 /**
  * 闸门判定：基线外新增 ⇒ 红（`requireNoNew` 缺省开）；基线陈旧 ⇒ 只提示，`requireNoStale` 可改判红。
- * 返回的 `newAnchors` / `staleEntries` 就是输出清单，调用方不再二次筛选。
+ * 返回的 `same` / `relocated` / `newAnchors` / `staleEntries` 就是输出清单，调用方不再二次筛选。
+ *
+ * 配对口径（多重集，不是 Set）：
+ *   1. 先按 `identityKey` 把基线条目与本次命中各自分组——同一身份可以出现多次（例如两行文档
+ *      引用同一目标的同一行），**必须按重数配对**；
+ *   2. 组内先配文档行号相同的（`SAME`），再按行号排序把两侧剩下的按 `min(重数)` 配成
+ *      `RELOCATED`（文档行号变了、锚点语义没变）；
+ *   3. 当前侧剩下的重数才是 `NEW`（承重判据）；基线侧剩下的重数才是 `STALE`。
+ * 这样「删掉重复锚点里的一条」只会消掉一条，同身份的另一条不会被配对吞掉。
  */
 export function evaluateCommentAnchorGate({
   anchors,
@@ -302,15 +362,55 @@ export function evaluateCommentAnchorGate({
   root = TOOL_ROOT,
   fileIndex = null,
 }) {
-  const baselineKeys = new Set(baseline.entries.map(baselineKey));
-  const currentKeys = new Set(anchors.map(baselineKey));
-  const newAnchors = anchors.filter(anchor => !baselineKeys.has(baselineKey(anchor)));
+  const groupBy = (items, keyOf) => {
+    const groups = new Map();
+    for (const item of items) {
+      const key = keyOf(item);
+      const group = groups.get(key);
+      if (group === undefined) groups.set(key, [item]);
+      else group.push(item);
+    }
+    return groups;
+  };
+  const baselineByIdentity = groupBy(baseline.entries, identityKey);
+  const currentByIdentity = groupBy(anchors, identityKey);
+  const identities = new Set([...baselineByIdentity.keys(), ...currentByIdentity.keys()]);
+
+  const same = [];
+  const relocated = [];
+  const newAnchors = [];
+  const staleRaw = [];
+  for (const identity of identities) {
+    const currentAnchors = currentByIdentity.get(identity) ?? [];
+    const remainingBaseline = (baselineByIdentity.get(identity) ?? []).slice();
+    const remainingCurrent = [];
+    for (const anchor of currentAnchors) {
+      const at = remainingBaseline.findIndex(entry => entry.line === anchor.line);
+      if (at === -1) {
+        remainingCurrent.push(anchor);
+        continue;
+      }
+      remainingBaseline.splice(at, 1);
+      same.push(anchor);
+    }
+    remainingCurrent.sort(compareAnchors);
+    remainingBaseline.sort((a, b) => a.line - b.line);
+    const paired = Math.min(remainingCurrent.length, remainingBaseline.length);
+    for (let index = 0; index < paired; index += 1) {
+      relocated.push({ anchor: remainingCurrent[index], entry: remainingBaseline[index] });
+    }
+    for (let index = paired; index < remainingCurrent.length; index += 1) newAnchors.push(remainingCurrent[index]);
+    for (let index = paired; index < remainingBaseline.length; index += 1) staleRaw.push(remainingBaseline[index]);
+  }
   const index = fileIndex ?? buildFileNameIndex(root);
-  const staleEntries = baseline.entries
-    .filter(entry => !currentKeys.has(baselineKey(entry)))
-    .map(entry => ({ ...entry, staleReason: describeStale(entry, { root, fileIndex: index }) }));
+  const staleEntries = staleRaw
+    .map(entry => ({ ...entry, staleReason: describeStale(entry, { root, fileIndex: index }) }))
+    .sort((a, b) => a.doc.localeCompare(b.doc) || a.line - b.line);
+  same.sort(compareAnchors);
+  newAnchors.sort(compareAnchors);
+  relocated.sort((a, b) => compareAnchors(a.anchor, b.anchor));
   const failed = (requireNoNew && newAnchors.length > 0) || (requireNoStale && staleEntries.length > 0);
-  return { newAnchors, staleEntries, failed };
+  return { same, relocated, newAnchors, staleEntries, failed };
 }
 
 export function parseArgs(argv) {
@@ -360,9 +460,24 @@ function printSummary(streams, collected) {
     + `（unresolved 中 ambiguous=${counts.ambiguous}）`);
 }
 
-function printAnchor(streams, label, anchor) {
+function printAnchor(streams, label, anchor, note = '') {
   const range = anchor.to === anchor.from ? `${anchor.from}` : `${anchor.from}-${anchor.to}`;
-  streams.log(`${label} ${anchor.doc}:${anchor.line} -> ${anchor.target}:${range}  ${anchor.text}`);
+  const evidence = anchor.evidenceFrom === null || anchor.evidenceFrom === undefined
+    ? ''
+    : `（区间证据行 ${anchor.evidenceFrom}）`;
+  streams.log(`${label} ${anchor.doc}:${anchor.line} -> ${anchor.target}:${range}  ${note}${evidence}${anchor.text}`);
+}
+
+/** FAIL 时逐条落点：说清是哪一条、以及它该登记到基线 JSON 的哪四个字段。 */
+function printFailedEntries(streams, newAnchors, limit = 100) {
+  for (const anchor of newAnchors.slice(0, limit)) {
+    const range = anchor.to === anchor.from ? `${anchor.from}` : `${anchor.from}-${anchor.to}`;
+    streams.error(`${GATE}-FAIL-ENTRY: ${anchor.doc}:${anchor.line} -> ${anchor.target}:${range}`
+      + `（kind=${anchor.kind}；登记落点：doc/line/target/from 四字段）`);
+  }
+  if (newAnchors.length > limit) {
+    streams.error(`${GATE}-FAIL-ENTRY: 另有 ${newAnchors.length - limit} 条，见上面的 NEW 行`);
+  }
 }
 
 export function main(argv = process.argv.slice(2), streams = { log: console.log, error: console.error }) {
@@ -406,9 +521,17 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     requireNoStale: options.requireNoStale,
     root,
   });
-  const newKeys = new Set(gate.newAnchors.map(baselineKey));
+  const newSet = new Set(gate.newAnchors);
+  const relocatedByAnchor = new Map(gate.relocated.map(pair => [pair.anchor, pair.entry]));
   for (const anchor of collected.anchors) {
-    printAnchor(streams, newKeys.has(baselineKey(anchor)) ? 'NEW ' : 'WARN', anchor);
+    if (newSet.has(anchor)) {
+      printAnchor(streams, 'NEW ', anchor);
+    } else if (relocatedByAnchor.has(anchor)) {
+      const entry = relocatedByAnchor.get(anchor);
+      printAnchor(streams, 'RELOCATED', anchor, `（位移：基线文档行 ${entry.line} → ${anchor.line}）`);
+    } else {
+      printAnchor(streams, 'WARN', anchor);
+    }
   }
   for (const entry of gate.staleEntries) {
     const range = entry.to === entry.from ? `${entry.from}` : `${entry.from}-${entry.to}`;
@@ -418,9 +541,17 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   streams.log(`${GATE}-GATE: 本次命中 ${collected.anchors.length}、基线 ${baseline.entries.length}、`
     + `基线外新增 ${gate.newAnchors.length}、可收紧 ${gate.staleEntries.length}`
     + `（--require-no-new=${options.requireNoNew ? 'on' : 'off'}、--require-no-stale=${options.requireNoStale ? 'on' : 'off'}）`);
+  // 新增读数另起一行（上面 -GATE 行的格式被测试与证据页 grep，逐字不动）。
+  streams.log(`${GATE}-RELOCATED: RELOCATED ${gate.relocated.length} 条（同一身份 doc|target|from、文档行号变化；`
+    + '默认只告警、不判红）');
+  const rangeAnchors = collected.anchors.filter(anchor => anchor.to > anchor.from);
+  const rangeEvidence = rangeAnchors.filter(anchor => anchor.evidenceFrom !== null && anchor.evidenceFrom !== undefined);
+  streams.log(`${GATE}-RANGE: 区间锚点 ${rangeAnchors.length} 条，其中窗口内有行为行 ${rangeEvidence.length} 条`
+    + '（kind=range-covers-code；行上标注「区间证据行」）');
   if (gate.newAnchors.length > 0 && options.requireNoNew) {
     streams.error(`${GATE}-FAIL: 基线外新增 ${gate.newAnchors.length} 条注释锚点（见上面的 NEW 行）——`
       + '要么把锚点改到实质行，要么显式 --write-baseline 登记并写明理由');
+    printFailedEntries(streams, gate.newAnchors);
     return 1;
   }
   if (gate.staleEntries.length > 0 && options.requireNoStale) {
@@ -431,7 +562,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.log(`${GATE}-WARN: 基线有 ${gate.staleEntries.length} 条已不再命中，可收紧基线`
       + '（当前只提示、不改退出码；需要钉死时加 --require-no-stale）');
   }
-  streams.log(`${GATE}-PASS: 基线内 ${new Set(collected.anchors.map(baselineKey)).size - gate.newAnchors.length} 条注释锚点只告警，`
+  streams.log(`${GATE}-PASS: 基线内 ${collected.anchors.length - gate.newAnchors.length} 条注释锚点只告警，`
     + `没有基线外新增${gate.staleEntries.length > 0 ? '；另有可收紧条目待人工收册' : ''}`);
   return 0;
 }
