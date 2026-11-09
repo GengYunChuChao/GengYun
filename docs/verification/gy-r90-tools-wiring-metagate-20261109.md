@@ -286,14 +286,19 @@
 
 ## 七、六道闸门（本片实跑）
 
+下列读数全部在 `ed3884cb`（= 本页判据/白名单定稿后、merge `origin/main` 得到的提交）上实跑；
+本提交只补这张表，没有改判据、白名单或 §三/§四的读数。
+
 | # | 闸门 | 命令 | EXIT | 尾行摘录 |
 | --- | --- | --- | --- | --- |
-| ① | 四连 strict anchors | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `本次：不在区间 44、UNDECLARED 258、配成对 1317`；`PASS: --strict 下没有基线之外的新增` |
+| ① | 四连 strict anchors | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `本次：不在区间 44、UNDECLARED 259、配成对 1327`（基线 44 / 265 / 1051）；`PASS: --strict 下没有基线之外的新增` |
 | ② | 锚点搬迁身份单测 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ tests 37 / ℹ pass 36 / ℹ fail 0 / ℹ skipped 1`（提交前跑会红：`base == HEAD` 时拒绝静默通过） |
-| ③ | 契约状态 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 中文表格一致`；`PASS: 状态为人工判定…` |
-| ④ | 文档闸门 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 368 页（扫描面 373 页：docs/verification）——读数七条判据全部自洽` |
-| ⑤ | 钻孔读数 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 611（glob 合计 581）` |
+| ③ | 契约状态 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 行号区间 324 条…`；`PASS: 中文表格一致`；`PASS: 状态为人工判定…` |
+| ④ | 文档闸门 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 369 页（扫描面 374 页：docs/verification）——读数七条判据全部自洽` |
+| ⑤ | 钻孔读数 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 611（glob 合计 581）；生长型读数按下界判` |
 | ⑥ | 与 main 合并试算 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 输出只有一行树哈希、**没有冲突路径行**（树哈希随任何文字改动而变，故不在此钉死具体值） |
+
+另跑了下游的注释锚点闸门（`node tools/verify-verification-comment-anchors.mjs`）：`本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0。
 
 ### 七之一、本页自己被下游闸门抓了一次（真实案例，不是夹具）
 
@@ -319,7 +324,9 @@
 - **不声称替代真正的 CI 接线**：B 类接线的判定面比在 workflow 里单列一步窄（没有独立 job、没有路径过滤、
   没有 failure annotation）。要让 `tools/**` 的接线强度整体上一个台阶，仍应另开 B 档 PR 往 `.github/workflows/**` 加 `run:`。
 - **不声称不误报**：本闸门是静态解析（不做 shell / JS 语义分析）。方向是**宁可低估**——`cwd` 不明、
-  路径不锚、断言不绑定到站点，一律不算接线；代价是少数真接线可能被判未接线，需要显式登记或改写成可判形态。
+  路径不锚、断言不绑定到站点、脚本位经过两层以上 helper 转发，一律不算接线；代价是少数真接线可能被判未接线，
+  需要显式登记或改写成可判形态（v3 已把「一层 helper + 调用点实参」这种形状收进来，`i22-failmatrix-evidence-table`
+  就是这么从白名单回到 B 类的）。
 - **不声称 by-design 的判断有外部背书**：这些理由来自各工具的文件头自述、`.gitignore`、以及
   `access-verification.yml:43` 的 `git check-ignore` 证据；它是本片的判断，不是工具作者的授权。
 - **不声称白名单可以长期不动**：③ 只挡「已过期」，挡不住「理由变得不成立」；理由失真需要人工复审。
