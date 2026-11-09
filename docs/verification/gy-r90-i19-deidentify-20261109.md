@@ -3,7 +3,7 @@
 | 项 | 值 |
 | --- | --- |
 | 文档性质 | **证据页**（只登记"哪一行写了什么、我本机跑出什么读数"）。不代监工判定，不代关 `#19` |
-| 取证时刻 | `2026-11-09`（PowerShell，Node `v24.16.0`，PostgreSQL `17.11` 二进制取自 `E:\GengYunCommander\.pg17\pgsql\bin`） |
+| 取证时刻 | `2026-11-09`（PowerShell，Node `v24.16.0`，PostgreSQL `17.11` 二进制取自 `$env:GY_PG_BIN` 指向的目录） |
 | 仓库 / 基线 | `GengYunChuChao/GengYun`，`origin/main` = `a372bd91f420f869c8f3b0b122ef3e9576411ffc`（**写作时的 main**，此值会随主干前进而漂移；初版按 `d7160e4070ce841dee2c111635bb5a11bce17907` 取证，合并 `#1128` 后本页所有行号已按 `a372bd91` 的树逐条复核） |
 | 被取证对象 | `#19`「注销去身份」**片1**（由 `#1108` 合入）：迁移 `0057` + 回滚件 + 权限登记（`20-login-roles.sql` / `90-assert-least-privilege.sql`）+ 受理调用点 + 真库臂 `A1–A11` |
 | 本 PR 改动面 | **B 档文档**：新增本页 + `docs/architecture/contract-status.json` 里 `requestAccountDeletion` 的 `blocker` 一行 + 中文镜像表同一行 + `tests/unit/contract-status-ocr-anchor-truth.test.mjs` 的台账体积基线常量。`services/**`、`deploy/**`、`.github/**`、`tests/**` 的产品行为 **0 行** |
@@ -222,8 +222,8 @@
 
 ## 4 闸门读数（我实跑）
 
-- 取证环境：本 PR 的 worktree（`E:\GengYunCommander\.pg17\wt-i19page`），Windows + PowerShell 7。`origin/main` = `a372bd91f420f869c8f3b0b122ef3e9576411ffc`（写作时的 main；本分支已 merge 该提交，闸门 2 与闸门 6 的 base 就是它）。真库臂用 `E:\GengYunCommander\.pg17\pgsql\bin` 里的 PostgreSQL 17.11。
-- 真库臂本身（不在六道闸门里，但本页所有「本机读数」都出自它）：`node tests/integration/deidentify-account-pg.mjs` ⇒ **EXIT 0、11 秒**，A1–A11 十一条全过。集群端口由 `pickFreePort()` 现分配（本次 62982），数据库名 `gengyun_i19_deidentify_test`，数据目录建在 `E:\GengYunCommander\.pg17\i19pg\gy-i19-deidentify-pg-<随机后缀>`（默认 `tmpdir()` 下 `initdb` 会 `could not create directory ... Permission denied`，所以显式给了根目录），收尾 `pg_ctl stop -m immediate` 并删目录；完整日志留在 `E:\GengYunCommander\.pg17\r90i19page-arm.log`。
+- 取证环境：本 PR 的 worktree（`<worktree 名>`），Windows + PowerShell 7。`origin/main` = `a372bd91f420f869c8f3b0b122ef3e9576411ffc`（写作时的 main；本分支已 merge 该提交，闸门 2 与闸门 6 的 base 就是它）。真库臂用 `$env:GY_PG_BIN` 指向目录里的 PostgreSQL 17.11。
+- 真库臂本身（不在六道闸门里，但本页所有「本机读数」都出自它）：`node tests/integration/deidentify-account-pg.mjs` ⇒ **EXIT 0、11 秒**，A1–A11 十一条全过。集群端口由 `pickFreePort()` 现分配（本次 62982），数据库名 `gengyun_i19_deidentify_test`，数据目录建在 `$env:GY_I19_PG_ROOT` 下的 `gy-i19-deidentify-pg-<随机后缀>`（默认 `tmpdir()` 下 `initdb` 会 `could not create directory ... Permission denied`，所以显式给了根目录），收尾 `pg_ctl stop -m immediate` 并删目录；完整日志留在仓外本机临时目录（文件名 `r90i19page-arm.log`）。
 
 | # | 命令 | EXIT | 尾行 / 关键读数 |
 | --- | --- | --- | --- |
