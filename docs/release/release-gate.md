@@ -36,6 +36,7 @@ node tools/release-gate.mjs --list
 | `--only <a,b>` | 只跑点名的门禁 | ⛔ **不能与 `--skip` 同时给**（同给即退出码 2，见 §3.1）；未知 id 属用法错误 |
 | `--skip <a,b>` | 跑除外点名的门禁 | 与 `--only` 同给属用法错误；过滤后为空属用法错误 |
 | `--base <ref>` | 待发布 diff 的基线 | 泄漏与产物门禁都只看 `<base>...HEAD` |
+| `--require-base` | 强制「基线必须是解析得到、且不等于 HEAD 的提交」 | 解析不到、或解析结果就是 `HEAD`（`--base HEAD`、或默认 fallback 落到 `HEAD`）⇒ **退出码 2**；行为与不加时完全一致，只是把「空 diff 也判 pass」这条假绿通道堵死（见 §7 CI 用法） |
 | `--out <path>` | 报告落盘路径 | 默认 `release-gate-report.json`；内容与 stdout 逐字节一致 |
 | `--max-file-bytes <n>` | 大文件阈值 | 默认 5242880（5 MiB） |
 | `--binary-allow <.ext>` | 放行某些扩展名的二进制 | 逗号分隔，如 `--binary-allow .bin,.png`；默认空＝一律算失败 |
@@ -170,11 +171,21 @@ node tools/release-gate.mjs --only pg --pg
 不取代 CI、也不放宽任何 CI 判据。两者口径对齐处：`contract` 门禁与 CI 的 `contract` job 同为
 `npm run test:contract` + `node tools/verify-contract-status.mjs`。
 
+**将来把本脚本接进 CI 时的用法**：`node tools/release-gate.mjs --base origin/main --require-base`。
+CI 的 checkout 常是浅克隆或单分支，默认候选链（`upstream/main → origin/main → main → HEAD`）可能一路落到
+`HEAD`；此时 `<base>...HEAD` 是空 diff，扫 0 行也判 `pass`——等于把「没看」当成「没问题」。
+`--require-base` 把这种情况变成退出码 2，逼调用方显式给出真实基线，而不是静默给一份空报告。
+（本仓 CI 尚未接入本脚本，见 §7 开头；接入是另一片改动。）
+
 ## 8 已知边界
 
 - **不做**整仓扫描、不跑 `integration`/`evaluation`/`build`——那些由 CI 与本机对应脚本负责，塞进来只会变慢变糊。
 - **不联网**、不需要任何 token：脚本只读 git 与文件系统，不碰 GitHub API。
 - `secrets`/`artifacts` 只看 diff：**已存在于仓库里的**历史泄漏不会被本门禁翻出来（那是 `lint-workspaces` 与人工排查的范围）。
+- diff 取 `--diff-filter=AMR`：`A`（新增）、`M`（修改）、`R`（改名）都在待扫集合里。加 `R` 是因为
+  `git mv` 会**整份漏扫**——改名后的文件内容不进 `AM` 视角，`git mv` 后再追加的密钥、改名后的大文件/二进制
+  都会被判成「0 行、验过」。`R` 是 `AM` 的严格超集方向上的补充，不会让原本红的变绿；纯删除（`D`）仍不扫，
+  因为删掉的代码不进入待发布版本。
 - 泄漏规则是**启发式**：命中即拦截（要求人看清），不保证零漏报；`local-absolute-path` 允许作为 medium 放行修复判断。
 - 报告默认落在仓库根的 `release-gate-report.json`，已在 `.gitignore` 里；不要把它提交进仓库。
 - `contract` 门禁第二步会**真装配一次 app** 清点挂载路由（子进程），单次实测 6.0–13.2s、并发机器上更久。
