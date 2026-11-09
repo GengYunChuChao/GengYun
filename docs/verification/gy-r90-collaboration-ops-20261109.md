@@ -34,18 +34,19 @@
 ### 1.2 时间边界：这套行为到哪儿为止
 
 - **发生区间**：`#1084`–`#1113`。`#1121` 的审计页把 27 张逐张还原过：19 张有 `ready_for_review` 事件，其中 **11 张由 App 自己置 ready**，ready→merge 为 4–126 秒，且这 11 张的 review 时间**全部早于** ready（`docs/verification/gy-r90-supervisor-self-merge-audit-20261109.md:8`）。本页 §1.1 的三张把这个间隔压到 3 秒。
-- **边界**：`a4183da6`（`2026-11-09T10:36:30+08:00` / `02:36:30Z`，「#19 片1 证据页 + 台账口径同步 (#1127)」）之后，main 开启分支保护，合并门禁明确**草稿阻塞**（`docs/pr-review-policy.md:118`、`docs/pr-review-policy.md:133`）。此后未再出现「监工替作者 ready」。
+- **边界**：`a4183da6`（`2026-11-09T10:36:30+08:00` / `02:36:30Z`，「#19 片1 证据页 + 台账口径同步 (#1127)」）之后，main 开启了分支保护。注意「草稿阻塞」**不是**这道边界新写的规则：`docs/pr-review-policy.md:118`、`docs/pr-review-policy.md:133` 的文字在此前 18 天以上就已存在（现行行由 `675940b1` 于 2026-10-22 定型，更早可追到 `2eb437e6`，2026-10-13）——边界改变的是**执行面**（main 上的保护）与监工行为，不是规则文本。此后未再出现「监工替作者 ready」。
 - **边界两侧的实测对照**（`issues/<n>/timeline` 的 `ready_for_review.actor.login`）：
   - 边界**前最后一张**由 App 自置 ready：`#1135`，19:52:21Z by `gengyun-supervisor[bot]`，19:52:37Z 由同一 App 合并。
-  - 边界**后**：`#1127` 02:36:23Z 与 `#1137` 02:36:21Z 的 ready 都是 `Sek1ro-oka`（作者）发的，合并也是作者点的；`#1133`（19:47:27Z）同样是作者 ready 后 3 秒自合。
+  - 边界**时刻前后**：`#1137` 02:36:21Z、`#1127` 02:36:23Z 的 ready 都是 `Sek1ro-oka`（作者）发的，合并也是作者点的——但两者都比边界提交 `a4183da6`（02:36:30Z）**早几秒**，严格说仍落在边界内；`#1133`（19:47:27Z）同理。
+  - **真正晚于边界的只有 `#1134`**：02:59:08Z ready by `Sek1ro-oka`（作者），02:59:11Z 自合。n=1，不足以下通则——只记「可观测窗口内未见监工替作者 ready」。
 - **边界不是「某天之后大家都变自觉」**，而是有可核参数撑着：分支保护 + 「非草稿」写进 `docs/pr-review-policy.md:133` 的门禁。参数见 §1.3。
 
 ### 1.3 现行规则（判据，不是叙述）
 
 1. **draft PR 不进入合并队列。** 「草稿」与 CI 失败、冲突、未解决阻塞同级，都是合并门禁：`docs/pr-review-policy.md:118`。
-2. **监工不会代替作者 ready。** 边界后两张样本（`#1127`／`#1137`）的 `ready_for_review` 作者都是 `Sek1ro-oka`；边界前那种「App 自己置 ready」的做法已停止（§1.2）。
+2. **监工不会代替作者 ready。** 边界之后目前只有一张样本 `#1134`，其 `ready_for_review` 是作者 `Sek1ro-oka` 自己发的（02:59:08Z）；边界时刻之前的 `#1127`／`#1137` 同样由作者发。样本只有 1 张，所以这里只写「**可观测窗口内未见监工替作者 ready**」，不写成「永远如此」（§1.2）。
 3. **只有作者或获授权方 ready 之后，门禁才重新评估**：要重读当前 HEAD、真实 base、非草稿状态、冲突、适用 CI、reviews 与未解决线程（`docs/pr-review-policy.md:133`）；protected branch 的 `strict` 会要求分支与 main 同步后才算绿。
-4. **当前分支保护实测**（`gh api repos/GengYunChuChao/GengYun/branches/main/protection`，2026-11-09T10:3xZ 读）：`required_status_checks.contexts` = `unit-tests, contract-tests, static-check, docs, build, access-guards`；`strict` = `true`；`enforce_admins` = `false`；`allow_force_pushes` = `false`；`allow_deletions` = `false`；`required_pull_request_reviews` = 未设（`false`）。
+4. **当前分支保护实测**（`gh api repos/GengYunChuChao/GengYun/branches/main/protection`，2026-11-09T03:31:34Z 读）：`required_status_checks.contexts` = `unit-tests, contract-tests, static-check, docs, build, access-guards`；`strict` = `true`；`enforce_admins` = `false`；`allow_force_pushes` = `false`；`allow_deletions` = `false`；`required_pull_request_reviews` = 未设（`null`）。
 5. **PG 臂未设为必需**（`real-pg-*` 不在上面六个 context 里）：它们要起真 PG、装包、跑 4–5 分钟，抖动成本高；设成必需会把基础设施抖动直接变成合并阻塞（§5）。
 6. **操作建议仍然成立**：**要冻结就只推分支、不开 PR**。现在的 draft 虽然阻塞合并，但「解除草稿」这一步随时可能发生，PR 开着就等于随时回到合并队列；把 draft 当保险箱仍是错的。
 - 反例（**别**把 draft 当保险）：`#1110` 以 draft 开出（16:29:06Z）、16:40:06Z 被监工 review，最后是**作者自己**在 16:58:09Z 关闭的，关闭理由写在两条评论里——16:58:01Z「已由 #1115 承接」、16:58:07Z「关闭为由 #1115 承接（分支 docs/gy-r90-closeout-nits 保留未删）」。它至今 `isDraft=true`、`mergedAt` 为空。⇒ draft 状态救不了它，救它的是「承接 + 关闭」这套动作（见 §4 第 2 条）。
@@ -82,9 +83,11 @@
 
 ⚠️ **派单写的「B 档由持 PAT 的账号代合」不足以当下结论**：不碰 `.github/**` 的 B 档（`#1108`／`#1119`）实测由 `app/gengyun-supervisor` 合并；改 `.github/workflows/**` 的本轮 3 张确实由 `Sek1ro-oka` 合——但这不是「B 档」的规律，也不是「workflow 只能人合」的规律（§2.3 的反例）。**唯一可执行的判据是 `merged_by` 实测，逐张看，不写通则。** 另需分清：策略里的「不自动回退个人 PAT」（`docs/pr-review-policy.md:18`）约束的是**监工自己**不用个人 PAT 去批复／合并，跟「谁有 `workflow` scope 能推送」是两件事。
 
-### 2.3 `.github/**` 与 `workflows` 权限：**推送**需要，**合并**不需要
+### 2.3 `.github/**` 与 `workflows` 权限：**推送**受约束；**合并**不要预判（以 `mergedBy` 实测为准）
 
-**本页第二版写错过的一条，留档防复发**：第二版把「改 `.github/**` 的 B 档只能由持 `workflows` 权限的账号合；App 没这权限 ⇒ 403 ⇒ 别指望 App」写成了判据。**这条被实测证伪**：合并一个改 workflow 的 PR，不需要 `workflows` 权限。
+**本页第二版写错过的一条，留档防复发**：第二版把「改 `.github/**` 的 B 档只能由持 `workflows` 权限的账号合；App 没这权限 ⇒ 403 ⇒ 别指望 App」写成了判据。**这条已被实测推翻**：下表 5 张都改了 workflow，都由 App 合并——「非持权账号合不了」不成立。
+
+但**反方向也不要写成通则**：这 5 张只能证明「**App 能**合含 workflow 改动的 PR」；它们**不能**证明「合并不需要 `workflows` 权限」——如果 App 本身持有该权限，这 5 张样本对机制零信息。GitHub 既不公开合并时的权限判定，也不记录分支是谁推的，所以**机制层面本页什么都不主张**。
 
 反例（`gh api repos/GengYunChuChao/GengYun/pulls/<n>` 看 `merged_by.login`，`/pulls/<n>/files` 看是否含 workflow）：
 
@@ -96,13 +99,15 @@
 | `#918` | 同上 | 2026-11-04T08:10:41Z | `.github/workflows/engineering-shell.yml` |
 | `#1049` | 同上 | 2026-11-07T06:20:26Z | `.github/workflows/real-pg-integration.yml` |
 
-⇒ 5 张全部由 App 合并、全部含 workflow 改动 ⇒「App 合不了 workflow PR」不成立。
+> 表内 `merged_by` 走 REST（`gengyun-supervisor[bot]`）；若用 `gh pr list --json mergedBy`（GraphQL）读到的会是 `app/gengyun-supervisor`。两者是**同一个账号**的两种形态，复核时别当成两个主体。
+
+⇒ 5 张全部由 App 合并、全部含 workflow 改动 ⇒「App 合不了 workflow PR」不成立。这是**存在性反证**，不是「合并无需该权限」的证明：App 若持有 `workflows` 权限，同样能合出这个结果。
 
 **本轮 5 张样本只是相关性，不是判据**（`gh pr list --state merged -L 40 --json number,mergedBy,files` 的窗口分布）：碰 `.github/**` 的 3 张（`#1093` 只改 `real-pg-integration.yml`；`#1123` workflow + 验证页、`reviews` 为空、作者自置 ready 自合；`#1128` workflow + 验证页 + 4 个测试，App 18:52:42Z 给了「结论：通过」仍由人合）全部由 `Sek1ro-oka` 合；不碰的由 App 合 23 张（含 45 文件的 `#1108`、4 文件的 `#1119`）、人合 14 张。窗口内「App 合并」与「碰 `.github/**`」零交集——但上表已经证明这只在本轮窗口成立，换个窗口就反了。
 
 按 `docs/pr-review-policy.md:173` 与 `docs/pr-review-policy.md:197`，`.github/**` 是 B 档、而且「永远」是 B 档；这是**档位**问题，与「谁点合并」无关——第二版把它讲成「平台权限把谁能点收窄到 App 之外」，那是把推送约束误当成了合并约束。
 
-**能保留的那半句（本仓实测，不外推）**：`workflows` 权限约束的是**推送／创建**含 `.github/workflows/**` 改动的分支——本仓这类推送由持 `workflow` scope 的账号执行；**合并**不受此限（反例见上表）。机制层面只记到这里，不再往外推。
+**能保留的那半句（按 GitHub 规则推断，本仓未直证）**：`workflows` 权限约束的是**推送／创建**含 `.github/workflows/**` 改动的分支；本仓这类分支由持 `workflow` scope 的账号推送（GitHub 不对外暴露推送者，这条是流程记录、不是可核读数）。**合并**这一步不要预判：上表证明 App 合得动，但「为什么合得动」（App 自身持权／平台在合并时不校验）本页无法区分，不写结论。
 
 **判据（一句话）**：`gh pr view <n> --json files,mergedBy` 逐张看 `mergedBy.login`，**以实测为准，不推通则**。本机也读不到 App 的安装权限清单（`gh api /repos/GengYunChuChao/GengYun/installation` → 401「A JSON web token could not be decoded」，该端点要 App JWT），所以任何「App 有／没有某权限」的断言都不该写进交接页。
 
@@ -231,7 +236,7 @@
 | --- | --- |
 | 时间线用 `gh api repos/…/pulls/<n>/timeline` | 本机 gh 2.102.0 打这个端点是 **404**（加 `Accept: application/vnd.github.mockingbird-preview+json` 也一样）；改用 `issues/<n>/timeline`，`reviewed`／`ready_for_review`／`merged` 事件都在里面 |
 | `#1110` 是「draft 被监工置 ready + squash」的样本 | `#1110` 至今 `isDraft=true`、`mergedAt` 为空、16:58:09Z 由作者关闭，理由是「已由 #1115 承接」⇒ 它是**承接关闭**样本，不是置 ready 样本 |
-| B 档「由持 PAT 的账号代合」 | **不足以当下结论**：本轮 5 张里不碰 `.github/**` 的由 App 合（`#1108`／`#1119`），碰 `.github/workflows/**` 的由 `Sek1ro-oka` 合（`#1093`／`#1123`／`#1128`）——但跨轮反例 `#716`／`#753`／`#767`／`#918`／`#1049` 全部由 App 合并且都改了 workflow ⇒ 「`workflows` 权限」卡的是**推送**、不是合并。判据：逐张看 `mergedBy`（§2.3） |
+| B 档「由持 PAT 的账号代合」 | **不足以当下结论**：本轮 5 张里不碰 `.github/**` 的由 App 合（`#1108`／`#1119`），碰 `.github/workflows/**` 的由 `Sek1ro-oka` 合（`#1093`／`#1123`／`#1128`）；但跨轮反例 `#716`／`#753`／`#767`／`#918`／`#1049` 全部由 App 合并且都改了 workflow ⇒ 只能得出「**不能据『改 workflow』推断合并者身份**」，推不出「合并无需该权限」（§2.3）。判据：逐张看 `mergedBy` |
 | 八条坑里「相对 `-SrcDir` 会把主检出 HEAD 推上去」 | 结论对，机制要补：脚本第 176 行先 `Set-Location` 进主检出、第 179 行才 `git -C $SrcDir`，所以**相对路径**才落在主检出上（绝对路径不受影响） |
 | 「`jobs/<id>/logs` 会返回 0 字节」 | 本轮实测 0 字节，但同仓历史页取到过原文（`docs/verification/gy-r66-wire-audit-logs-arm-20261027.md:283`）⇒ 是「会」不是「恒」 |
 | 代贴时序：`#1093`／`#1097`／`#1098` 在合并后，`#1092`／`#1094`／`#1096` 在合并前 | **对得上**（逐条见 §3.2，差值 −60 秒到 +24 秒） |
