@@ -129,3 +129,27 @@ cli auto --project "<LOCAL import root>" --auto-port 9420
 - 本页只登记「机器可复核的走查读数」，不重复 `docs/demo/演示脚本.md` 的人肉九段脚本。
 - 若要真机对照，需要真实微信登录（真机 `code`），属外部依赖。
 - 本页不关闭 #1145，也不把模拟器读数升级为真机或业务验收。
+
+## 8. 复测读数（2026-11-10，基线 `b181e36d`）
+
+小程序排版与时间显示在此后有过改动（`#1167` 按 351×761 收拾排版、`#1168` 详情页改相对时间；`#1172` 当时仍在评审、未含），因此按同一方法复测一次。方法同 §1／§6：重新生成 LOCAL 副本 → `cli auto --auto-port 9420` → stub 演示栈 → 登录 → 逐页 `reLaunch`。
+
+结果：11 页仍全部进入，11 张截图全部取得。
+
+| 页面 | 2026-11-09 首测 `data()` 键数 | 2026-11-10 复测 |
+|---|---:|---:|
+| `pages/home/home` | 13 | 13 |
+| `pages/community/community` | 19 | 18 |
+| `pages/identify/identify` | 34 | 30 |
+| `pages/messages/messages` | 22 | 22 |
+| `pages/profile/profile` | 27 | 27 |
+| `pages/history/history` | 12 | 13 |
+| `pages/qa/qa` | 30 | 30 |
+| `pages/knowledge/knowledge` | 23 | 23 |
+| `pages/favorites/favorites` | 17 | 18 |
+| `pages/consent/consent` | 24 | 22 |
+| `pages/deletion/deletion` | 18 | 17 |
+
+- 登录后落点：本次是 `pages/home/home`，首测是 `pages/consent/consent`。两次都用同一 stub 合成身份；本页只登记读数，不对差异下因果结论。
+- §4 记的 consent 窄栏在本次**未复现**：该页整宽渲染，卡片占满宽度；「用途政策尚未读取成功，无法判断该用途此刻能否授予」提示仍在，`授予` 按钮呈禁用态，与 stub 栈下政策读面未绑定接收方一致。
+- 边界同 §5：仍不证明真机、不证明真实 AppID、不证明业务正确性。
