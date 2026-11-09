@@ -104,8 +104,8 @@
  *   **在反向扫描面内**：往里新种一条 `INSERT INTO … admin_audit_events` 却不登记 ⇒ 用例照样红；
  * - **反向扫描面自带下界与成员断言**（GY-R68 增量审查 C-1）：`outsideSurfaceSqlFiles()` 的 roots
  *   写错时（`[]`、不存在的目录、只留 `deploy`）原先会「在空集上恒真」地绿。现在
- *   `assertReverseSurface()` 先要求 ≥ 20 份 SQL（真值 20：deploy 4 / tests 1 / services/api/db 8 /
- *   db 7）且每个登记点都必须在这个面里，再由用例「C-1 回归钉子」把
+ *   `assertReverseSurface()` 先要求 ≥ 21 份 SQL（真值 21：deploy 4 / tests 1 / services/api/db 8 /
+ *   db 8）且每个登记点都必须在这个面里，再由用例「C-1 回归钉子」把
  *   `[]` / `['nonexistent-dir']` / `['deploy']` / 漏掉 `tests` 四种空转形态钉成红。
  *
  * ## 判别力自证
@@ -190,7 +190,7 @@ function loadSources(files) {
 
 /**
  * 反向扫描面的 roots（可注入，便于用例证明「roots 写错 ⇒ 必须红」而不是空转成绿）。
- * 真值读数：deploy 4 / tests 1 / services/api/db 8 / db 7 = 20 份 `*.sql`（`scripts`、`tools`
+ * 真值读数：deploy 4 / tests 1 / services/api/db 8 / db 8 = 21 份 `*.sql`（`scripts`、`tools`
  * 在本仓不存在或没有 sql，`catch` 掉不影响下界）。
  */
 const OUT_OF_SURFACE_ROOTS = Object.freeze(['deploy', 'tests', 'services/api/db', 'db', 'scripts', 'tools']);
@@ -218,15 +218,15 @@ function outsideSurfaceSqlFiles(roots = OUT_OF_SURFACE_ROOTS) {
  * 反向扫描面的**自保**（GY-R68 增量审查 C-1）：roots 写错时不许空转成绿。
  *
  * 三条判据，缺一条就会退回「在空集上恒真」：
- * 1. 下界：解析出的 SQL 份数必须 ≥ 20（真值 20；`[]`、不存在的目录、只留 `deploy` 都会掉到下界以下）；
+ * 1. 下界：解析出的 SQL 份数必须 ≥ 21（真值 21；`[]`、不存在的目录、只留 `deploy` 都会掉到下界以下）；
  * 2. 成员：`OUT_OF_SURFACE_WRITE_POINTS` 里每个登记文件都必须在面内（漏掉 `tests` 这种「份数够但少
  *    一个目录」的形态会被点名）；
  * 3. 反向覆盖：面内除登记项之外的任何 `INSERT INTO … admin_audit_events` ⇒ 红并点名文件。
  */
 function assertReverseSurface(sources, points = OUT_OF_SURFACE_WRITE_POINTS) {
   assert.ok(
-    sources.length >= 20,
-    `反向扫描面只解析出 ${sources.length} 份 SQL（真值 20 份：deploy 4 / tests 1 / services/api/db 8 / db 7），` +
+    sources.length >= 21,
+    `反向扫描面只解析出 ${sources.length} 份 SQL（真值 21 份：deploy 4 / tests 1 / services/api/db 8 / db 8），` +
       'roots 大概写错了 —— 空集上「没有未登记的审计写入」恒真，这条闸门会假绿',
   );
   const files = new Set(sources.map((source) => source.file));
@@ -1035,7 +1035,7 @@ test('C-1 回归钉子：反向扫描面 roots 写错（空 / 不存在 / 只留
   assert.equal(deployOnly.length, 4);
   assert.throws(() => assertReverseSurface(deployOnly), /只解析出 4 份 SQL/);
 
-  // ③b 审查实测的「deploy + 在 tests 里种一个未登记 INSERT」：下界先红（5 份 < 20）。
+  // ③b 审查实测的「deploy + 在 tests 里种一个未登记 INSERT」：下界先红（5 份 < 21）。
   const plantedFile = 'tests/integration/fixtures/9998_probe_unregistered.sql';
   const planted = {
     file: plantedFile,
@@ -1049,10 +1049,10 @@ test('C-1 回归钉子：反向扫描面 roots 写错（空 / 不存在 / 只留
     '「roots 少了一半 + 种一个未登记写入」也必须红（旧实现这里是绿的）',
   );
 
-  // ④ 份数够、但漏掉 `tests` ⇒ 19 份，下界红，且逐条成员断言能点名缺哪个登记文件。
+  // ④ 份数够、但漏掉 `tests` ⇒ 20 份，下界红，且逐条成员断言能点名缺哪个登记文件。
   const withoutTests = loadSources(outsideSurfaceSqlFiles(['deploy', 'services/api/db', 'db']));
-  assert.equal(withoutTests.length, 19);
-  assert.throws(() => assertReverseSurface(withoutTests), /只解析出 19 份 SQL/);
+  assert.equal(withoutTests.length, 20);
+  assert.throws(() => assertReverseSurface(withoutTests), /只解析出 20 份 SQL/);
   const filesWithoutTests = new Set(withoutTests.map((source) => source.file));
   assert.deepEqual(
     OUT_OF_SURFACE_WRITE_POINTS.filter((point) => !filesWithoutTests.has(point.file)).map((point) => point.file),
