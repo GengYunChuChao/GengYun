@@ -9,17 +9,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CONSENT_EMPTY_WARNING,
   DEFAULT_PORTS,
+  DEMO_CONSENT_NOTICE,
+  DEMO_CONSENT_POLICY_VERSION,
   DEMO_FLAG_KEYS,
   DEMO_FLAG_REASON,
+  DEMO_RECIPIENT_ID,
   DEMO_SCHEMA,
   ENV_FILE_TEMPLATE,
   EXTERNAL_KEYS,
   GENERATED_KEYS,
   INSTANCE_FLAG,
+  OPTIONAL_REAL_ENV,
   REQUIRED_REAL_ENV,
   UsageError,
   assembleApiEnv,
+  buildApiApprovalArgs,
+  buildConsentReadinessSql,
+  buildDemoConsentSql,
+  buildDemoConsentStatements,
   buildDemoFlagSql,
   buildDemoFlagStatements,
   buildPidRecord,
@@ -31,6 +40,7 @@ import {
   nextPollDelay,
   nextStepsLines,
   parseArgs,
+  parseConsentReadiness,
   parsePidRecord,
   readEnvFile,
   readSecretsFile,
@@ -40,6 +50,7 @@ import {
   statusLines,
   tailLines,
   usage,
+  withDemoAccessOrigin,
 } from '../../tools/lib/demo-stack.mjs';
 
 const ENV_FILE_TEXT = [
@@ -202,6 +213,69 @@ test('assembleApiEnv：缺外部凭据时 missing 点名且不生成假值', () 
   // 工具自己的两项仍然生成，不耽误「先补齐外部 6 项」这件事。
   assert.equal(env.SESSION_SIGNING_KEY, 'k');
   assert.equal(env.DELETION_LEDGER_KEY, 'k');
+});
+
+test('assembleApiEnv：域内可选键给了就透传、没给不算缺（真演示栈要 MEDIA_OBJECT_REF_KEY 才传得上）', () => {
+  const base = {
+    mode: 'real',
+    apiPort: 3000,
+    databaseUrl: 'postgres://postgres@127.0.0.1:55510/gengyun',
+    ambient: {},
+    generate: () => 'k',
+  };
+  const keyMaterial = 'a'.repeat(64);
+  const withOptional = assembleApiEnv({
+    ...base,
+    envFile: {
+      ...realEnvFile(),
+      MEDIA_OBJECT_REF_KEY: keyMaterial,
+      RECOGNITION_PROVIDER_URL: 'https://provider.invalid/v1/chat/completions',
+      RECOGNITION_PROVIDER_MODEL: 'vision-1',
+    },
+  });
+  assert.deepEqual(withOptional.missing, []);
+  assert.equal(withOptional.env.MEDIA_OBJECT_REF_KEY, keyMaterial);
+  assert.equal(withOptional.sources.MEDIA_OBJECT_REF_KEY, 'env-file');
+  assert.equal(withOptional.env.RECOGNITION_PROVIDER_URL, 'https://provider.invalid/v1/chat/completions');
+  assert.equal(withOptional.env.RECOGNITION_PROVIDER_MODEL, 'vision-1');
+  assert.ok(OPTIONAL_REAL_ENV.includes('MEDIA_OBJECT_REF_KEY'));
+  assert.ok(!REQUIRED_REAL_ENV.includes('MEDIA_OBJECT_REF_KEY'), '启动必填仍是 9 项，可选键不参与 missing');
+  assert.ok(describeEnvSources(withOptional.sources).some((line) => line.startsWith('MEDIA_OBJECT_REF_KEY ← env 文件')));
+
+  const without = assembleApiEnv({ ...base, envFile: realEnvFile() });
+  assert.deepEqual(without.missing, [], '可选键缺了不算缺');
+  for (const key of OPTIONAL_REAL_ENV) assert.equal(without.env[key], undefined, `${key} 没给就不该出现`);
+  assert.deepEqual(
+    describeEnvSources(without.sources).filter((line) => line.includes('MEDIA_OBJECT_REF_KEY')),
+    [],
+  );
+});
+
+test('buildApiApprovalArgs：只有 --demo + real 才传媒体批准开关（不带 --demo 逐字不变）', () => {
+  assert.deepEqual(buildApiApprovalArgs({ demo: true, mode: 'real' }), ['--approve-real-media-wiring']);
+  assert.deepEqual(buildApiApprovalArgs({ demo: true, mode: 'stub' }), []);
+  assert.deepEqual(buildApiApprovalArgs({ demo: false, mode: 'real' }), []);
+  assert.deepEqual(buildApiApprovalArgs({ demo: 'yes', mode: 'real' }), [], '真值字符串不算打开');
+  assert.deepEqual(buildApiApprovalArgs({}), []);
+});
+
+test('withDemoAccessOrigin：演示档按 API 端口兜底 https 原点，显式值与环境不改动', () => {
+  const base = { env: { API_PORT: '38110' }, sources: {} };
+  const demo = withDemoAccessOrigin(base, { demo: true, mode: 'real', apiPort: 38110 });
+  assert.equal(demo.env.MEDIA_ACCESS_GRANT_ORIGIN, 'https://127.0.0.1:38110');
+  assert.equal(demo.sources.MEDIA_ACCESS_GRANT_ORIGIN, 'demo');
+  assert.notStrictEqual(demo, base);
+  assert.equal(base.env.MEDIA_ACCESS_GRANT_ORIGIN, undefined, '不改调用方的对象');
+
+  const explicit = withDemoAccessOrigin(
+    { env: { MEDIA_ACCESS_GRANT_ORIGIN: 'https://example.test' }, sources: { MEDIA_ACCESS_GRANT_ORIGIN: 'env-file' } },
+    { demo: true, mode: 'real', apiPort: 38110 },
+  );
+  assert.equal(explicit.env.MEDIA_ACCESS_GRANT_ORIGIN, 'https://example.test');
+  assert.equal(explicit.sources.MEDIA_ACCESS_GRANT_ORIGIN, 'env-file');
+
+  assert.strictEqual(withDemoAccessOrigin(base, { demo: false, mode: 'real', apiPort: 38110 }), base);
+  assert.strictEqual(withDemoAccessOrigin(base, { demo: true, mode: 'stub', apiPort: 38110 }), base);
 });
 
 test('assembleApiEnv：state-dir 里的旧钥匙优先于新生成（重启后会话不失效）', () => {
@@ -445,4 +519,114 @@ test('describeEnvSources：只出现键名与来源，不出现值', () => {
 test('ENV_FILE_TEMPLATE：模板覆盖外部 6 项且提示不提交', () => {
   for (const key of EXTERNAL_KEYS) assert.match(ENV_FILE_TEMPLATE, new RegExp(`^${key}=`, 'mu'));
   assert.match(ENV_FILE_TEMPLATE, /不要提交/u);
+});
+
+test('演示政策：不带 --demo 一条语句都不生成（行为与旧版一致）', () => {
+  for (const options of [undefined, {}, { demo: false }, { demo: 0 }, { demo: 'yes' }]) {
+    assert.deepEqual(buildDemoConsentStatements(options), [], JSON.stringify(options));
+    assert.equal(buildDemoConsentSql(options), null, JSON.stringify(options));
+  }
+  assert.deepEqual(buildDemoConsentStatements(), []);
+});
+
+test('演示政策：--demo 生成 6 条语句，顺序是 复核账号 → 接收方 → 停用旧演示版本 → 两条政策 → 启用', () => {
+  const statements = buildDemoConsentStatements({ demo: true });
+  assert.equal(statements.length, 6);
+  assert.match(statements[0], /^INSERT INTO public\.admin_accounts/u);
+  assert.match(statements[1], /^INSERT INTO public\.recipients/u);
+  assert.match(statements[2], /^UPDATE public\.consent_policies/u);
+  assert.match(statements[2], /demo-stack-local-%/u, '只停自家旧版本');
+  assert.match(statements[3], /^INSERT INTO public\.consent_policies/u);
+  assert.match(statements[3], /'media_processing'/u);
+  assert.match(statements[4], /^INSERT INTO public\.consent_policies/u);
+  assert.match(statements[4], /'external_inference'/u);
+  assert.match(statements[5], /^UPDATE public\.consent_policies/u);
+
+  const sql = buildDemoConsentSql({ demo: true });
+  assert.equal(typeof sql, 'string');
+  assert.equal(sql.split('INSERT INTO public.consent_policies').length - 1, 2, '两条政策各一条 INSERT');
+  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, 1);
+  assert.equal(sql.split('INSERT INTO public.admin_accounts').length - 1, 1);
+});
+
+test('演示政策：两条 purpose 同版本且都绑同一接收方（外发预留要求每个必需用途都列出接收方）', () => {
+  const [admin, recipient, retireOld, media, external, enable] = buildDemoConsentStatements({ demo: true });
+  assert.match(admin, /demo-stack-operator/u);
+  assert.ok(!(admin.includes('password') || admin.includes('scrypt$')), '演示复核账号不许写可用口令');
+  assert.match(admin, /ON CONFLICT \(login_name\) DO NOTHING/u);
+
+  assert.match(recipient, new RegExp(`'${DEMO_RECIPIENT_ID}'`, 'u'));
+  assert.match(recipient, /'weed'/u);
+  assert.match(recipient, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
+  assert.match(recipient, /tokenhub\.tencentmaas\.com/u, '接收方必须指向识别供应商端点域名');
+  assert.match(recipient, /ON CONFLICT \(id\) DO UPDATE/u);
+  assert.match(recipient, /IS DISTINCT FROM/u, '幂等：逐列比较，内容没变就不写');
+
+  assert.match(retireOld, /enabled = false/u);
+  assert.match(retireOld, /policy_version LIKE 'demo-stack-local-%'/u);
+  assert.match(retireOld, new RegExp(`policy_version <> '${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
+
+  for (const statement of [media, external]) {
+    assert.match(statement, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
+    assert.match(statement, /'verified'/u);
+    assert.ok(statement.includes(DEMO_RECIPIENT_ID), '两条政策都绑定演示接收方');
+  }
+  assert.match(media, /'media_processing'/u);
+  assert.match(external, /'external_inference'/u);
+
+  assert.match(enable, /enabled IS DISTINCT FROM true/u);
+  assert.match(enable, /RETURNING purpose;/u);
+});
+
+test('演示政策：所有字面量是 ASCII（psql -c 在 Windows 上按 ANSI 代码页传参）', () => {
+  const sql = buildDemoConsentSql({ demo: true });
+  assert.equal([...sql].filter((char) => char.codePointAt(0) > 0x7f).length, 0, 'SQL 里出现非 ASCII 会在服务端报 invalid byte sequence');
+  assert.match(sql, /demo-stack local demo profile \(non-production\)/u, '标记必须逐字存在');
+});
+
+test('演示政策：标记落在既有可见列，且不下线别人的政策', () => {
+  const statements = buildDemoConsentStatements({ demo: true });
+  const all = statements.join('\n');
+  const marker = 'demo-stack local demo profile (non-production)';
+  assert.ok(statements[0].includes(marker), '复审账号的 credential_hash 带标记');
+  assert.ok(statements[1].includes(marker), '接收方 display_name 带标记');
+  const policyInserts = statements.filter((statement) => /^INSERT INTO public\.consent_policies/u.test(statement));
+  assert.equal(policyInserts.length, 2);
+  for (const statement of policyInserts) {
+    assert.match(statement, /source_ref/u);
+    assert.match(statement, /review_evidence_ref/u);
+    assert.ok(statement.includes(marker), '政策 source_ref / review_evidence_ref 带标记');
+  }
+  assert.equal(/^\s*DELETE\s/mu.test(all), false, '⛔ 不删任何行');
+  assert.equal(/^\s*TRUNCATE\s/mu.test(all), false, '⛔ 不截断');
+  const disableStatements = statements.filter((statement) => /enabled\s*=\s*false/u.test(statement));
+  assert.equal(disableStatements.length, 1, '只停自家的旧演示版本，别的一条都不动');
+  assert.match(disableStatements[0], /policy_version LIKE 'demo-stack-local-%'/u);
+  assert.ok(disableStatements[0].includes(`policy_version <> '${DEMO_CONSENT_POLICY_VERSION}'`), '当前版本不在此列');
+});
+
+test('演示政策：语料里明确写「不是生产核验」', () => {
+  assert.match(DEMO_CONSENT_NOTICE, /这是本机演示政策，不是生产核验/u);
+  assert.match(CONSENT_EMPTY_WARNING, /识别动线会 403/u);
+  assert.match(CONSENT_EMPTY_WARNING, /--demo/u);
+  assert.match(CONSENT_EMPTY_WARNING, /import-consent-policy\/recipient/u);
+});
+
+test('政策就绪读数：只数「已启用 + verified + 已复核 + 在有效期内」的行', () => {
+  const sql = buildConsentReadinessSql();
+  assert.match(sql, /FROM public\.consent_policies/u);
+  assert.match(sql, /enabled/u);
+  assert.match(sql, /source_kind\s*=\s*'verified'/u);
+  assert.match(sql, /reviewed_at IS NOT NULL/u);
+  assert.match(sql, /valid_from\s*<=\s*clock_timestamp\(\)/u);
+  assert.match(sql, /valid_until\s*>\s*clock_timestamp\(\)/u);
+});
+
+test('政策就绪解析：数字读得出，读不出就是 null（不猜 0）', () => {
+  assert.equal(parseConsentReadiness('enabled_verified_policies=2\n(1 row)\n'), 2);
+  assert.equal(parseConsentReadiness('enabled_verified_policies=0'), 0);
+  assert.equal(parseConsentReadiness(''), null);
+  assert.equal(parseConsentReadiness('ERROR: relation "consent_policies" does not exist'), null);
+  assert.equal(parseConsentReadiness(null), null);
+  assert.equal(parseConsentReadiness('enabled_verified_policies=many'), null);
 });

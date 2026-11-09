@@ -1363,7 +1363,7 @@ jobs:
             exit 1
           fi
       # 臂本体：脚本自己 initdb 一次性 17 集群、跑全链迁移、把权限面六族逐条打到真 PG 上并落 `--json`。
-      # 退出码语义（脚本头注释）：0 = 逐条读数取得（**有差异也算 0**）；77 = 未取得（未设/设错 GY_PG_BIN）；
+      # 退出码语义（脚本头注释）：0 = 逐条读数取得且 `different = 0`（本 step 带 `--require-no-different`，`different > 0` ⇒ 1）；77 = 未取得（未设/设错 GY_PG_BIN）；
       # 其它 = 真失败。这里把 77 显式升级成 CI 红 —— 别让「没跑」在读数上消失。
       - name: 真实 PG 矩阵（R72-W12：failmatrix/run-real / 自起集群 / 权限面六族逐条）
         timeout-minutes: 5
@@ -1371,7 +1371,7 @@ jobs:
           set -euo pipefail
           log=/tmp/failmatrix-real.log
           rc=0
-          node tests/failmatrix/run-real.mjs --require-no-not-runnable --json="$RUNNER_TEMP/failmatrix-real/real.json" 2>&1 | tee "$log" || rc=$?
+          node tests/failmatrix/run-real.mjs --require-no-not-runnable --require-no-different --json="$RUNNER_TEMP/failmatrix-real/real.json" 2>&1 | tee "$log" || rc=$?
           if [ "$rc" -eq 77 ]; then
             echo "::error::失败矩阵的真 PG 臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
             exit 1

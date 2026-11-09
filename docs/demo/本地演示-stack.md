@@ -134,19 +134,44 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | 5 | 种子失败 | 屏幕上的最后 15 行 |
 | 6 | API 启动即退出 | 自动打印的 API 日志尾 30 行 |
 | 7 | 健康检查超时（进程还活着但没 200） | 自动打印的 API 日志尾 30 行 |
-| 8 | 演示开关写入失败（`--demo`） | 屏幕上的 psql 报错原文；确认迁移已完成 |
-| 8 | 演示开关写入失败（`--demo`） | 屏幕上的 psql 报错原文；确认迁移已完成 |
+| 8 | 演示档写入失败（`--demo`：开关或演示政策） | 屏幕上的 psql 报错原文；确认迁移已完成 |
 
 ### 3.1 演示档 `--demo` 做什么、不做什么
 
-`--demo` 是给**本机演示**用的一次性便利开关。它只做一件事：在迁移完成、种子处理完之后，用**一次** `psql -c` 把 `public.feature_flags` 的三行更新成演示档：
+`--demo` 是给**本机演示**用的一次性便利开关。它在迁移完成、种子处理完之后做这几件事：
 
-- `enabled = true`
-- `revision = revision + 1`
-- `reason = 'demo-stack local demo profile (non-production)'`
-- `changed_at = now()`
+1. 用**一次** `psql -c` 把 `public.feature_flags` 的三行更新成演示档：
+   - `enabled = true`
+   - `revision = revision + 1`
+   - `reason = 'demo-stack local demo profile (non-production)'`
+   - `changed_at = now()`
+2. 再用**一次** `psql -c`（单条 simple query ⇒ 整组原子）幂等写入**本机演示政策**：
+   - `public.admin_accounts` 一条不可登录的演示复核账号（`login_name='demo-stack-operator'`，
+     `credential_hash` 是字面量占位、永不参与登录）；
+   - `public.recipients` 一条演示接收方 `demo-stack-weed-vision`（`capability='weed'`，
+     `policy_version='demo-stack-local-2'`，`config_version='demo-stack-config-1'`，两个 `*_verified=true`，
+     留存 0/0，`enabled=true`），指向识别供应商端点域名 `tokenhub.tencentmaas.com`；
+   - `public.consent_policies` 两条 `verified` 政策：`media_processing` 与 `external_inference`
+     **都绑定**上面那条接收方，版本同为 `demo-stack-local-2`，都启用。
+     两条都绑不是多余：外发预留（`services/api/src/privacy/ledger-pg.ts`）要求**每一个**必需用途的
+     授权记录里都列出同一个接收方，而识别动线同时要这两个用途；只绑 `external_inference`
+     会在 `POST /recognitions` 以 403「用途 media_processing 未绑定接收方」拒绝。
+   - 版本号变化时先停用自家旧版本（`policy_version LIKE 'demo-stack-local-%' AND <> 当前版本`）；
+     政策行一旦复核就不可改（`consent_policy_immutable`），换形状只能发新版本。
+   - 标记逐字落在既有可见列（这两张表**没有** `note` 列）：政策的 `source_ref` / `review_evidence_ref`
+     与接收方的 `display_name` 都含 `demo-stack local demo profile (non-production)`；可用
+     `SELECT … WHERE source_ref LIKE '%demo-stack local demo profile (non-production)%'` 反查。
+   - 屏幕上会显式打印 `！这是本机演示政策，不是生产核验：…`。
+3. `--demo` 还会让 API 带上 `--approve-real-media-wiring`（媒体域真实接线的**唯一**铸造点，
+   `services/api/src/server.ts`）：不带它，`POST /media/uploads` 会 503 `PROVIDER_UNAVAILABLE`。
+   同一开关要求取图原点可部署，所以演示档在 `MEDIA_ACCESS_GRANT_ORIGIN` 缺失时兜底
+   `https://127.0.0.1:<--port>`（只为过启动校验；本机 API 是 http，句柄不可直接打开）。
+   不带 `--demo` 时不传这个批准参数、也不兜底任何原点。
+4. env 文件里「域内必填、启动不必填」的键（`MEDIA_OBJECT_REF_KEY`、`RECOGNITION_PROVIDER_URL/KEY/PROFILE/MODEL`、
+   `MEDIA_ACCESS_GRANT_ORIGIN`、`CHAT_LLM_*` 等）**给了就透传给 API**，没给不算缺——缺了 API 照样起得来，
+   只是对应域按域拒绝（媒体域 503）。名单从 `tools/lib/real-capability-config.mjs` 的 `CAPABILITY_GROUPS` 派生。
 
-三个键与它们的语义：
+三个开关与它们的语义：
 
 | 开关 | 开启时 | 关掉时 |
 | --- | --- | --- |
@@ -154,16 +179,28 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | `specific_herbicide_output_enabled` | `/herbicides` 与登记核对可输出制剂信息 | `/herbicides` 返回 409，错误详情里的 `code` 是 `FLAG_CLOSED` |
 | `ai_enabled` | 识别、OCR、转写、合成、文字问答的**任务受理面**可用 | 这些受理面返回 409（任务不会被受理） |
 
-幂等策略：每条 `UPDATE` 都带「当前还不是演示档」的条件；已经是 `enabled = true` 且 `reason` 一致的行不会再次 `revision + 1`。所以 `down` 后再 `up --demo`，revision 不会越加越大；第一次真正写入时每个键只加一次。
+> 只开 `ai_enabled` 还不够：`POST /media/uploads` 与 `POST /recognitions` 还要过用途授权闸
+> （`media_processing` + `external_inference`）。没有可用的已核验政策时它们会 403 `CONSENT_REQUIRED`
+> —— 这正是第 2 步要补的。
+
+幂等策略：每条 `UPDATE` 都带「当前还不是演示档」的条件；已经是 `enabled = true` 且 `reason` 一致的行不会再次 `revision + 1`。
+政策用 `ON CONFLICT (purpose, policy_version) DO NOTHING` + 一条 `enabled IS DISTINCT FROM true` 的更新；
+接收方用 `ON CONFLICT (id) DO UPDATE … WHERE 逐列 IS DISTINCT FROM EXCLUDED`。所以同一版本上 `down` 后再 `up --demo` 是零改动；
+换政策版本时**第一次**会写入新版本并停用自家旧版本（政策行复核后不可改），之后就又是零改动。
+若同一 `purpose` 已存在**另一条**启用政策，部分唯一索引会以 `23505` 让整个演示档失败（exit 8）——
+⛔ 本工具不会去禁用别人的政策。
 
 它**不**做这些：
 
 - 不新增迁移，不改 `services/api/**`，也不改开关的默认值、后台写入口或权限模型；
-- 不改种子里已有的业务资料，不建演示账号，不补首页的 `verified` 来源；
+- 不改种子里已有的业务资料，不建**可登录**的演示账号（那条复核账号没有可用口令），不补首页的 `verified` 来源；
 - 不碰生产环境、不改 `.env` 或凭据，也不把开关值写回任何模板；
-- 不是「安全建议」。这是**本机演示配置**：生产环境该开哪个、什么时候开，要按实际审核与合规要求决定，不能照抄这里的三个 `true`。
+- 不是「安全建议」。这是**本机演示配置**：生产环境该开哪个、什么时候开、政策由谁核验，要按实际审核与合规要求决定，
+  不能照抄这里的三个 `true` 与两条演示政策。
 
-不带 `--demo` 时只打印「演示开关：未开（默认）」，不执行任何 `UPDATE`，`public.feature_flags` 保持迁移后的原值。
+不带 `--demo` 时只打印「演示开关：未开（默认）」，不执行任何 `UPDATE`，`public.feature_flags` 与两张隐私表都保持迁移后的原值；
+如果这时检测到 `consent_policies` 里没有生效的已核验政策，`up` 结束会打一条警告：
+「识别动线会 403：没有已核验政策，用 --demo 或先跑 import-consent-policy/recipient」。
 
 > 这是本机演示配置，不是生产建议。
 

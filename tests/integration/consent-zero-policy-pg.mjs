@@ -27,7 +27,8 @@
  *   7. `DELETE /me/consents/{purpose}`：带 `If-Match` ⇒ 404，不带 ⇒ 428；
  *   8. 读可用面抽样（社区列表 / 媒体读 / `GET /ocr/{id}` / `GET /recognitions/{id}`）⇒ **不是 403**；
  *   9. **闸在最外层**（判据见下）：403 批次前后 **public 下每张表的行数逐表相等**，
- *      且 403 报文里**没有**审核域才有的 `details[].field === 'reason_codes'`；
+ *      且 403 报文里**没有**审核域才有的 `details[].field === 'reason_codes'`
+ *      （闸只带 `{field:'purpose',code:'not_granted'}`；授予路径带 `no_policy`——两者是本次补的机器码）；
  *  10. **决定性负控制**：往 `consent_policies` 插**一行** `public_posting` 的 `source_kind='synthetic'`
  *      政策（测试数据里显式标 synthetic），再发 `POST /posts` ⇒ **不再是** 403 `CONSENT_REQUIRED`。
  *      ⚠️ 实测与派单预期**不一致**（插一行并不够），逐级读数见下。
@@ -245,16 +246,21 @@ const write = (token, body, method = 'POST', headers = {}) => ({
 const PG_GATE_MESSAGE = '当前身份或用途授权不满足要求';
 
 /**
- * 断言一格「挂闸入口被拒」：状态码 + `error.code` + 不重试 + **无 details** + 固定文案（不点名用途码）。
+ * 断言一格「挂闸入口被拒」：状态码 + `error.code` + 不重试 + 固定文案（不点名用途码）
+ * + **只带 `{field:'purpose',code:'not_granted'}`**。
  *
- * `details` 为空是「闸在最外层」判据 B 的**逐格**形态：审核域的标记只能出现在
- * `details[].field === 'reason_codes'` 上，闸的拒绝不带任何 details。
+ * 判据 B 的逐格形态：审核域标记只出现在 `details[].field === 'reason_codes'` 上；
+ * 闸的拒绝只允许那条机器可读的 `not_granted`（与授予路径的 `no_policy` 区分开）。
  */
 function expectGateDenial(res, purpose) {
   assert.equal(res.status, 403, `期望 403，实际 ${res.status}：${JSON.stringify(res.body)}`);
   assert.equal(res.body.error.code, 'CONSENT_REQUIRED', JSON.stringify(res.body));
   assert.equal(res.body.error.retryable, false, 'CONSENT_REQUIRED 不是可重试错误');
-  assert.deepEqual(res.body.error.details, [], '闸的拒绝不得携带 details（审核域标记只在内层出现）');
+  assert.deepEqual(
+    res.body.error.details,
+    [{ field: 'purpose', code: 'not_granted' }],
+    '闸的拒绝只带机器可读的 not_granted（不得夹带审核域的 reason_codes）',
+  );
   assert.equal(
     res.body.error.message,
     PG_GATE_MESSAGE,
@@ -392,7 +398,11 @@ try {
   );
   assert.equal(grantRes.status, 403, `授予路径在 0 政策行时必须 403：${JSON.stringify(grantRes.body)}`);
   assert.equal(grantRes.body.error.code, 'CONSENT_REQUIRED');
-  assert.deepEqual(grantRes.body.error.details, []);
+  assert.deepEqual(
+    grantRes.body.error.details,
+    [{ field: 'purpose', code: 'no_policy' }],
+    '授予路径真的查了政策表 ⇒ 「没有可用政策」必须与闸的 not_granted 区分开',
+  );
   assert.equal(await countOf('consent_records', 'WHERE user_id=$1', [user.id]), 0, '被拒的授予不得写 consent_records');
   assert.equal(await countOf('privacy_epochs', 'WHERE user_id=$1', [user.id]), 0, '被拒的授予不得写 privacy_epochs');
   console.log(`  · POST /me/consents ⇒ ${grantRes.status} ${grantRes.body.error.code}「${grantRes.body.error.message}」`);
@@ -463,7 +473,7 @@ try {
   // ───────────────────────────────────────────────── 10. 闸在最外层：判据 B（报文，逐格已在上面断言）
   const markers = [listRes, policyRes].flatMap((res) => res.body?.error?.details ?? []);
   assert.deepEqual(markers, [], '读面也不该有 reason_codes');
-  say('闸在最外层·判据 B：所有 403 的 error.details 逐条为空（无 reason_codes / 无 MODEL_NOT_EVALUATED）'
+  say('闸在最外层·判据 B：所有 403 的 error.details 只含 purpose 机器码（not_granted / no_policy），无 reason_codes / 无 MODEL_NOT_EVALUATED'
     + '——该标记只在审核层出现，下面 L2 会在同一副装配上真的看到它');
 
   // ───────────────────────────────────────────────── 11. 负控制 L1：插一行 synthetic 政策（生产装配仍 403）

@@ -1,7 +1,9 @@
 # 「我的档案」支持目录补齐（演示栈实跑）
 
 2026-11-09（UTC+8）。分叉基线 `209aa01a`（`test(failmatrix): cover account deletion cancellation (#1157)`），
-分支 `feat/gy-r90-demo-regions`。B 档改动：`db/seeds/**`、`tools/**`、`tests/unit/**`、`docs/**`。
+分支 `feat/gy-r90-demo-regions`；推送前 `main` 前进到 `14d86d59`（另一个 PR #1158 也动了
+`tools/demo-stack.mjs` / `tools/lib/demo-stack.mjs`），已在分支上合并 `14d86d59` 解冲突，本文引用的是
+合并后的行号。B 档改动：`db/seeds/**`、`tools/**`、`tests/unit/**`、`docs/**`。
 
 ## 一句话结论
 
@@ -34,12 +36,12 @@ state 里「已 seed 过」的记录。本次新增幂等演示种子 `db/seeds/
 - 不是版本问题：`git diff origin/main HEAD -- miniprogram/pages/profile miniprogram/utils/profile-api.js` 为空；
 - 不是「表结构不支持县级」：`regions.parent_code` 就够挂三级；
 - 是**这两张表没有行，或行的值与目录 JSON 不一致**：`cities` 为空 ⇒ 文案成立；
-- `--demo` 原先只调 `applyDemoProfile`（现在在 `tools/demo-stack.mjs:788`，目录那一步是本次新加的），
+- `--demo` 原先只调 `applyDemoProfile`（`tools/demo-stack.mjs:475` 的定义），目录那一步是本次新加的：
   目录此前完全靠 baseline `SEED_FILES`，而 baseline 只在 state 里**没记过** `real:gengyun` 时才跑：
   库被重建、换库、或只跑迁移而 state 仍记 seeded，`--demo` 起来的栈就是空目录；
 - 另一个实际缺口：`up` 在「API 已由本工具起过且健康」时直接短路返回，**旧版连 demo 开关都不重跑**，
   于是对「已经在跑的演示栈」执行 `up --demo` 根本补不了目录。本次在短路分支里补了幂等的一步
-  （`tools/demo-stack.mjs:572`）。
+  （`tools/demo-stack.mjs:631`）。
 
 ## 灌了什么：`db/seeds/seed_demo_regions.sql`
 
@@ -63,9 +65,9 @@ state 里「已 seed 过」的记录。本次新增幂等演示种子 `db/seeds/
   没有 `DELETE` / `TRUNCATE`；
 - 自检：文件末尾 `DO $$`（`db/seeds/seed_demo_regions.sql:51`）数省/市/县区/作物，缺一项就
   `RAISE EXCEPTION`；配 `-v ON_ERROR_STOP=1` ⇒ 整组回滚，不会留下半套目录；
-- 接线：`tools/lib/demo-stack.mjs:498` 定义路径常量，`tools/demo-stack.mjs:425` 的 `applyDemoCatalog`
+- 接线：`tools/lib/demo-stack.mjs:540` 定义路径常量，`tools/demo-stack.mjs:434` 的 `applyDemoCatalog`
   用 `psql -f` 跑它（与既有 `--seed-demo` 同一种跑法），并回读
-  `tools/lib/demo-stack.mjs:518` 的读数 SQL 打印「省 / 市 / 县区 / 作物」。
+  `tools/lib/demo-stack.mjs:560` 的读数 SQL 打印「省 / 市 / 县区 / 作物」。
 
 ## 计数前后（同簇 scratch 库，只应用 0001 迁移）
 
@@ -114,22 +116,23 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 ^
 
 ## 闸门
 
-四道闸门都在本分支实跑（提交前的工作树即本页所在提交），尾行照抄：
+四道闸门都在本分支实跑（合并 `main` 之后的工作树即本页所在提交），尾行照抄：
 
 | # | 闸门 | 命令 | 尾行 | 结论 |
 | --- | --- | --- | --- | --- |
 | ① | 四连 strict | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | `PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT 与 COMMENT_ANCHOR 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN／STALE-SYMBOL）` | EXIT 0 |
 | ② | identity | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | `ℹ tests 37` / `ℹ pass 36` / `ℹ fail 0` / `ℹ skipped 1` | EXIT 0 |
-| ③ | test:docs | `npm run test:docs` | `PASS: 识别 5 页 / 跳过 376 页（扫描面 381 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` | EXIT 0 |
-| ④ | 注释锚点 | `node tools/verify-verification-comment-anchors.mjs` | `VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 1421、基线 1421、基线外新增 0、可收紧 0（--require-no-new=on、--require-no-stale=off）` ＋ `VERIFICATION-COMMENT-ANCHOR-PASS: 基线内 1421 条注释锚点只告警，没有基线外新增` | EXIT 0 |
+| ③ | test:docs | `npm run test:docs` | `PASS: 识别 5 页 / 跳过 377 页（扫描面 382 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` | EXIT 0 |
+| ④ | 注释锚点 | `node tools/verify-verification-comment-anchors.mjs` | `VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 1425、基线 1425、基线外新增 0、可收紧 0（--require-no-new=on、--require-no-stale=off）` ＋ `VERIFICATION-COMMENT-ANCHOR-PASS: 基线内 1425 条注释锚点只告警，没有基线外新增` | EXIT 0 |
 
 相关单测：`node --test tests/unit/demo-regions-seed.test.mjs tests/unit/demo-stack.test.mjs tests/unit/demo-stack-cli.test.mjs`
-→ `ℹ tests 41 / ℹ pass 41 / ℹ fail 0`。
+→ `ℹ tests 52 / ℹ pass 52 / ℹ fail 0`。
 
-④ 一开始判红过一次：本次新增的 import 行让 `tools/demo-stack.mjs` 整体位移 3 行，
+④ 在合并 `main` 之前判红过一次：本次新增的 import 行让 `tools/demo-stack.mjs` 整体位移 3 行，
 既有证据页 `docs/verification/gy-r90-demo-stack-20261109.md` 里那条指向 `tools/demo-stack.mjs`
 第 323 行的锚点就落到了块注释上（基线外新增 1 条）。没有去改别人的锚点、也没有 `--write-baseline`，
-而是把新增的 3 个 import 名并进既有 import 行内（净位移 0），闸门随即回到基线 1421 条。
+而是把新增的 import 名并进既有 import 行内（相对基线净位移 0）。合并 `main` 后基线本身涨到 1425 条，
+本节记的是合并后的读数。
 
 ## 不声称
 
