@@ -83,8 +83,8 @@
 | `docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md:173` | 本机 `.pg17` 下的 `wt-gateprose` 工作树 |
 | `docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md:186` | 本机 MSYS/Git for Windows 的 `bash.exe`（另一个盘符） |
 | `docs/verification/gy-r90-collaboration-ops-20261109.md:12` | 本机 `.pg17` 目录前缀 |
-| `docs/verification/gy-r90-collaboration-ops-20261109.md:124` | 主检出目录 |
-| `docs/verification/gy-r90-collaboration-ops-20261109.md:176` | 主检出目录 |
+| `docs/verification/gy-r90-collaboration-ops-20261109.md:162` | 主检出目录 |
+| `docs/verification/gy-r90-collaboration-ops-20261109.md:214` | 主检出目录 |
 | `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md:210` | `.pg17` 下 `wt-cmtbase-hist` 工作树 |
 | `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md:212` | 两处：`.pg17/cmBase-artifacts` 下的探针脚本、`wt-cmtbase-hist` 工作树 |
 | `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md:233` | `.pg17` 下 `wt-cmtbase-head` 工作树 |
