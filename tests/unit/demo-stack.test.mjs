@@ -66,6 +66,7 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
   assert.equal(defaults.envFile, null);
   assert.equal(defaults.reset, false);
   assert.equal(defaults.demo, false);
+  assert.equal(defaults.seedDemo, false);
   assert.equal(defaults.timeoutMs, 90_000);
 
   const custom = parseArgs([
@@ -97,6 +98,16 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
   assert.equal(custom.reset, true);
   assert.equal(custom.yes, true);
   assert.equal(custom.demo, true);
+  assert.equal(custom.seedDemo, false);
+});
+
+test('parseArgs：--seed-demo 是显式开关，默认不开，且只配 real', () => {
+  assert.equal(parseArgs(['up', '--seed-demo']).seedDemo, true);
+  assert.equal(parseArgs(['up', '--seed-demo', '--reset']).seedDemo, true);
+  assert.equal(parseArgs(['up']).seedDemo, false);
+  // 配错模式要报错，不能静默忽略（否则用户以为灌了演示资料，实际没灌）
+  assert.throws(() => parseArgs(['up', '--mode', 'stub', '--seed-demo']), UsageError);
+  assert.throws(() => parseArgs(['up', '--seed-demo', '--mode=stub']), /--seed-demo 只在 real 模式生效/u);
 });
 
 test('parseArgs：子命令与 --help', () => {
@@ -387,6 +398,20 @@ test('nextStepsLines：指向根路径 /health，并说清 apiBaseUrl 与 prepar
   const stub = nextStepsLines({ mode: 'stub', apiPort: 3100 }).join('\n');
   assert.match(stub, /503/u);
   assert.match(stub, /3100/u);
+});
+
+test('nextStepsLines：带 --seed-demo 时改说「演示卡片」，不再说「暂无资料」', () => {
+  const seeded = nextStepsLines({ mode: 'real', apiPort: 3000, seedDemo: true }).join('\n');
+  assert.match(seeded, /--seed-demo/u);
+  assert.match(seeded, /演示/u);
+  assert.match(seeded, /非生产数据/u);
+  assert.ok(!/暂无资料/u.test(seeded), '带 --seed-demo 还提示「暂无资料」会把用户引回空首页');
+
+  // 默认（不传 seedDemo）保持原文案：不能因为新参数把老行为改了
+  const plain = nextStepsLines({ mode: 'real', apiPort: 3000 }).join('\n');
+  assert.match(plain, /暂无资料/u);
+  // stub 分支不受影响
+  assert.match(nextStepsLines({ mode: 'stub', apiPort: 3100, seedDemo: false }).join('\n'), /503/u);
 });
 
 test('resolvePaths：日志/pid/数据目录都挂在一个状态根下', () => {
