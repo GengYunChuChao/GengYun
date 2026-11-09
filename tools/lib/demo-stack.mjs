@@ -11,7 +11,9 @@
  * - 端口一律 1..65535 的整数，非法值抛 `UsageError`（命令行错误，退出码 1）。
  */
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { AI_ENDPOINTS } from '../ai-config.mjs';
+import { CAPABILITY_GROUPS } from './real-capability-config.mjs';
 
 /** 演示栈状态文件/pid 文件的版本标识；换格式时递增，读旧文件直接拒绝。 */
 export const DEMO_SCHEMA = 'gengyun-demo-stack/1';
@@ -48,6 +50,27 @@ export const GENERATED_KEYS = ['SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY'];
 
 /** 只能由调用方提供的 6 项（微信 2 项 + 对象存储 4 项）：工具不生成、不猜测。 */
 export const EXTERNAL_KEYS = REQUIRED_REAL_ENV.filter((key) => !GENERATED_KEYS.includes(key) && key !== 'DATABASE_URL');
+
+/**
+ * 「域内必填、启动不必填」的键：`services/api/src/config.ts` 只在 real 启动时校验
+ * `REQUIRED_REAL_ENV` 那 9 项；`MEDIA_OBJECT_REF_KEY`、`RECOGNITION_PROVIDER_*` 这类键缺了照样
+ * 起得来，只是对应域按域拒绝（媒体域整域 503、识别受理 503）——详见
+ * `tools/lib/real-capability-config.mjs` 的文件头。
+ *
+ * 演示栈的口径：env 文件里**给了就透传**，没给不报错也不生成（缺了由 API 自己按域拒绝，
+ * 错误信息比这里猜的准）。名单从 `CAPABILITY_GROUPS` 派生，避免和真实能力清单各写一份。
+ * `RECOGNITION_PROVIDER_PROFILE` / `RECOGNITION_PROVIDER_MODEL` 不在能力组里，但
+ * `services/api/src/app.ts:1124` 直接读它们，所以一并登记。
+ */
+export const OPTIONAL_REAL_ENV = Object.freeze([
+  ...new Set([
+    ...CAPABILITY_GROUPS.flatMap((group) => group.fields.map((item) => item.name)),
+    'RECOGNITION_PROVIDER_PROFILE',
+    'RECOGNITION_PROVIDER_MODEL',
+  ]),
+]
+  .filter((key) => !REQUIRED_REAL_ENV.includes(key))
+  .sort());
 
 export const ENV_FILE_TEMPLATE = `# 演示栈 env 文件（不要提交；值从 E:\\GengYunPrivate\\credentials.local.json 取）
 # DATABASE_URL 由 tools/demo-stack.mjs 按自己的簇生成，这里写了也会被覆盖。
@@ -285,7 +308,9 @@ export function requiredEnvMissing(env, mode) {
  * - `APP_EXECUTION_MODE` / `API_HOST` / `API_PORT` 由本工具决定，覆盖 env 文件里的同名值；
  * - `DATABASE_URL` 永远指向本次的簇（env 文件里写了别的库也不采用，避免「连到别的库还以为是演示栈」）；
  * - `SESSION_SIGNING_KEY` / `DELETION_LEDGER_KEY` 缺了就生成（生成值由调用方持久化，重启沿用）；
- * - 微信/对象存储 6 项缺了**不生成**：返回 `missing` 让调用方报错，绝不伪造 https 端点。
+ * - 微信/对象存储 6 项缺了**不生成**：返回 `missing` 让调用方报错，绝不伪造 https 端点；
+ * - `OPTIONAL_REAL_ENV`（`MEDIA_OBJECT_REF_KEY`、`RECOGNITION_PROVIDER_*` 等）给了就透传，
+ *   没给不算缺：缺了 API 起得来、对应域按域拒绝（媒体 503），这里不替它编值。
  */
 export function assembleApiEnv({
   mode,
@@ -335,6 +360,23 @@ export function assembleApiEnv({
 
   const missing = requiredEnvMissing(env, mode);
   for (const key of missing) delete env[key];
+
+  for (const key of OPTIONAL_REAL_ENV) {
+    const fromFile = envFile[key];
+    const fromAmbient = ambient[key];
+    const fromExisting = existingGenerated[key];
+    if (typeof fromFile === 'string' && fromFile.trim() !== '') {
+      env[key] = fromFile.trim();
+      sources[key] = 'env-file';
+    } else if (typeof fromAmbient === 'string' && fromAmbient.trim() !== '') {
+      env[key] = fromAmbient.trim();
+      sources[key] = 'process';
+    } else if (typeof fromExisting === 'string' && fromExisting.trim() !== '') {
+      env[key] = fromExisting.trim();
+      sources[key] = 'state-dir';
+    }
+  }
+
   return { env, sources, generated, missing };
 }
 
@@ -491,6 +533,212 @@ export function buildDemoFlagSql(options = {}) {
   return statements.length === 0 ? null : statements.join('\n');
 }
 
+// ---------------------------------------------------------------- 演示隐私政策（--demo）
+
+/**
+ * `--demo` 写入的演示政策版本。两个 purpose 共用同一串：`GET /me/privacy-policy`
+ * 只把 `public.recipients.policy_version` 等于「当前生效政策版本」的行挂到读面上
+ * （`services/api/src/privacy/privacy-policy.ts`），版本串对不上读面就看不到接收方。
+ *
+ * 为什么是 `-2`：`-1` 只给 `external_inference` 绑了接收方，`media_processing` 是空绑定；
+ * 但外发预留（`services/api/src/privacy/ledger-pg.ts:548-555`）要求**每一个**必需用途的
+ * 授权记录里都列出同一个接收方，识别动线因此 403「用途 media_processing 未绑定接收方」。
+ * 政策行一旦复核就不可改（`consent_policy_immutable`），所以形状变化只能发新版本；
+ * `--demo` 会把自家旧版本（`LIKE 'demo-stack-local-%'`）停用后再启用新版本。
+ */
+export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-2';
+
+/**
+ * 演示接收方 id；`--demo` 的**两条**政策都绑定这一条。
+ *
+ * 只绑 `external_inference` 不够：外发预留要求每个必需用途的授权记录都列出同一接收方，
+ * 而识别动线同时要 `media_processing` + `external_inference` 两个用途
+ * （`services/api/src/routes/recognitions.ts` + `privacy/ledger-pg.ts:548-555`）。
+ */
+export const DEMO_RECIPIENT_ID = 'demo-stack-weed-vision';
+
+/** 演示接收方配置版本；必须与政策 `recipient_bindings[].config_version` 逐字相等。 */
+export const DEMO_RECIPIENT_CONFIG_VERSION = 'demo-stack-config-1';
+
+/**
+ * 演示复核账号的登录名。`consent_policies.reviewed_by` 外键指向 `admin_accounts`，
+ * 而种子不写这张表，所以启用政策必须先有一条复核人；这条账号的 `credential_hash`
+ * 是字面量占位符，任何登录尝试都不可能通过（它不是任何口令的哈希）。
+ */
+export const DEMO_REVIEWER_LOGIN = 'demo-stack-operator';
+
+/** 演示政策的 purpose；顺序固定（日志与测试按这个顺序读）。 */
+export const DEMO_CONSENT_PURPOSES = Object.freeze(['media_processing', 'external_inference']);
+
+/** 识别供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.weedRecognition` 同源。 */
+const WEED_ENDPOINT_HOST = new URL(AI_ENDPOINTS.weedRecognition.endpoint).host;
+
+/**
+ * 演示接收方展示名。这两张隐私表**没有 note/reason 列**，演示标记逐字落在
+ * `display_name` / `source_ref` / `review_evidence_ref` 里，用
+ * `LIKE '%demo-stack local demo profile (non-production)%'` 就能把演示行全部反查出来。
+ */
+// ⚠ 这条 SQL 会被 `psql -c` 传参：Windows 上 psql 用 ANSI 代码页解释命令行参数，
+// 非 ASCII 字面量会在服务端报 `invalid byte sequence for encoding "UTF8"`。
+// ⇒ 写进库的名字只用 ASCII；中文提示只走 stdout（见 DEMO_CONSENT_NOTICE）。
+export const DEMO_RECIPIENT_DISPLAY_NAME = `Demo local weed recognition provider ${WEED_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
+
+const DEMO_POLICY_BODY = `本机演示政策，仅用于本地演示栈联调，不是生产核验。${DEMO_FLAG_REASON}`;
+const DEMO_POLICY_SHA256 = createHash('sha256').update(DEMO_POLICY_BODY, 'utf8').digest('hex');
+
+const sqlLiteral = (value) => `'${String(value).replace(/'/gu, "''")}'`;
+
+const demoEvidenceRef = (purpose, kind) =>
+  `https://demo-stack.local/${DEMO_FLAG_REASON}/${purpose}/${kind}`;
+
+/** 演示政策的 `recipient_bindings`（jsonb 字面量）：字段与演示接收方行逐字段相等。 */
+const DEMO_RECIPIENT_BINDINGS = JSON.stringify({
+  [DEMO_RECIPIENT_ID]: {
+    capability: 'weed',
+    config_version: DEMO_RECIPIENT_CONFIG_VERSION,
+    policy_version: DEMO_CONSENT_POLICY_VERSION,
+    retention_online_days: 0,
+    retention_backup_days: 0,
+    no_training_evidence_ref: demoEvidenceRef('external_inference', 'no-training'),
+    deletion_evidence_ref: demoEvidenceRef('external_inference', 'deletion'),
+  },
+});
+
+/**
+ * `--demo` 的隐私政策 SQL（纯函数：不执行、不读库、不读环境变量）。
+ *
+ * 顺序：复核账号 → 演示接收方 → 两条政策 → 兜底启用。四步都塞进调用方的**一个**
+ * `psql -c`，simple query 就是一个事务：任一步失败整组回滚，不会留下半套政策。
+ *
+ * 幂等：`ON CONFLICT DO NOTHING` + 只在内容确有差异时 `DO UPDATE`；重复 `up --demo`
+ * 不再写 `updated_at`，也不改 `revision`（那是 feature flag 的列）。
+ *
+ * fail-closed：若某个 purpose 已经有一条**别的版本**在启用，`consent_policies_enabled_purpose`
+ * 部分唯一索引会以 23505 拒绝整组写入。演示档不替用户禁用既有政策——那种「为了跑通
+ * 而改授权面」的行为正是本工具要避免的。
+ */
+export function buildDemoConsentStatements({ demo = false } = {}) {
+  // 只认字面 `true`：这是写隐私表的分支，`'false'` 这类真值字符串不能把演示政策放进来（fail-closed）。
+  if (demo !== true) return [];
+
+  const reviewer = `(SELECT id FROM public.admin_accounts WHERE login_name = ${sqlLiteral(DEMO_REVIEWER_LOGIN)})`;
+  const policyColumns = [
+    'INSERT INTO public.consent_policies',
+    '  (purpose, policy_version, source_kind, source_ref, review_evidence_ref, content_sha256,',
+    '   recipient_bindings, valid_from, valid_until, reviewed_by, reviewed_at, enabled)',
+  ].join('\n');
+
+  const policyValues = (purpose, bindings) =>
+    [
+      'VALUES (',
+      `  ${sqlLiteral(purpose)}, ${sqlLiteral(DEMO_CONSENT_POLICY_VERSION)}, 'verified',`,
+      `  ${sqlLiteral(demoEvidenceRef(purpose, 'source'))},`,
+      `  ${sqlLiteral(demoEvidenceRef(purpose, 'review'))},`,
+      `  ${sqlLiteral(DEMO_POLICY_SHA256)},`,
+      `  ${sqlLiteral(bindings)}::jsonb,`,
+      "  clock_timestamp() - interval '1 hour',",
+      "  clock_timestamp() + interval '3650 days',",
+      `  ${reviewer}, clock_timestamp(), true)`,
+    ].join('\n');
+
+  return [
+    [
+      'INSERT INTO public.admin_accounts (login_name, credential_hash)',
+      `VALUES (${sqlLiteral(DEMO_REVIEWER_LOGIN)}, ${sqlLiteral(`${DEMO_FLAG_REASON}: placeholder, not a login credential`)})`,
+      'ON CONFLICT (login_name) DO NOTHING',
+      'RETURNING login_name;',
+    ].join('\n'),
+    [
+      'INSERT INTO public.recipients',
+      '  (id, display_name, capability, policy_version, retention_online_days, retention_backup_days,',
+      '   no_training_verified, deletion_verified, enabled, config_version)',
+      'VALUES (',
+      `  ${sqlLiteral(DEMO_RECIPIENT_ID)}, ${sqlLiteral(DEMO_RECIPIENT_DISPLAY_NAME)}, 'weed',`,
+      `  ${sqlLiteral(DEMO_CONSENT_POLICY_VERSION)}, 0, 0, true, true, true,`,
+      `  ${sqlLiteral(DEMO_RECIPIENT_CONFIG_VERSION)})`,
+      'ON CONFLICT (id) DO UPDATE',
+      '   SET display_name = EXCLUDED.display_name,',
+      '       capability = EXCLUDED.capability,',
+      '       policy_version = EXCLUDED.policy_version,',
+      '       retention_online_days = EXCLUDED.retention_online_days,',
+      '       retention_backup_days = EXCLUDED.retention_backup_days,',
+      '       no_training_verified = EXCLUDED.no_training_verified,',
+      '       deletion_verified = EXCLUDED.deletion_verified,',
+      '       enabled = EXCLUDED.enabled,',
+      '       config_version = EXCLUDED.config_version,',
+      '       updated_at = clock_timestamp()',
+      " WHERE (recipients.display_name, recipients.capability, recipients.policy_version,",
+      '        recipients.retention_online_days, recipients.retention_backup_days,',
+      '        recipients.no_training_verified, recipients.deletion_verified,',
+      '        recipients.enabled, recipients.config_version)',
+      '       IS DISTINCT FROM',
+      '       (EXCLUDED.display_name, EXCLUDED.capability, EXCLUDED.policy_version,',
+      '        EXCLUDED.retention_online_days, EXCLUDED.retention_backup_days,',
+      '        EXCLUDED.no_training_verified, EXCLUDED.deletion_verified,',
+      '        EXCLUDED.enabled, EXCLUDED.config_version)',
+      'RETURNING id;',
+    ].join('\n'),
+    [
+      'UPDATE public.consent_policies',
+      '   SET enabled = false, updated_at = clock_timestamp()',
+      ` WHERE purpose IN (${DEMO_CONSENT_PURPOSES.map(sqlLiteral).join(', ')})`,
+      `   AND policy_version LIKE ${sqlLiteral('demo-stack-local-%')}`,
+      `   AND policy_version <> ${sqlLiteral(DEMO_CONSENT_POLICY_VERSION)}`,
+      '   AND enabled',
+      'RETURNING purpose, policy_version;',
+    ].join('\n'),
+    ...[
+      ['media_processing', DEMO_RECIPIENT_BINDINGS],
+      ['external_inference', DEMO_RECIPIENT_BINDINGS],
+    ].map(([purpose, bindings]) =>
+      [policyColumns, policyValues(purpose, bindings), 'ON CONFLICT (purpose, policy_version) DO NOTHING', 'RETURNING purpose;'].join('\n'),
+    ),
+    [
+      'UPDATE public.consent_policies',
+      '   SET enabled = true, updated_at = clock_timestamp()',
+      ` WHERE purpose IN (${DEMO_CONSENT_PURPOSES.map(sqlLiteral).join(', ')})`,
+      `   AND policy_version = ${sqlLiteral(DEMO_CONSENT_POLICY_VERSION)}`,
+      '   AND enabled IS DISTINCT FROM true',
+      'RETURNING purpose;',
+    ].join('\n'),
+  ];
+}
+
+/** 把演示政策语句拼成 psql 的单条 `-c` SQL；未开演示档返回 null。 */
+export function buildDemoConsentSql(options = {}) {
+  const statements = buildDemoConsentStatements(options);
+  return statements.length === 0 ? null : statements.join('\n');
+}
+
+/** 演示档写入后给人看的一句总结（⛔ 不要把这段当成生产核验结论）。 */
+export const DEMO_CONSENT_NOTICE =
+  '这是本机演示政策，不是生产核验：只覆盖本机演示栈，external_inference 绑定的是本机演示接收方';
+
+/**
+ * 未开 `--demo` 时探测「识别动线会不会 403」的只读查询：数一数有没有
+ * 启用且已核验、且在有效期内的政策（判据与 `services/api/src/privacy/grant-pg.ts:47-53` 相同）。
+ */
+export const buildConsentReadinessSql = () =>
+  [
+    "SELECT 'enabled_verified_policies=' || count(*)",
+    '  FROM public.consent_policies',
+    ' WHERE enabled',
+    "   AND source_kind = 'verified'",
+    '   AND reviewed_at IS NOT NULL',
+    '   AND valid_from <= clock_timestamp()',
+    '   AND valid_until > clock_timestamp();',
+  ].join('\n');
+
+/** 从 psql 输出里取 `enabled_verified_policies=N`；取不到返回 null（不猜）。 */
+export function parseConsentReadiness(output) {
+  const match = /enabled_verified_policies=(\d+)/u.exec(String(output ?? ''));
+  return match ? Number(match[1]) : null;
+}
+
+/** 未开 `--demo` 且政策为空时的显式警告（原样打印给用户，包含下一步怎么做）。 */
+export const CONSENT_EMPTY_WARNING =
+  '识别动线会 403：没有已核验政策，用 --demo 或先跑 import-consent-policy/recipient';
+
 /** pid 文件内容：带上实例标记与端口，`down`/`status` 靠它判断「这是不是本工具起的」。 */
 export function buildPidRecord({ pid, port, mode, instanceId, startedAt, logFile }) {
   return {
@@ -597,14 +845,45 @@ export function renderSecretsFile(secrets) {
   return `${lines.join('\n')}\n`;
 }
 
+/**
+ * `--demo` 且 `real` 时随 API 启动参数传「真实媒体接线的显式批准」。
+ *
+ * 批准开关（`--approve-real-media-wiring`）是 `services/api/src/server.ts` 唯一的铸造点：
+ * 不给它，媒体域整域 503（`PROVIDER_UNAVAILABLE`），演示栈连上传都做不了。演示档本来就是
+ * 一次显式的「本机非生产」选择，所以由同一次 `--demo` 派生；**不带 `--demo` 时逐字不变**（不传）。
+ */
+export function buildApiApprovalArgs({ demo = false, mode } = {}) {
+  return demo === true && mode === 'real' ? ['--approve-real-media-wiring'] : [];
+}
+
+/**
+ * 演示档的取图原点兜底：带 `--approve-real-media-wiring` 启动时，
+ * `MEDIA_ACCESS_GRANT_ORIGIN` 缺省会被 `assertAccessGrantOriginDeployable` 判成
+ * 「指向占位域」并拒绝启动（`media/real-ports.ts:260-278`）。
+ *
+ * 演示栈是**本机 http** 服务，这里给一个 `https://127.0.0.1:<apiPort>` 只为过启动校验；
+ * 它只影响取图句柄的 host，识别链路由服务端直读对象存储、不经过这个句柄。env 文件里显式
+ * 给了就尊重 env 文件，不覆盖。⛔ 不带 `--demo` 时一个键都不动。
+ */
+export function withDemoAccessOrigin(assembled, { demo = false, mode, apiPort } = {}) {
+  if (demo !== true || mode !== 'real') return assembled;
+  const current = assembled?.env?.MEDIA_ACCESS_GRANT_ORIGIN;
+  if (typeof current === 'string' && current.trim() !== '') return assembled;
+  return {
+    ...assembled,
+    env: { ...assembled.env, MEDIA_ACCESS_GRANT_ORIGIN: `https://127.0.0.1:${apiPort}` },
+    sources: { ...assembled.sources, MEDIA_ACCESS_GRANT_ORIGIN: 'demo' },
+  };
+}
+
 /** 索引用的「env 来源摘要」：只出现键名与来源，绝不出现值。 */
 export function describeEnvSources(sources) {
-  const order = ['DATABASE_URL', ...REQUIRED_REAL_ENV.filter((key) => key !== 'DATABASE_URL')];
+  const order = ['DATABASE_URL', ...REQUIRED_REAL_ENV.filter((key) => key !== 'DATABASE_URL'), ...OPTIONAL_REAL_ENV];
   const lines = [];
   for (const key of order) {
     const source = sources?.[key];
     if (!source) continue;
-    const label = { tool: '本工具生成', 'env-file': 'env 文件', process: '当前进程环境', generated: '新生成并已保存', 'state-dir': 'state-dir 复用' }[source] ?? source;
+    const label = { tool: '本工具生成', 'env-file': 'env 文件', process: '当前进程环境', generated: '新生成并已保存', 'state-dir': 'state-dir 复用', demo: '演示档默认（非生产）' }[source] ?? source;
     lines.push(`${key} ← ${label}`);
   }
   return lines;

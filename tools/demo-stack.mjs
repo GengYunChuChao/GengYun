@@ -26,10 +26,18 @@ import {
   INSTANCE_FLAG,
   UsageError,
   assembleApiEnv, buildDemoFlagSql,
+  buildConsentReadinessSql, buildDemoConsentSql,
+  buildApiApprovalArgs,
   buildPidRecord,
   buildPsqlFileArgs,
   classifyFailure,
   commandHasInstance,
+  CONSENT_EMPTY_WARNING,
+  DEMO_CONSENT_NOTICE,
+  DEMO_CONSENT_PURPOSES,
+  DEMO_CONSENT_POLICY_VERSION,
+  DEMO_RECIPIENT_ID,
+  parseConsentReadiness,
   describeEnvSources,
   healthVerdict,
   nextPollDelay,
@@ -44,6 +52,7 @@ import {
   statusLines,
   tailLines,
   usage,
+  withDemoAccessOrigin,
 } from './lib/demo-stack.mjs';
 import {
   buildCreateDatabaseSql,
@@ -412,10 +421,11 @@ function printPlan(context) {
 }
 
 /**
- * 演示档：迁移完成后把三个契约开关置为开启。
+ * 演示档：迁移完成后把三个契约开关置为开启，并写入两条演示隐私政策 + 一条演示接收方。
  *
- * 只走 psql 的**一个** `-c`：三条 UPDATE 在同一个 simple query 里，失败整组回滚；
- * SQL 自带幂等条件，重复 `up --demo` 不会再次累加 revision。这里不改迁移、不碰 `services/**`。
+ * 只走 psql 的**一个** `-c`（每步一组）：同一 simple query 就是同一事务，失败整组回滚；
+ * SQL 自带幂等条件，重复 `up --demo` 不会再次累加 revision，也不会重写 `updated_at`。
+ * 这里不改迁移、不碰 `services/**`。
  */
 function applyDemoProfile({ options, pgBin }) {
   const result = psql(pgBin, buildPsqlArgs({ port: options.pgPort, database: DATABASE_NAME, sql: buildDemoFlagSql({ demo: true }) }), 60_000);
@@ -437,7 +447,56 @@ function applyDemoProfile({ options, pgBin }) {
   } else {
     say(`  本次更新 ${updated.length}/3 个开关（revision +1）：${updated.join(' / ')}`);
   }
+
+  // 三个开关只够打开入口；识别动线还要「已核验政策 + 已核验接收方」，否则 grant 仍然 403。
+  const consent = psql(pgBin, buildPsqlArgs({ port: options.pgPort, database: DATABASE_NAME, sql: buildDemoConsentSql({ demo: true }) }), 60_000);
+  const consentOutput = `${consent.stdout ?? ''}\n${consent.stderr ?? ''}`;
+  if (consent.status !== 0) {
+    failWith({ stage: 'demo-consent', output: consentOutput }, [
+      '  栈的其它部分已就绪，但演示隐私政策没有写成；先修 psql 报错，再重跑 `up --demo`。',
+      '  若报 23505：该 purpose 已有**另一条**已启用政策（部分唯一索引 consent_policies_enabled_purpose），',
+      '  演示档不会替你禁用既有政策；确认环境后重来：`down` → `reset --yes` → `up --demo`。',
+    ]);
+    return EXIT.DEMO;
+  }
+
+  const touched = consentOutput
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => DEMO_CONSENT_PURPOSES.includes(line));
+  const recipientTouched = consentOutput
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .includes(DEMO_RECIPIENT_ID);
+  say(`  演示隐私政策：${DEMO_CONSENT_POLICY_VERSION}（${DEMO_CONSENT_PURPOSES.join(' / ')}）+ 接收方 ${DEMO_RECIPIENT_ID}`);
+  if (touched.length === 0 && !recipientTouched) {
+    say('  已是演示档：两条政策与接收方均已存在且内容一致，未重复写入（幂等）');
+  } else {
+    const parts = [];
+    if (touched.length > 0) parts.push(`政策 ${touched.join(' / ')}`);
+    if (recipientTouched) parts.push(`接收方 ${DEMO_RECIPIENT_ID}`);
+    say(`  本次写入/启用：${parts.join('；')}`);
+  }
+  say(`  ！${DEMO_CONSENT_NOTICE}`);
+  say('  标记：source_ref / review_evidence_ref / display_name 含 "demo-stack local demo profile (non-production)"（这两张表没有 note 列）');
   return EXIT.OK;
+}
+
+/**
+ * 未开 `--demo` 时只读地探一下「库里有没有已核验政策」，没有就明确告诉用户识别会 403。
+ *
+ * 判据与 `services/api/src/privacy/grant-pg.ts:47-53` 相同（enabled + verified + 在有效期内）。
+ * 查询失败只警告、不改变 `up` 的退出码：这是提示，不是闸门。
+ */
+function consentReadinessWarning({ options, pgBin }) {
+  const result = psql(pgBin, buildPsqlArgs({ port: options.pgPort, database: DATABASE_NAME, sql: buildConsentReadinessSql() }), 30_000);
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (result.status !== 0) {
+    return `  ！无法确认隐私政策是否就绪（psql 退出 ${String(result.status)}）：${stripAnsi(tailLines(output, 1))}`;
+  }
+  const count = parseConsentReadiness(output);
+  if (count === null) return '  ！无法解析隐私政策计数，识别动线是否 403 未确认';
+  return count === 0 ? `  ！${CONSENT_EMPTY_WARNING}` : null;
 }
 
 async function teardown(context, { keepData = true } = {}) {
@@ -539,14 +598,17 @@ async function commandUp(options) {
   const envFile = loadEnvFile(options.envFile);
   const existingSecrets = loadSecrets(paths);
   const secrets = { ...existingSecrets };
-  let assembled = assembleApiEnv({
-    mode: options.mode,
-    apiPort: options.apiPort,
-    databaseUrl: buildDatabaseUrl({ port: options.pgPort, database: DATABASE_NAME }),
-    envFile: envFile.values,
-    ambient: process.env,
-    existingGenerated: secrets,
-  });
+  let assembled = withDemoAccessOrigin(
+    assembleApiEnv({
+      mode: options.mode,
+      apiPort: options.apiPort,
+      databaseUrl: buildDatabaseUrl({ port: options.pgPort, database: DATABASE_NAME }),
+      envFile: envFile.values,
+      ambient: process.env,
+      existingGenerated: secrets,
+    }),
+    { demo: options.demo, mode: options.mode, apiPort: options.apiPort },
+  );
   if (options.mode === 'real' && assembled.missing.length > 0) {
     warn('');
     failHead('real 模式缺 env 项', assembled.missing.join(', '));
@@ -583,14 +645,17 @@ async function commandUp(options) {
     say(`  API：${stopped.api}`);
     say(`  PG：${stopped.pg}`);
     say(`  数据：${stopped.data}`);
-    assembled = assembleApiEnv({
-      mode: options.mode,
-      apiPort: options.apiPort,
-      databaseUrl: buildDatabaseUrl({ port: options.pgPort, database: DATABASE_NAME }),
-      envFile: envFile.values,
-      ambient: process.env,
-      existingGenerated: secrets,
-    });
+    assembled = withDemoAccessOrigin(
+      assembleApiEnv({
+        mode: options.mode,
+        apiPort: options.apiPort,
+        databaseUrl: buildDatabaseUrl({ port: options.pgPort, database: DATABASE_NAME }),
+        envFile: envFile.values,
+        ambient: process.env,
+        existingGenerated: secrets,
+      }),
+      { demo: options.demo, mode: options.mode, apiPort: options.apiPort },
+    );
   }
   say('[5/9] 数据目录与 initdb');
   ensureDir(paths.stateDir);
@@ -729,8 +794,9 @@ async function commandUp(options) {
     }
   }
 
-  // ---- ⑧b 演示档（可选）：迁移完成后再动 feature_flags
+  // ---- ⑧b 演示档（可选）：迁移完成后再动 feature_flags 与隐私政策
   say('');
+  let consentWarning = null;
   if (options.demo) {
     const demoCode = applyDemoProfile({ options, pgBin });
     if (demoCode !== EXIT.OK) return demoCode;
@@ -758,6 +824,7 @@ async function commandUp(options) {
     }
   } else {
     say('演示开关：未开（默认）');
+    consentWarning = consentReadinessWarning({ options, pgBin });
   }
 
   // ---- ⑨ 起 API
@@ -777,12 +844,16 @@ async function commandUp(options) {
 
   const instanceId = randomUUID();
   const startedAt = new Date().toISOString();
+  const approvalArgs = buildApiApprovalArgs({ demo: options.demo, mode: options.mode });
+  if (approvalArgs.length > 0) {
+    say('  媒体域真实接线：已随 --demo 显式批准（--approve-real-media-wiring；本机演示，非生产）');
+  }
   ensureDir(paths.stateDir);
   writeFileSync(paths.apiLog, '', 'utf8');
   const outFd = openSync(paths.apiLog, 'a');
   let child;
   try {
-    child = spawn(process.execPath, [API_ENTRY, `${INSTANCE_FLAG}${instanceId}`], {
+    child = spawn(process.execPath, [API_ENTRY, `${INSTANCE_FLAG}${instanceId}`, ...approvalArgs], {
       cwd: REPO_ROOT,
       env: { ...process.env, ...assembled.env },
       detached: true,
@@ -841,6 +912,10 @@ async function commandUp(options) {
       say('资料侧说明：库内已核对（verified）来源为 0 条 ⇒ 首页 200 但列表可能为空；这是资料接入缺项，不是栈故障。');
       say('  要本机演示卡片：`node tools/demo-stack.mjs up --mode real --seed-demo`（灌的是演示资料，非生产数据）。');
     }
+  }
+  if (consentWarning) {
+    warn('');
+    warn(consentWarning);
   }
   return EXIT.OK;
 }

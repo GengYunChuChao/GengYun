@@ -471,6 +471,14 @@ export const CASES = [
     if (result.etag !== undefined) problems.push(`real 臂 401 不应带 ETag，实际 ${JSON.stringify(result.etag)}`);
     return problems;
   }, note: '终态（cancelled）由协调器抛 OBJECT_UNAVAILABLE(409)（packages/privacy/deletion.mjs:279-281），经 toContractError 原样映射（routes/account-deletion.ts:376-380）；取消不写 24h 幂等台账（同文件 :368），所以换键也照样 409。夹具 `cancelled` 在播种时已把同一账号的单取消（world.mjs 的 seedInFlightDeletion({cancel:true})），本条不依赖 C4-25 先跑' },
+  // 撤回授权（DELETE /me/consents/:purpose）的失败面。判定顺序：schema 的 purpose enum
+  // （services/api/src/routes/consents.ts:67）→ 鉴权 401 → 幂等键 400 → If-Match 400
+  // （services/api/src/routes/consents.ts:71-75）；C4-27 故意带合法头，证明 401 来自缺会话。
+  { id: 'C4-27', family: 'C4', title: '游客撤回授权（无 authorization 头）', method: 'DELETE', path: `${API}/me/consents/recording`, headers: wkey('i22-c4-27', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' }, note: '顺序：preHandler 鉴权先于 handler 头校验（services/api/src/routes/consents.ts:64-75）。本条故意带合法幂等键与合法 If-Match，证明 401 来自缺会话，不是缺键或缺版本' },
+  { id: 'C4-28', family: 'C4', title: '已登录撤回授权但缺幂等键', actor: 'fresh', method: 'DELETE', path: `${API}/me/consents/recording`, headers: { 'if-match': '"1"' }, expect: { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' }, note: 'requireUser 通过 → handler 先查幂等键（services/api/src/routes/consents.ts:71-72）；缺键在 If-Match 校验之前判 400 IDEMPOTENCY_KEY_REQUIRED' },
+  { id: 'C4-29', family: 'C4', title: '已登录撤回授权但缺 If-Match', actor: 'fresh', method: 'DELETE', path: `${API}/me/consents/recording`, headers: key('i22-c4-29'), expect: { status: 428, code: 'REVISION_REQUIRED' }, note: '键校验通过后查 If-Match（services/api/src/routes/consents.ts:73-74）；头缺失判 428 REVISION_REQUIRED（契约把该错误码固定映射为 428：services/api/src/contract.ts:23，本 operation 的 428 也在 packages/contracts/openapi.json 的 DELETE /me/consents/{purpose} 里声明），与格式非法的 400 INVALID_REQUEST 分开' },
+  { id: 'C4-30', family: 'C4', title: '已登录撤回授权、If-Match 不是强修订号', actor: 'fresh', method: 'DELETE', path: `${API}/me/consents/recording`, headers: wkey('i22-c4-30', '1'), expect: { status: 400, code: 'INVALID_REQUEST' }, note: 'If-Match 必须是带双引号的强修订号（services/api/src/routes/consents.ts:75 的 /^"[1-9][0-9]*"$/）；裸 1 不匹配 ⇒ 400 INVALID_REQUEST' },
+  { id: 'C4-31', family: 'C4', title: '已登录撤回授权、用途不在闭集', actor: 'fresh', method: 'DELETE', path: `${API}/me/consents/qa`, headers: wkey('i22-c4-31', '"1"'), expect: { status: 400, code: 'INVALID_REQUEST' }, note: 'schema 的 purpose enum 校验先于 preHandler，所以 400 而不是 401（services/api/src/routes/consents.ts:64-68）；qa 不在 CONSENT_PURPOSES 闭集（packages/privacy/constants.mjs:13-18）' },
 
   // ---------------------------------------------------------------- C5 媒体
   { id: 'C5-01', family: 'C5', title: '上传句柄带多余字段', actor: 'a', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, object_key: 'evil/key' }, headers: key('i22-c5-01'), expect: { status: 400, code: 'INVALID_REQUEST' } },
