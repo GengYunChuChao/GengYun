@@ -31,9 +31,9 @@
 这是本次演练**第一个**踩到的东西，且不是被测页面自己的问题：
 
 - 现象（修复前）：`pages/knowledge/knowledge` 点「清空条件继续查询」后 `items=0`、`stateKind=error`、`status`「资料服务暂不可用，已清空，请重试。」，而同一时刻 `GET /knowledge?limit=20` 是 **200**、正文 8 条（带 token 直接请求核对过）。
-- 根因：`miniprogram/pages/knowledge/knowledge.js:206` 里 `require('../../utils/time-format').formatDate(...)`，而 `tools/prepare-wechat.mjs` 复制 `miniprogram/**` 用的是**逐项文件清单**（约 `tools/prepare-wechat.mjs:401-415` 的 `copyFileSync(join(root,'miniprogram',file), target)`，:330 注释「逐项清单保留给既有静态断言」），清单里没有 `utils/time-format.js`；`grep -Pattern "time-format|utils/session" tools/prepare-wechat.mjs` 零命中。`Compare-Object` 两目录只差这两个文件。
+- 根因：`miniprogram/pages/knowledge/knowledge.js:206` 里 `require('../../utils/time-format').formatDate(...)`，而 `tools/prepare-wechat.mjs` 复制 `miniprogram/**` 用的是**逐项文件清单**（约 `tools/prepare-wechat.mjs:401-415` 的 `copyFileSync(join(root,'miniprogram',file), target)`，`tools/prepare-wechat.mjs:330` 注释「逐项清单保留给既有静态断言」），清单里没有 `utils/time-format.js`；`grep -Pattern "time-format|utils/session" tools/prepare-wechat.mjs` 零命中。`Compare-Object` 两目录只差这两个文件。
 - 为什么报的是「服务暂不可用」而不是解析错误：`require` 抛出后 `e.code` 是 `undefined`，落到 `miniprogram/utils/knowledge-api.js:240` 的默认文案；`INVALID_RESPONSE` 走的是另一句「资料响应无法核对…」，两者文案不同，可据此区分。
-- 影响面（`grep -Pattern time-format miniprogram` 共 8 处）：`utils/history-api.js:313`、`pages/knowledge/knowledge.js:206`、`pages/messages/messages.js:328`、`pages/community/community.js:212`、`pages/communitydetail/communitydetail.js:197` 与 `:227`、`pages/historydetail/historydetail.js:122`、`pages/favorites/favorites.js:139`。也就是说**社区、消息、收藏、识别历史、科普五条动线，只要列表非空就会崩成同一句默认错误**；`utils/session.js` 目前没有任何 `require`，暂无影响。
+- 影响面（`grep -Pattern time-format miniprogram` 共 8 处）：`miniprogram/utils/history-api.js:313`、`miniprogram/pages/knowledge/knowledge.js:206`、`miniprogram/pages/messages/messages.js:328`、`miniprogram/pages/community/community.js:212`、`miniprogram/pages/communitydetail/communitydetail.js:197` 与 `miniprogram/pages/communitydetail/communitydetail.js:227`、`miniprogram/pages/historydetail/historydetail.js:122`、`miniprogram/pages/favorites/favorites.js:139`。也就是说**社区、消息、收藏、识别历史、科普五条动线，只要列表非空就会崩成同一句默认错误**；`utils/session.js` 目前没有任何 `require`，暂无影响。
 - 本次处置（不改 `tools/**`，因为超出本次允许改动范围）：把工作树里的 `miniprogram/utils/time-format.js`（3996 B）和 `utils/session.js`（1928 B）手工拷进**演练副本**，等开发者工具重编译后复测 → 五个页面全部恢复正常（§4 起的所有读数都是补文件之后的）。
 - 建议（交给实现方，不在本 PR 改）：`tools/prepare-wechat.mjs` 的复制清单补上 `utils/time-format.js`、`utils/session.js`，或改成整目录复制。**只要清单还缺这两个文件，任何人按文档新生成的演示副本都会在演示现场遇到「科普 0 条 + 社区 3 条全变错误」**。
 
@@ -47,7 +47,7 @@
 | --- | --- |
 | 实际路径 | 登录页点 `.btn--primary`（「微信登录」）→ 自动落在 `pages/home/home` |
 | 会话 | `wx.getStorageSync('gengyun.session')` = 扁平 4 键 `{accessToken, audience, expiresAt, executionMode}`；`accessToken` 43 字符；`expiresAt` `2026-11-16T15:15:53.079Z` |
-| data 关键字段 | `guest=false`、`loggedIn=true`、`previewStatus=ready`、`previewItems` **8** 张（稗 / 狗尾草 / 荨麻属 / 马唐属 / 牛筋草 / 看麦娘 / 藜 / 空心莲子草）、`entries` **3**（`拍草识别|未核实`、`农药标签识别|未核实`、`语音提问|未核实`） |
+| data 关键字段 | `guest=false`、`loggedIn=true`、`previewStatus=ready`、`previewItems` **8** 张（稗 / 狗尾草 / 荨麻属 / 马唐属 / 牛筋草 / 看麦娘 / 藜 / 空心莲子草）、`entries` **3**（`拍草识别\|未核实`、`农药标签识别\|未核实`、`语音提问\|未核实`） |
 | HTTP | `GET /messages/unread-count` 200、`GET /public/home` 200、`GET /auth/session` 200 |
 | 截图 | `01-home-top.png`、`01b-home-mid.png`、`01b-home-preview.png`、`01c-home-bottom.png` |
 | 一致性 | **一致**（3 入口 / 8 卡 / 三个「未核实」标签 / 5 个 tab 全部对上） |
@@ -92,7 +92,7 @@
 | HTTP 全链 | `POST /media/uploads` **201** → COS `PUT …myqcloud.com/obj_EW_DxmxpO7J3gDY8wgW87tCN?X-Amz-…` **200** → `POST /media/uploads/8b937d2c-8bde-49c8-a489-38f75a81935e/complete` **202** → `POST /recognitions` **202** → `GET /jobs/04d96d0a-daf6-47fd-a9a9-93b01c55c33f` 200（轮询 2 次） |
 | job 终态 | `04d96d0a-daf6-47fd-a9a9-93b01c55c33f`：revision 1 `queued`（「已受理，排队中」）→ 2 `running`（「识别中」）→ **3 `uncertain`**（「结果不确定（不可信）」）；DB `created_at 2026-11-09 23:25:15.468+08` → `updated_at 23:25:17.424+08`，约 **1.96 s**；`attempt=0`、`error_code` 空、`result_ref d2c22dc8-97a4-473e-9118-a7373a229972` |
 | `recognition_records` | id `d2c22dc8-97a4-473e-9118-a7373a229972`、`media_id 8b937d2c-8bde-49c8-a489-38f75a81935e`、**`candidates = []`**、**`uncertainty_reasons = ["画面为App界面截图，无植物主体，仅有功能按钮"]`**、**`model_version = openai-vision-v1`**、`selected_species_id` 空 |
-| 账本行 | `public.provider_call_ledger` 由 6 行变 **7** 行，新增 `e2852666-d3eb-40ba-b269-027c276a449b`：`attempt=1`、`capability=weed`、`provider_config_version=openai-vision-v1#deepseek-flash@1233de6f`、`model_version=openai-vision-v1`、**`invocation_state=sent`**、**`usage={"total_tokens":1188,"prompt_tokens":1148,"completion_tokens":40,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":1148}`**、`duration_ms=1902` |
+| 账本行 | `public.provider_call_ledger` 由 6 行变 **7** 行，新增 `e2852666-d3eb-40ba-b269-027c276a449b`：`attempt=1`、`capability=weed`、`provider_config_version=openai-vision-v1#deepseek-flash@1233de6f`、`model_version=openai-vision-v1`、**`invocation_state=sent`**、**`usage={"total_tokens": 1188, "prompt_tokens": 1148, "completion_tokens": 40, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 1148}`**、`duration_ms=1902` |
 | 页面 data | `modeNote`「服务端为 real 模式：照片经私有媒体链路处理，识别由真实提供者完成（当前真实提供者未接入时如实报不可用）。」；`substituteNotice` 空（未走替身）；`branch='uncertain'`；`stateView` = `{state:'uncertain', tone:'warning', component:'error', title:'结果不确定（不可信）', desc:'模型没有给出可信分数或自述不确定。候选仅供参考，需人工核对或重拍，不算识别成功。', terminal:true, success:false, retryable:true}`；`candidates []`、`candidatesTrusted=false`、`showTop3=true`；`uncertaintyReasons` 1 条；`recordId`/`recordRevision 1`；`history` 1 条；**无 `errorText`、无 403 `CONSENT_REQUIRED`** |
 | 截图 | `04a-identify-entry.png`、`04b-identify-result.png`、`04c-identify-result-scrolled.png` |
 | 一致性 | **「503 / 媒体链路未接线」的旧口径全部过期**（见下） |
