@@ -113,7 +113,7 @@
 
 | 脚本 | 唯一「提及」 | 说明 |
 | --- | --- | --- |
-| `tools/i22-failmatrix-negative-control.mjs` | `tests/failmatrix/mutations.mjs:5`（注释）、`tests/failmatrix/README.md:22` | 文字提及，不是接线 |
+| `tools/i22-failmatrix-negative-control.mjs` | 只在 `tests/failmatrix/mutations.mjs` 的**注释块**里被提到一次、外加 `tests/failmatrix/README.md:22` 的用法示例 | 文字提及，不是接线 |
 | `tools/openapi-route-inventory.mjs` | 无 | 0 命中；只被 `openapi-route-parity.mjs:82` 内部当子进程调起 |
 | `tools/verify-chat-live.mjs` | 无 | 0 命中（受控付费取证，头注框在人工范围） |
 | `tools/verify-gy-i05-log-redaction.mjs` | 无 | 0 命中（负例对照探针，需人工对比 `before/after`） |
@@ -250,7 +250,20 @@
 | ③ | 契约状态 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 中文表格一致`；`PASS: 状态为人工判定…` |
 | ④ | 文档闸门 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 368 页（扫描面 373 页：docs/verification）——读数七条判据全部自洽` |
 | ⑤ | 钻孔读数 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 611（glob 合计 581）` |
-| ⑥ | 与 main 合并试算 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 单行树哈希 `1f12ab047a3a045e27cf87870570201bbe24b5b7`，无冲突路径行 |
+| ⑥ | 与 main 合并试算 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 输出只有一行树哈希、**没有冲突路径行**（树哈希随任何文字改动而变，故不在此钉死具体值） |
+
+### 七之一、本页自己被下游闸门抓了一次（真实案例，不是夹具）
+
+返修轮推送后 `unit-tests` 红，红的两条不在本片新测试里，而在 `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs`：
+
+```
+✖ ① 真仓正控制：仓库根跑整道闸门 EXIT 0，基线外新增 0、可收紧 0
+✖ ② 防「扫了个寂寞」：本次命中 == 基线条目数，documents ≥ 300
+```
+
+原因是本页 §三 的一行把「某脚本只在别处被注释提过」写成了 `path:行` 形式、而那行恰好是注释行 ⇒ `tools/verify-verification-comment-anchors.mjs` 的读数从 `命中 1422 / 基线 1422` 变成 `命中 1423 / 基线 1422`，**基线外新增 1 条**。修法不是改基线（那是把红灯写进册子），而是把那处引用改成**不带冒号行号的散文引述**；改后读数回到 `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，两条红灯转绿。
+
+这件事本身值得记下来：**元闸门的文档也会被下游闸门抓**——写「某脚本只在注释里被提过」时，别用只对注释行成立的 `path:行` 锚点，否则等于给下游闸门送了一条新违章。本片因此把「文档里的锚点」也算进了自检面。
 
 ## 八、不声称
 
