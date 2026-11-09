@@ -156,7 +156,7 @@ merge-tree      git merge-tree --write-tree origin/main <本分支 head>（无�
 | `--require-no-stale` | 可收紧条目是否判红，缺省关 |
 | `--help` / `-h` | 用法 |
 
-未知参数会打 `ERR: 未知参数：…` 并以 EXIT 2 结束。读数列的格式（`-GATE` 行的两个开关显示）在 `tools/verify-verification-comment-anchors.mjs:554`。
+未知参数会打 `ERR: 未知参数：…` 并以 EXIT 2 结束。读数列的格式（`-GATE` 行的两个开关显示）在 `tools/verify-verification-comment-anchors.mjs:556`。
 
 ## 八、不声称
 
