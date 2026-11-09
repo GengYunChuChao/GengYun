@@ -227,7 +227,7 @@
 
 - 闸门 ① 就是 CI 跑的同一条命令（`.github/workflows/engineering-shell.yml:112`），本地绿 ≠ CI 绿的唯一差别是扫描面一致、环境不同。
 - 闸门 ② 的「必红」不是缺陷：`tests/unit/doc-anchor-relocation-identity.test.mjs:1309` 的自诊断把「base 与 HEAD 同一提交」当成取 base 逻辑坏掉的信号（§4 第 6 条）。
-- 表内读数取自**本轮修订分支**的实跑（分支自 `a372bd91` 切出，闸门 ② 的 merge-base 就是它；动笔时 `origin/main` 已到 `a4183da6`，交稿时再到 `3ea57925`）。main 这几轮一直在前进：`af39bfe6`（第二版 base）→ `7835bfe5`（`#1129`）→ `5a54b262`（`#1128`）→ `a372bd91`（`#1132`，本页第二版合入）→ `a30c8adb`（`#1133`）→ `a40fba6c`（`#1135`）→ `754efa23`（`#1137`）→ `a4183da6`（`#1127`，分支保护起点）→ `3ea57925`（交稿时 tip）。`git merge-tree --write-tree --name-only origin/main HEAD` 每次都 exit 0 且无冲突路径，但那一律是**当时**的判定——合并前必须按 §6 第 5 条用当次的 `origin/main` 重跑，不许拿本页读数顶替。
+- 表内读数取自**本轮修订分支**的实跑（分支自 `a372bd91` 切出，闸门 ② 的 merge-base 就是它；动笔时 `origin/main` 已到 `a4183da6`，交稿时再到 `3ea57925`）。main 这几轮一直在前进：`af39bfe6`（第二版 base）→ `7835bfe5`（`#1129`）→ `5a54b262`（`#1128`）→ `a372bd91`（`#1132`，本页第二版合入）→ `a30c8adb`（`#1133`）→ `a40fba6c`（`#1135`）→ `754efa23`（`#1137`）→ `a4183da6`（`#1127`，分支保护起点）→ `3ea57925`（交稿时 tip）。`git merge-tree --write-tree --name-only origin/main HEAD` 每次都 exit 0 且无冲突路径，但那一律是**当时**的判定——合并前必须按 §6 第 5 条用当次的 `origin/main` 重跑，不许拿本页读数顶替。 并入 main（130343e，#1140）后再跑：④ 变为「跳过 368 页／扫描面 373 页」、⑤ 变为「测试文件 609（glob 合计 579）」——数字随 main 上的页与测试增长，口径不变，以当次重跑为准。
 - 本页自检：`Select-String -Path docs/verification/gy-r90-collaboration-ops-20261109.md -Pattern '(?<![\w./-]):\d'` —— 命中 **0** 行（本页无裸行号）。
 
 ## 8 派单写的 vs 实测（只有这几处不一致，其余逐条对得上）
