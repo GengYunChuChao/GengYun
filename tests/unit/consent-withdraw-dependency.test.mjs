@@ -9,7 +9,7 @@
  * 「缺消费者就放行」。
  *
  * 本文件钉死的六点：
- *  1. 有依赖 + 已注入消费者 ⇒ 撤回成功（**200 语义**），消费者在同一事务内被调用一次；
+ *  1. 有依赖 + 已注入消费者 ⇒ 撤回成功（**200 语义**），消费者在账本自己的事务内被调用一次（不加入撤回事务）；
  *  2. 依赖与撤回**同事务且先判后写**：`BEGIN` → 依赖查询 → `UPDATE consent_records` → `COMMIT`；
  *  3. 依赖查询只带**调用者本人** `userId`（不跨主体探测，不泄露他人依赖）；
  *  4. **依赖清空** + 未注入消费者 ⇒ 撤回成功：缺消费者**不等于**一律拒绝，判定真的在查库；
@@ -99,7 +99,7 @@ const identityInput = {
 const withdrawInput = (idempotencyKey) => ({ purpose: PURPOSE, ifMatch: '"1"', idempotencyKey });
 const sqlIndexOf = (pool, needle) => pool.queries.findIndex((q) => q.text.includes(needle));
 
-test('依赖存在 + 已注入撤回消费者 ⇒ 撤回成功（现状不是 409），消费者同事务内先撤在途', async () => {
+test('依赖存在 + 已注入撤回消费者 ⇒ 撤回成功（现状不是 409），消费者先在自己事务内撤在途', async () => {
   const pool = syntheticPool({ present: true });
   const calls = [];
   const service = createPostgresConsentService(pool, 'synthetic-hmac-key', {

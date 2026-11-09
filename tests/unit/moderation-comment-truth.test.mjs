@@ -158,13 +158,16 @@ test('T3 90-assert：只写不读限定到 moderation_decisions；withdrawals �
   assert.ok(columnBlock.includes('6 列'), '1586-1587 必须仍解释 decisions 那 6 列读权的来源');
 });
 
-test('T4 防误伤：jobs/ledger.ts:45 的「只写不读」是作业台账 public.jobs 的真话，本片不动它', () => {
+test('T4 防误伤：jobs/ledger.ts:52 的「只写不读」是作业台账 public.jobs 的真话，本片不动它', () => {
   const text = source(JOBS_LEDGER);
   assert.ok(text.includes('只写不读'), 'jobs/ledger.ts 必须仍写着「只写不读」——那是作业台账，仍为真');
 
-  const pinned = lineAt(JOBS_LEDGER, 45);
-  assert.ok(pinned.includes('**只写不读**'), `jobs/ledger.ts:45 已漂移：${pinned}`);
-  assert.ok(pinned.includes('本片不改任何既有读面'), `jobs/ledger.ts:45 的限定语已漂移：${pinned}`);
+  // 本片（#29 撤回/注销终止在途作业）在 head 注释里新增了「5. 撤回/注销终止在途作业」一节、
+  // 并把「## 幂等」一节扩写成「同态守卫 + 撤回墓碑」：那两段都在「## 边界」**上方**，
+  // 于是「只写不读」那条从 45 整体下移到 52（+7 行，纯位移，判据不变）。
+  const pinned = lineAt(JOBS_LEDGER, 52);
+  assert.ok(pinned.includes('**只写不读**'), `jobs/ledger.ts:52 已漂移：${pinned}`);
+  assert.ok(pinned.includes('本片不改任何既有读面'), `jobs/ledger.ts:52 的限定语已漂移：${pinned}`);
 });
 
 test('T5 形状护栏：四个被改文件不低于下限、无 BOM、以换行结尾', () => {

@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "note": "未接线白名单：tools/*.mjs 里既没被 workflow 的 run: 点名并执行（A；`node --check` 只做语法检查，不算执行），也没有被 tests 在真仓 spawn 并断言退出码（B）的脚本。kind：library=库模块，接线由 host 承担；in-process=由某份 CI 会跑的测试在进程内驱动（日志/配置装配，没有独立判定面）；syntax-only=CI 里只有 `node --check`，工具本体从未执行（必须写 witness）；by-design=确实不该接；gap=本该接、但本片（A 档，不改 .github/**）接不了，逐条写清卡在哪。已接线的条目留在表里会被判红（过期）。",
+  "entries": [
+    {
+      "path": "tools/collect-g-drill.mjs",
+      "kind": "library",
+      "host": "tools/verify-g-drill-readings.mjs",
+      "reason": "纯函数库（runDrillPlan / readSha / readDirty）：只被 tools/verify-g-drill-readings.mjs 与 tests/unit/g-drill-readings.test.mjs import，没有自己的 CLI 入口；接线由 host verify-g-drill-readings 承担（tests/unit/g-drill-readings.test.mjs:1018 在真仓上跑它并断言退出码）。"
+    },
+    {
+      "path": "tools/contract-status-core.mjs",
+      "kind": "library",
+      "host": "tools/verify-contract-status.mjs",
+      "reason": "契约锚点的核心库（解析 / 比对 / 重锚）：由 tools/verify-contract-status.mjs import，后者在 engineering-shell.yml:111 被 run: 点名；单独跑它没有判定面。tests/unit/contract-status-tool.test.mjs:422 也只动态 import 导出函数。"
+    },
+    {
+      "path": "tools/contract-status-runtime.mjs",
+      "kind": "library",
+      "host": "tools/contract-status-core.mjs",
+      "reason": "运行期探针（在子进程里载入 API 路由并打印已挂载表），由 tools/contract-status-core.mjs:68 用 execFileSync 调起；两层宿主最终都落在 tools/verify-contract-status.mjs 上，单独给它加 run: 没有意义。"
+    },
+    {
+      "path": "tools/local-debug-config.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/local-debug.test.mjs",
+      "reason": "本机调试配置读取器（readLocalConfig / privateIPv4 / clientBasePath）：由 tests/local-debug.test.mjs:9 import 后在进程内驱动，该测试被 local-wechat.yml:57 的 run: 直接点名；它没有独立的退出码语义，spawn 一个只被当库用的模块等于测 import 成功。"
+    },
+    {
+      "path": "tools/local-debug-server.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/local-debug.test.mjs",
+      "reason": "本机调试 HTTP 服务（startLocalServer）：由 tests/local-debug.test.mjs:10 import 后起在回环端口上驱动，该测试被 local-wechat.yml:57 直接点名；常驻服务没有一次性退出码，接不进 run: 判定面。"
+    },
+    {
+      "path": "tools/i22-failmatrix-negative-control.mjs",
+      "kind": "by-design",
+      "reason": "人工变异执行器（27 条负控制，需人读输出判读），依赖同一批未入库的 .artifacts 产物，且要故意把注入的缺陷跑出来才叫成功；tests/failmatrix/README.md 的命令清单（第 22-23 行）与工具表（第 75 行）都把它列为人工执行的手工步骤，进 CI 会把「负控制全部按预期失败」误报成红。"
+    },
+    {
+      "path": "tools/local-env.mjs",
+      "kind": "by-design",
+      "reason": "本机开发栈编排（local:up/down/status：起真 PG17 与 API、占了固定端口、读 gitignored 的 .env）；CI 上没有这套宿主环境，也不能为了测它去拉数据库；tests/unit/local-env.test.mjs:809 只 import 了其中一个辅助函数 stopSpawnedApi（进程内清理用），不构成接线。"
+    },
+    {
+      "path": "tools/openapi-route-inventory.mjs",
+      "kind": "library",
+      "host": "tools/openapi-route-parity.mjs",
+      "reason": "路由表盘点库（`node tools/openapi-route-inventory.mjs <root>` 只打印已挂载路由表 JSON）：没有断言、没有退出码语义，唯一调用方是 tools/openapi-route-parity.mjs:82 的子进程；那个宿主已由 tests/unit/tools-repo-run-smoke.test.mjs:42 在真仓跑并断言退出码，所以接线由 host 承担，不单独接。"
+    },
+    {
+      "path": "tools/prepare-wechat.mjs",
+      "kind": "by-design",
+      "reason": "把小程序工程装配成微信开发者工具能打开的形状，只有真实微信工程树才有意义（会往工程里写 project.config.json 一类文件）；三个站点全部 cpSync 到临时树后跑**副本**（tests/local-debug.test.mjs:100→:105、:249、tests/unit/prepare-wechat-components.test.mjs:47→:60），按判据「只夹具不算接线」应判未接线——在仓库根裸跑它会改仓库里的 demo 工程，不是判定面。"
+    },
+    {
+      "path": "tools/verify-chat-live.mjs",
+      "kind": "by-design",
+      "reason": "受控付费取证脚本：默认零外发（不带 --approved 只做预检并 exit 2），真跑要 DATABASE_URL 外发台账、受控环境与用户单独授权，且最多 2 次付费调用；头注本身就把它框在人工取证里。"
+    },
+    {
+      "path": "tools/verify-provider-live-r28.mjs",
+      "kind": "by-design",
+      "reason": "文件头第 19 行明写「⛔ 本工具不得被任何 workflow 引用，也不得进任何 test:* 套件」——它是靠人工触发的真实供应商连通性抽查，接进 CI 会直接违背工具自己的使用边界。"
+    },
+    {
+      "path": "tools/verify-production-provisioning.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/unit/production-provisioning.test.mjs",
+      "reason": "真云控制台核对（生产实例 / 备份 / 告警配置）：脚本本身要生产只读凭据，但它的判定逻辑已经有退出码语义（report → exit），并由 tests/unit/production-provisioning.test.mjs:15 在进程内用注入的假凭据驱动（该测试在 test:unit 里，被 engineering-shell.yml:63 点名）；真仓裸跑才是不能做的那件事——未审代码不接触生产凭据。"
+    },
+    {
+      "path": "tools/verify-real-capability-config.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/unit/real-capability-config.test.mjs",
+      "reason": "校验 docs/verification/config.local.json（.gitignore:42 明确忽略的本地配置），没有这份文件裸跑必然红；但它有真实的退出码语义（exitCodeFor(report)）且被 tests/unit/real-capability-config.test.mjs:33 以 runCli 在进程内驱动（test:unit 里跑），故归 in-process 而不是 by-design。"
+    },
+    {
+      "path": "tools/verify-gy-i05-log-redaction.mjs",
+      "kind": "by-design",
+      "reason": "负例对照探针：要在一份「改前」的 services/api/src/app.ts 上跑，证明探针抓得到泄漏，判定明细走 stderr、靠人工 tee before.log 与 after.log 对比；把改前源码固化进 CI 才能重复，等于把历史版本塞进流水线。"
+    },
+    {
+      "path": "tools/ai-config.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/ai-config.test.mjs",
+      "reason": "AI 供应商配置解析/校验库：CI 里只有 access-verification.yml:28 的 `node --check`（语法级，工具本体从未作为 CLI 被执行）；它的判定逻辑（模型名 / 端点 / 密钥形状）由 tests/ai-config.test.mjs:10 在进程内驱动，该测试被同文件 :30 的 `node --test tests/ai-config.test.mjs` 点名。" 
+    },
+    {
+      "path": "tools/verify-env.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/verify-env.test.mjs",
+      "reason": "环境变量/连通性检查器：CI 里只有 access-verification.yml:35 的 `node --check`；真跑需要各供应商凭据（正是不能进 CI 的东西），判定逻辑（verifyEnvironment / probeHTTPS / PROVIDERS）由 tests/verify-env.test.mjs:4 在进程内以假探针驱动，该测试被同文件 :36 点名。" 
+    },
+    {
+      "path": "tools/verify-tencent-live.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/tencent-live.test.mjs",
+      "reason": "腾讯云真实连通性/签名探针：CI 里只有 access-verification.yml:21 的 `node --check`；真跑要真实 SecretId/SecretKey 与付费接口，签名与判定逻辑（reserve / attempt / signRequest / resolveTc3Credentials）由 tests/tencent-live.test.mjs:5 在进程内驱动，该测试被同文件 :23 点名。" 
+    },
+    {
+      "path": "tools/verify-llm-live.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/llm-live.test.mjs",
+      "reason": "大模型真实调用探针（含付费预算与注入判定）：CI 里只有 access-verification.yml:24 的 `node --check`；真跑要真实 API Key 与付费额度，判分/预算逻辑（buildCases / runCase / judgeInjection / priceTokens …）由 tests/llm-live.test.mjs:6 在进程内驱动，该测试被同文件 :25 点名。" 
+    },
+    {
+      "path": "tools/verify-tokenhub.mjs",
+      "kind": "in-process",
+      "exercisedBy": "tests/tokenhub-account.test.mjs",
+      "reason": "账号/令牌可用性探针：CI 里只有 access-verification.yml:26 的 `node --check`；真跑要真实令牌，判定逻辑（verifyTokenHub）由 tests/tokenhub-account.test.mjs:3 在进程内驱动，该测试被同文件 :27 点名。" 
+    },
+    {
+      "path": "tools/verify-provider-adapter-live.mjs",
+      "kind": "syntax-only",
+      "witness": ".github/workflows/access-verification.yml:22",
+      "reason": "供应商适配器真实连通性探针：CI 里只有 `node --check`（语法检查，工具本体从未执行），也没有进程内见证；真跑要真实供应商凭据与付费链路，本片（A 档，不改 .github/**）无法把它接成执行面——登记为已知缺口形状，不是「已接线」。" 
+    },
+    {
+      "path": "tools/prepare-ai-verification.mjs",
+      "kind": "syntax-only",
+      "witness": ".github/workflows/access-verification.yml:29",
+      "reason": "把 docs/verification/ 下的配置拼成待核清单的装配脚本：CI 里只有 `node --check`，没有断言面也没有进程内见证；它产出的是给人看的清单（写文件），接进 CI 需要先确定「清单正确」的判据，本片不做——登记为已知缺口形状。" 
+    }
+  ]
+}

@@ -30,7 +30,7 @@ const API = '/api/v1';
 const DELETION_PATH = `${API}/me/account/deletion`;
 const SESSION_SIGNING_KEY = 'synthetic-i19-egress-revoker-reachability-key-0123456789';
 
-/** 账本撤销在途外发的那条原子 UPDATE（`privacy/ledger-pg.ts::revokeInFlight`）。 */
+/** 账本撤销在途外发的 `exports` UPDATE（`privacy/ledger-pg.ts::revokeInFlight`；同事务另有 `jobs` 句）。 */
 const REVOKE_SQL = /UPDATE public\.exports SET state='failed', error_code='CONSENT_WITHDRAWN'/;
 /** 写入类语句（用于「503 零写入」的判据）。 */
 const WRITE_SQL = /^(INSERT|UPDATE|DELETE)\b/i;

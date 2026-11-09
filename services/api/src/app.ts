@@ -339,7 +339,7 @@ declare module 'fastify' {
      *
      * 四臂可据它判定：真库端口的 `persistent === true`；显式不可用端口的
      * `listThirdPartyDeletions()` 抛 `PROVIDER_UNAVAILABLE`；未接线端口回 `null`。
-     * ⛔ 只读：本片不 dispatch、不落库（写侧 P2-c）。
+     * ⛔ 本装饰面只读：不 dispatch、不落库。写侧调度在 `executeHandlers()`（GY-R73 起）。
      */
     thirdPartyDeletion: ThirdPartyDeletionReadPort;
     /**
@@ -2298,7 +2298,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...backupStatesWiring,
     ...onlineEvidenceWiring,
     ...onlineStatesWiring,
-    // GY-R59（P2-b）：第三方完成态的读侧端口 + 写侧适配器（只登记，不 dispatch）。
+    // GY-R59（P2-b）：第三方完成态的读侧端口 + 写侧适配器（适配器只登记；调度在 executeHandlers，GY-R73）。
     ...thirdPartyWiring,
     ...thirdPartyAdapterWiring,
     ...(durableDeletionRequests === null
@@ -2461,7 +2461,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I19（#19）本片：注销装配的只读取证面（回执台账只含 sha256 摘要，不含明文 bearer）。
   app.decorate('accountDeletion', accountDeletion);
   app.decorate('deletionReceipts', deletionReceipts);
-  // GY-R59（P2-b）：第三方删除读侧端口的取证面（⛔ 只读：本片不 dispatch、不落库）。
+  // GY-R59（P2-b）：第三方删除读侧端口的取证面（⛔ 只读装饰面：不 dispatch、不落库；调度见 executeHandlers）。
   app.decorate('thirdPartyDeletion', userDataDeletion.thirdParty);
   app.decorate('communityService', communityService);
   // GY-I12（#12）：问答服务。注销删除注册已并入 `userDataDeletion`（C1b-3 / P0-3 路径①），

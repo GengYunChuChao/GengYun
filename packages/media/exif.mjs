@@ -10,8 +10,11 @@
  * 安全红线（返修 B1 强化）：
  *   1) **对外字节必须全部经过结构校验与清理**——无论在哪个容器发现元数据，
  *      返回的字节都是「逐块重建 + 结构校验通过」的结果，绝不回退返回原始输入；
- *   2) **容器尾部的多余字节一律拒绝**（PNG IEND 之后、JPEG EOI 之后、WebP RIFF 声明之外），
+ *   2) **容器尾部的多余字节一律拒绝**（PNG IEND 之后、WebP RIFF 声明之外），
  *      杜绝「写入 IEND/EOI 之后仍被下游读取」的走私通道；
+ *      唯一例外是 **JPEG 的 EOI 之后**（R90）：真实相册与 IM 转存的照片普遍带尾随字节，
+ *      那里改为**丢弃**而非放行——输出只保留 `0..EOI`，尾随字节不进入衍生物，
+ *      走私通道同样关闭，但不再把整张真实照片判死（见 stripJpeg 尾部注释）；
  *   3) **无图像数据 / 结构损坏的容器一律拒绝**（如仅 PNG 签名、仅 SOI 的 JPEG），
  *      不允许进入 ready；
  *   4) **解压必须受预算约束**（返修 D3）——PNG 解压前按 IHDR 计算期望原始长度，
@@ -278,8 +281,10 @@ function stripJpeg(bytes) {
     i += 2 + segLen;
   }
   if (!sawSOS) return failed(bytes); // 无图像数据（无 SOS）
-  if (!sawEOI) return failed(bytes); // 未以 EOI 正常结束
-  if (i !== bytes.length) return failed(bytes); // EOI 之后仍有尾部字节 → 拒绝
+  if (!sawEOI) return failed(bytes); // 未以 EOI 正常结束（截断）
+  // R90：EOI 之后允许存在尾随字节（真实相册 / IM 转存照片普遍如此，实测尾随 24 B 至 37 KB），
+  // 但**不把它放进输出**：chunks 只累积到 EOI 为止，尾随字节连带其中夹带的元数据一并丢弃。
+  // 红线 2 的「EOI 之后仍被下游读取」因此依旧不成立，只是不再把整张真实照片判死。
   return { ok: true, data: concat(chunks), removed };
 }
 
@@ -427,7 +432,8 @@ function stripWebp(bytes) {
  * @param {Uint8Array} bytes
  * @param {string} mime 已核验的真实图片 MIME（image/jpeg|image/png|image/webp）
  * @returns {{ ok: boolean, changed: boolean, data: Uint8Array, removed: string[] }}
- *   ok=false 表示容器结构损坏 / 无图像数据 / 尾部非法，调用方必须据此拒绝该媒体。
+ *   ok=false 表示容器结构损坏 / 无图像数据 / 尾部非法（PNG IEND 之后、WebP RIFF 声明之外），
+ *   调用方必须据此拒绝该媒体。
  */
 export function stripImageMetadata(bytes, mime) {
   let result;

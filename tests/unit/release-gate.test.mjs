@@ -55,10 +55,10 @@ function writeJson(path, value) {
 }
 
 /** 造一个真 git 夹具：`main` 上先有一条基线提交，返回基线 SHA 供 `--base` 用。 */
-function makeGitFixture(files) {
+function makeGitFixture(files, branch = 'main') {
   const dir = mkdtempSync(join(tmpdir(), 'gy-release-gate-repo-'));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
-  git('init', '-q', '-b', 'main');
+  git('init', '-q', '-b', branch);
   git('config', 'user.email', 'gate@example.invalid');
   git('config', 'user.name', 'release gate test');
   git('config', 'commit.gpgsign', 'false');
@@ -389,6 +389,157 @@ test('门禁·产物契约：--list 列六个门禁、--help 退出码 0、包�
     assert.equal(typeof report.generatedAt, 'string');
     assert.ok(!Number.isNaN(Date.parse(report.generatedAt)));
   } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GY-R90 硬化：rename 漏扫（`--diff-filter=AM` → `AMR`）与空 diff 假绿（`--require-base`）
+// ---------------------------------------------------------------------------
+
+/**
+ * **改名漏扫**：`git mv` 之后在**同一提交**里追加内容时，git 默认的重命名侦测把这段 diff 记成 `R0xx`
+ * （夹具实测 `R093`），`--diff-filter=AM` 的行集里**一个文件都没有** ⇒ `scannedLines: 0`、退出码 0：
+ * 整份改动（含新增的那一行疑似密钥）从来没被扫过。
+ *
+ * 修法是 `AMR`：`AMR = AM ∪ R` 是**严格超集**，原来会扫的 A/M 一个不少，只多扫 rename，
+ * 因此不可能把 failed 变成 pass —— 这条用例钉的就是「多扫出来的那部分真的能判红」。
+ */
+test('门禁·改名（git mv）后追加疑似密钥：AMR 必须扫到并判红（AM 下是 0 行假绿）', () => {
+  const fixture = makeGitFixture({ 'clean.txt': `${Array.from({ length: 20 }, (_, i) => `export const row${i + 1} = ${i + 1};`).join('\n')}\n` });
+  try {
+    // git mv 与「追加一行疑似密钥」落在同一提交：这正是实测漏扫的形状。
+    fixture.git('mv', 'clean.txt', 'moved.txt');
+    const moved = readFileSync(join(fixture.dir, 'moved.txt'), 'utf8');
+    writeFileSync(join(fixture.dir, 'moved.txt'), `${moved}const key = '${RAW_SK}';\n`);
+    fixture.git('add', '-A');
+    fixture.git('commit', '-q', '--no-gpg-sign', '-m', 'rename + leak');
+
+    // 先自证夹具形状：这次改动在 git 眼里是 `R`（不是 A/M）——否则下面的断言测不到 rename 分支。
+    const nameStatus = fixture.git('diff', '--name-status', 'HEAD~1', 'HEAD');
+    assert.match(nameStatus, /^R\d+\tclean\.txt\tmoved\.txt$/m, `夹具必须是 rename（R）形状，实际：${JSON.stringify(nameStatus)}`);
+
+    const run = gate(['--root', fixture.dir, '--base', 'HEAD~1', '--only', 'secrets', '--out', join(makeScratch(), 'rename.json')]);
+    assert.equal(run.status, 1, `改名后的疑似密钥必须判红\n${run.stdout}\n${run.stderr}`);
+
+    const secrets = parseReport(run.stdout).gates[0];
+    assert.equal(secrets.status, 'failed');
+    assert.equal(secrets.details.scannedLines, 1, '改名提交里新增的那 1 行必须真的被扫到（不是 0 行空扫）');
+    assert.deepEqual(secrets.details.hits.map((hit) => `${hit.file}:${hit.line}`), ['moved.txt:21']);
+    assert.equal(secrets.details.hits[0].rule, 'openai-style-key');
+  } finally {
+    rmSync(fixture.dir, { recursive: true, force: true });
+  }
+});
+
+/** **改名后的产物**：纯改名（similarity 100%，夹具实测 `R100`）在 `AM` 下同样整份漏检。 */
+test('门禁·改名后的大文件/二进制必须被抓到（纯改名 R100 也不能漏）', () => {
+  const fixture = makeGitFixture({ 'README.md': '# baseline\n' });
+  const scratch = makeScratch();
+  try {
+    writeFileSync(join(fixture.dir, 'big.txt'), 'x'.repeat(2048));
+    writeFileSync(join(fixture.dir, 'blob.bin'), Buffer.from([0, 1, 2, 3, 0, 4, 5]));
+    fixture.git('add', '-A');
+    fixture.git('commit', '-q', '--no-gpg-sign', '-m', 'artifacts');
+    fixture.git('mv', 'big.txt', 'renamed-big.txt');
+    fixture.git('mv', 'blob.bin', 'renamed-blob.bin');
+    fixture.git('commit', '-q', '--no-gpg-sign', '-m', 'rename only');
+
+    const nameStatus = fixture.git('diff', '--name-status', 'HEAD~1', 'HEAD');
+    assert.match(nameStatus, /^R100\tbig\.txt\trenamed-big\.txt$/m, `夹具必须是纯改名 R100，实际：${JSON.stringify(nameStatus)}`);
+
+    const run = gate([
+      '--root', fixture.dir, '--base', 'HEAD~1', '--only', 'artifacts',
+      '--max-file-bytes', '512', '--out', join(scratch, 'rename-artifacts.json'),
+    ]);
+    assert.equal(run.status, 1, `改名后的大文件/二进制必须判失败\n${run.stdout}\n${run.stderr}`);
+
+    const artifacts = parseReport(run.stdout).gates[0];
+    assert.equal(artifacts.details.scannedFiles, 2, '改名后的两个文件都必须进清点（AM 下是 0）');
+    const problems = new Map(artifacts.details.findings.map((finding) => [finding.file, finding.problem]));
+    assert.equal(problems.get('renamed-big.txt'), 'too-large');
+    assert.equal(problems.get('renamed-blob.bin'), 'binary');
+  } finally {
+    rmSync(fixture.dir, { recursive: true, force: true });
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+/**
+ * **空 diff 假绿**：没有 remote（也没有本地 `main`）时，`resolveBase` 的候选链
+ * （upstream/main → origin/main → main → HEAD）一路落空，最后落到 `HEAD` ⇒ `<base>...HEAD` 是空 diff，
+ * `secrets` 扫 0 行也判 `passed`、退出码 0。这不是「没泄漏」，是「根本没看」。
+ *
+ * `--require-base` 把这种形状改成**用法错误（2）**，而真泄漏该红还是红（`--base HEAD~1` ⇒ 1）。
+ * 三条断言必须在**同一个夹具**上同时成立，否则「收紧」可能只是把某个别的东西弄红了。
+ * 第四个夹具反向钉住「不误伤」：基线合法（`main ≠ HEAD`）时 `--require-base` 不得改变结论。
+ */
+test('门禁·--require-base：默认基线落到 HEAD ⇒ 2，而 --base HEAD~1 的真泄漏仍为 1', () => {
+  // 分支刻意不叫 main：否则 `main` 这一档会先命中，落到 HEAD 的路径就测不到了。
+  const fixture = makeGitFixture({ 'README.md': '# baseline\n' }, 'trunk');
+  const scratch = makeScratch();
+  try {
+    writeFileSync(join(fixture.dir, 'leak.txt'), `${LEAKY_FIXTURE}\n`);
+    fixture.git('add', '-A');
+    fixture.git('commit', '-q', '--no-gpg-sign', '-m', 'real leak');
+
+    // ① 默认（无 --require-base）：行为必须与改动前完全一致 —— exit 0、base 落到 HEAD、扫 0 行。
+    const loose = gate(['--root', fixture.dir, '--only', 'secrets', '--out', join(scratch, 'loose.json')]);
+    assert.equal(loose.status, 0, `不给 --require-base 时行为不得改变\n${loose.stdout}\n${loose.stderr}`);
+    const looseReport = parseReport(loose.stdout);
+    assert.equal(looseReport.base.ref, 'HEAD', '这个夹具就是要让候选链落到 HEAD');
+    assert.equal(looseReport.base.sha, fixture.git('rev-parse', 'HEAD'));
+    assert.equal(looseReport.gates[0].details.scannedLines, 0, '假绿的形状：扫了 0 行也判 pass');
+
+    // ② --require-base：同一夹具必须变成用法错误 2，且不产出半份 JSON、不落盘。
+    const strictOut = join(scratch, 'strict.json');
+    const strict = gate(['--root', fixture.dir, '--only', 'secrets', '--require-base', '--out', strictOut]);
+    assert.equal(strict.status, 2, `基线就是 HEAD 时必须 exit 2\n${strict.stdout}\n${strict.stderr}`);
+    assert.equal(strict.stdout, '', '用法错误时 stdout 不得输出半个 JSON');
+    assert.equal(existsSync(strictOut), false, '用法错误时不得落盘报告');
+    assert.match(strict.stderr, /用法错误/);
+    // 必须点名 flag **和** 判据本身：只匹配 `--require-base` 的话，帮助文本（USAGE 里本来就有这一行）
+    // 就能让断言通过 —— 那样这条用例在「flag 存在但判据没实现」时也是绿的（实测过：未知选项也走 2）。
+    assert.match(strict.stderr, /--require-base 要求基线不是 HEAD/, '报错必须说清判据是「基线不是 HEAD」');
+    assert.match(strict.stderr, /HEAD/, '报错必须说清是基线落到了 HEAD');
+
+    // ②b 显式 `--base HEAD` 与默认 fallback 落到 HEAD 是同一件事，也必须 2。
+    const explicitHead = gate(['--root', fixture.dir, '--only', 'secrets', '--base', 'HEAD', '--require-base', '--out', join(scratch, 'head.json')]);
+    assert.equal(explicitHead.status, 2, explicitHead.stderr);
+    assert.match(explicitHead.stderr, /用法错误/);
+
+    // ③ 真泄漏照样红：--base HEAD~1 时 exit 1（给不给 --require-base 都一样）。
+    const leaky = gate(['--root', fixture.dir, '--base', 'HEAD~1', '--only', 'secrets', '--out', join(scratch, 'leaky.json')]);
+    assert.equal(leaky.status, 1, `真泄漏必须仍然判红\n${leaky.stdout}\n${leaky.stderr}`);
+    const leakyHits = parseReport(leaky.stdout).gates[0].details.hits;
+    assert.ok(leakyHits.length >= 3, `四条规则里至少三条要命中，实际 ${leakyHits.length}`);
+
+    const leakyStrict = gate(['--root', fixture.dir, '--base', 'HEAD~1', '--only', 'secrets', '--require-base', '--out', join(scratch, 'leaky-strict.json')]);
+    assert.equal(leakyStrict.status, 1, `合规基线上 --require-base 不得吞掉真泄漏\n${leakyStrict.stdout}\n${leakyStrict.stderr}`);
+    assert.equal(parseReport(leakyStrict.stdout).verdict, 'fail');
+
+    // ④ 不误伤：基线合法（main ≠ HEAD）且新增干净 ⇒ 给不给 --require-base 都是 0。
+    const clean = makeGitFixture({ 'README.md': '# baseline\n' });
+    try {
+      clean.git('checkout', '-q', '-b', 'feature');
+      writeFileSync(join(clean.dir, 'clean.mjs'), CLEAN_FIXTURE);
+      clean.git('add', '-A');
+      clean.git('commit', '-q', '--no-gpg-sign', '-m', 'clean');
+      const ok = gate(['--root', clean.dir, '--only', 'secrets', '--require-base', '--out', join(scratch, 'clean-ok.json')]);
+      assert.equal(ok.status, 0, `基线合法时 --require-base 不得误伤\n${ok.stdout}\n${ok.stderr}`);
+      const okReport = parseReport(ok.stdout);
+      assert.equal(okReport.base.ref, 'main');
+      assert.equal(okReport.gates[0].details.scannedLines, CLEAN_FIXTURE.split('\n').length - 1);
+    } finally {
+      rmSync(clean.dir, { recursive: true, force: true });
+    }
+
+    // ⑤ `--help` 必须自己说得出这个 flag（否则等于只有作者知道）。
+    const help = gate(['--help']);
+    assert.equal(help.status, 0);
+    assert.match(help.stderr, /--require-base/);
+  } finally {
+    rmSync(fixture.dir, { recursive: true, force: true });
     rmSync(scratch, { recursive: true, force: true });
   }
 });

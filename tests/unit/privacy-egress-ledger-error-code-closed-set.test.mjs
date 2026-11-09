@@ -76,11 +76,18 @@ const PATTERNS = Object.freeze([
 /**
  * 今天已知的账本写入点（`文件:码`，多重集：同一个文件同一码出现两次就写两条）。
  * ⛔ 这张表是**精确断言**，不是上界：加宽（塞新写入点）与过期（删了代码没删表）都要红。
+ *
+ * `packages/privacy/ledger.mjs:CONSENT_WITHDRAWN` 记两条（#29 缺口①）：同一函数
+ * `revokeInFlight` 里撤回要终止两处 —— ① 外发账本行 `record.errorCode = 'CONSENT_WITHDRAWN'`；
+ * ② 该主体在途的内存作业行 `job.errorCode = 'CONSENT_WITHDRAWN'`（台账 `public.jobs` 的
+ * 内存镜像）。两处用同一个撤回码，才能让读面「账本 + 作业行」逐字对上；码本身已在契约
+ * 闭集里（403 档），所以不需要进 DOCUMENTED_EXCEPTIONS。
  */
 const KNOWN_SITES = Object.freeze([
   'packages/privacy/egress.mjs:PROVIDER_OUTCOME_UNKNOWN',
   'packages/privacy/egress.mjs:PROVIDER_UNAVAILABLE',
   'packages/privacy/in-flight.mjs:OBJECT_CANCELLED',
+  'packages/privacy/ledger.mjs:CONSENT_WITHDRAWN',
   'packages/privacy/ledger.mjs:CONSENT_WITHDRAWN',
   'services/api/src/privacy/ledger-pg.ts:CONSENT_WITHDRAWN',
   'services/api/src/privacy/ledger-pg.ts:OBJECT_CANCELLED',

@@ -12,13 +12,14 @@
  *
  * ## 四条判据都是**形状**判据（钉集合/结构，不钉会被他人合法改动带漂的绝对数）
  *   T1 授权面：`20-login-roles.sql` 的 `gy-r71-jobs-ledger-grant` 区里**恰好一条**
- *      `GRANT SELECT (…) ON public.jobs TO gengyun_api_runtime`，列集合 == 7 列（6 列 upsert 面 +
- *      owner_id）；本区**无表级** `GRANT … ON public.jobs`、**无** DELETE / TRUNCATE。
+ *      `GRANT SELECT (…) ON public.jobs TO gengyun_api_runtime`，列集合 == 8 列（6 列 upsert 面 +
+ *      owner_id + kind）；本区**无表级** `GRANT … ON public.jobs`、**无** DELETE / TRUNCATE。
  *   T2 断言面：`90-assert-least-privilege.sql` 的 `expected('jobs', …)` 的 `sel` 数组与 T1 的授权
  *      列**逐列同值**（同一事实的两次写法，任一处漂移即红）；`del` 仍是 `true`（表级 DELETE 已授）。
  *   T3 读面：`services/api/src/**` 里**没有任何** SELECT 语句读 `public.jobs`（唯一出现形态是
- *      purge 的 DELETE）；`owner_id` 与 `public.jobs` 同现的地方只有「删除谓词」与
- *      `online-purge-port.ts` 的 `has_column_privilege(…,'owner_id','SELECT')` 探测（探测必须留着）。
+ *      purge 的 DELETE 与 #29 撤回终止的 UPDATE）；`owner_id` 与 `public.jobs` 同现的地方只有
+ *      「删除/更新谓词」与 `online-purge-port.ts` 的 `has_column_privilege(…,'owner_id','SELECT')`
+ *      探测（探测必须留着）。
  *   T4 语句面：`JOB_LEDGER_PURGE_SQL` 仍是 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`
  *      （不许悄悄改成整表删、改成别的谓词，或加 `RETURNING`）。
  *
@@ -39,8 +40,8 @@ const ASSERT_SQL = new URL('../../deploy/postgres-cvm/sql/90-assert-least-privil
 const API_SRC = new URL('../../services/api/src/', import.meta.url);
 const PURGE_PORT = new URL('../../services/api/src/privacy/online-purge-port.ts', import.meta.url);
 
-/** 出厂 SELECT 面的期望列：6 列 upsert 面 + 注销清理谓词列 `owner_id`。 */
-const EXPECTED_SELECT = ['id', 'state', 'revision', 'error_code', 'result_ref', 'updated_at', 'owner_id'];
+/** 出厂 SELECT 面的期望列：6 列 upsert 面 + 注销清理谓词列 `owner_id` + 撤回终止谓词列 `kind`。 */
+const EXPECTED_SELECT = ['id', 'state', 'revision', 'error_code', 'result_ref', 'updated_at', 'owner_id', 'kind'];
 
 const sorted = (list) => [...list].sort();
 
@@ -91,7 +92,7 @@ test('T1 授权面：gy-r71-jobs-ledger-grant 的 SELECT 列集合含 owner_id�
   const grantedColumns = readColumnList(selectGrants[0][1]);
   assert.equal(selectGrants[0][2], 'gengyun_api_runtime', `SELECT 授权必须落在运行时角色上（实际 ${selectGrants[0][2]}）`);
 
-  // 7 列 == 6 列 upsert 面 + owner_id：多一列（放宽）或少一列（缺谓词列 ⇒ 42501）都必须红。
+  // 8 列 == 6 列 upsert 面 + owner_id + kind：多一列（放宽）或少一列（缺谓词列 ⇒ 42501）都必须红。
   assert.deepEqual(
     sorted(grantedColumns),
     sorted(EXPECTED_SELECT),
