@@ -200,8 +200,14 @@ test('B1 JPEG：仅 SOI（无图像数据）→ 拒绝', () => {
   assert.equal(stripImageMetadata(jpegSignatureOnly(), 'image/jpeg').ok, false);
 });
 
-test('B1 JPEG：EOI 之后的尾部字节 → 拒绝', () => {
-  assert.equal(stripImageMetadata(jpegWithTrailing(), 'image/jpeg').ok, false);
+test('B1 JPEG：EOI 之后的尾部字节 → 丢弃（R90 起不再整张拒绝）', () => {
+  const input = jpegWithTrailing();
+  // 前置：尾部确实残留了合成标记
+  assert.equal(containsBytes(input, 'TRAILING-SECRET'), true);
+  const out = stripImageMetadata(input, 'image/jpeg');
+  assert.equal(out.ok, true, '真实相册照片普遍带尾随字节，不得整张拒绝');
+  assert.equal(containsBytes(out.data, 'TRAILING-SECRET'), false, '尾随字节必须被丢弃（走私通道仍关闭）');
+  assert.deepEqual([...out.data], [...jpegPlain()], '输出必须逐字节等于「去掉尾随字节的同一张图」');
 });
 
 test('B1 WebP：无 VP8/VP8L/VP8X 图像块 → 拒绝', () => {

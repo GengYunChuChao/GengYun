@@ -162,7 +162,7 @@
 | --- | --- |
 | **哪一步** | `completeUpload`，即「客户端直传完成之后、服务端核验时」。**不在** `createUpload`（那时只有声明值，没有字节），**不在**读路径（读路径只挑对象） |
 | **代码位置** | `services/api/src/media/service.ts:1008-1133`（原记 :876-953；现行同名实现为 `completeUpload`）；关键三行：`:1048`（原记 :907）`objectStore.getObject(record.rawRef as string)` → `:1069`（原记 :928）`stripImageMetadata(stored.bytes, detected.mime)` → `:1076`（原记 :935）`objectStore.putObject(derivativeRef, stripped.data, detected.mime)` |
-| **字节级实现** | `packages/media/exif.mjs:432` 的 `stripImageMetadata(bytes, mime)`（441 行文件的最后一个导出）：按容器结构性移除元数据段——JPEG 去 `APP1:Exif` / `APP1:XMP` / `APP13:Photoshop`，PNG 去 `eXIf` / `tEXt` / `iTXt` / `zTXt`，WebP 去 `EXIF` / `XMP ` chunk（并重算 RIFF 声明长度）。同时**拒绝容器尾部多余字节**（PNG IEND 之后、JPEG EOI 之后、WebP RIFF 声明之外一律判失败），等价于禁尾部走私。`removed` 明细记进 `record.metadata_removed` |
+| **字节级实现** | `packages/media/exif.mjs:438` 的 `stripImageMetadata(bytes, mime)`（447 行文件的最后一个导出）：按容器结构性移除元数据段——JPEG 去 `APP1:Exif` / `APP1:XMP` / `APP13:Photoshop`，PNG 去 `eXIf` / `tEXt` / `iTXt` / `zTXt`，WebP 去 `EXIF` / `XMP ` chunk（并重算 RIFF 声明长度）。同时**拒绝容器尾部多余字节**（PNG IEND 之后、WebP RIFF 声明之外一律判失败），等价于禁尾部走私；**JPEG 的 EOI 之后自 R90 起改为丢弃尾随字节而非整张拒绝**（输出只保留 `0..EOI`，尾随字节不进衍生件）。`removed` 明细记进 `record.metadata_removed` |
 | **失败即拒** | 解码失败 ⇒ `reject(record, 'decode_failed')` + `MediaError('MEDIA_TYPE_UNSUPPORTED', '图片解码失败，无法去除元数据')`（415）；**不**放行原始字节 |
 | **两个对象** | `rawRef`（客户端直传的原件，**含元数据**）与 `derivativeRef`（去元数据件）。读路径只用 `derivativeRef`（`services/api/src/media/service.ts:1218`） |
 | **真实桶下的含义** | 清除发生在**服务端内存**：必须先把原件整对象下载回来（≤ 每用途上限，见 §7）；因此需要①下载大小上限②超时③并发限流，否则一个 10MiB 对象 × N 并发即可打满进程内存 |
