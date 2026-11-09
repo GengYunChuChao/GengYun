@@ -37,6 +37,7 @@ test('demo-stack.mjs --help：exit 0，且五个子命令都在用法里', () =>
     assert.match(result.stdout, new RegExp(`^\\s+${command}\\s`, 'm'), `用法里缺子命令 ${command}`);
   }
   assert.match(result.stdout, /--env-file/, '用法里缺 --env-file');
+  assert.match(result.stdout, /--demo/, '用法里缺 --demo');
   assert.match(result.stdout, /--seed-demo/, '用法里缺 --seed-demo（演示资料开关默认关闭，必须写出来）');
   assert.match(result.stdout, /非生产数据/, '--seed-demo 的用法必须点明灌的是演示资料、不是生产数据');
 });

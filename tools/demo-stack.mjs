@@ -20,12 +20,12 @@ import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 
 import {
-  DEFAULT_PORTS,
+  DEFAULT_PORTS, DEMO_FLAG_KEYS,
   ENV_FILE_TEMPLATE,
   GENERATED_KEYS,
   INSTANCE_FLAG,
   UsageError,
-  assembleApiEnv,
+  assembleApiEnv, buildDemoFlagSql,
   buildPidRecord,
   buildPsqlFileArgs,
   classifyFailure,
@@ -67,7 +67,7 @@ const DEMO_SEED_FILE = join(REPO_ROOT, 'db', 'seeds', 'demo_catalog_verified.sql
 const DATABASE_NAME = 'gengyun';
 
 /** 退出码：不同阶段不同码，脚本与人都能据此判断卡在哪。 */
-const EXIT = { OK: 0, USAGE: 1, PORT: 2, PG: 3, MIGRATE: 4, SEED: 5, API: 6, HEALTH: 7 };
+const EXIT = { OK: 0, USAGE: 1, PORT: 2, PG: 3, MIGRATE: 4, SEED: 5, API: 6, HEALTH: 7, DEMO: 8 };
 
 const WIN = process.platform === 'win32';
 
@@ -411,6 +411,35 @@ function printPlan(context) {
   say(`  PG bin：${pgBin}`);
 }
 
+/**
+ * 演示档：迁移完成后把三个契约开关置为开启。
+ *
+ * 只走 psql 的**一个** `-c`：三条 UPDATE 在同一个 simple query 里，失败整组回滚；
+ * SQL 自带幂等条件，重复 `up --demo` 不会再次累加 revision。这里不改迁移、不碰 `services/**`。
+ */
+function applyDemoProfile({ options, pgBin }) {
+  const result = psql(pgBin, buildPsqlArgs({ port: options.pgPort, database: DATABASE_NAME, sql: buildDemoFlagSql({ demo: true }) }), 60_000);
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (result.status !== 0) {
+    failWith({ stage: 'demo-profile', output }, [
+      '  栈的其它部分已就绪，但三个开关没有写成演示档；先修 psql 报错，再重跑 `up --demo`。',
+    ]);
+    return EXIT.DEMO;
+  }
+
+  const updated = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => DEMO_FLAG_KEYS.includes(line));
+  say('[8/9] 演示开关：已开启 submissions_enabled / specific_herbicide_output_enabled / ai_enabled（非生产）');
+  if (updated.length === 0) {
+    say('  已是演示档：3 个开关均已开启且 reason 一致，revision 未重复累加（幂等）');
+  } else {
+    say(`  本次更新 ${updated.length}/3 个开关（revision +1）：${updated.join(' / ')}`);
+  }
+  return EXIT.OK;
+}
+
 async function teardown(context, { keepData = true } = {}) {
   const { options, paths, pgBin } = context;
   const stopped = { api: '未运行', pg: '未运行' };
@@ -698,6 +727,15 @@ async function commandUp(options) {
       say('  ✓ 已灌演示资料（非生产数据）：db/seeds/demo_catalog_verified.sql');
       say('    卡片文字取自 db/seeds/seed_reference.sql 的物种参考行；不是生产数据，也不代表第三方审核。');
     }
+  }
+
+  // ---- ⑧b 演示档（可选）：迁移完成后再动 feature_flags
+  say('');
+  if (options.demo) {
+    const demoCode = applyDemoProfile({ options, pgBin });
+    if (demoCode !== EXIT.OK) return demoCode;
+  } else {
+    say('演示开关：未开（默认）');
   }
 
   // ---- ⑨ 起 API

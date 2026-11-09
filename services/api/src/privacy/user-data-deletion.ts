@@ -620,7 +620,7 @@ export interface UserDataDeletionDeps {
    *
    * 本期**只支持注入**：`config.ts` 里没有第三方凭据键，装配层不会自己造一个真实适配器
    * （不给它加环境变量，也不伪造"已接线"）。本片只登记注入面并**透出**给调用方取证，
-   * ⛔ 不 dispatch：谁在何时向接收方发起删除属 P2-c 的裁定。
+   * ⛔ 本文件不 dispatch：调度在 `executeHandlers()` 里经 `thirdPartyDispatch`（GY-R73 起）。
    */
   thirdPartyAdapter?: ThirdPartyDeletionAdapter;
   /**
@@ -738,7 +738,7 @@ export interface UserDataDeletionRegistry {
    * `PROVIDER_UNAVAILABLE`；未接线端口回 `null`。⛔ 它不写入任何行。
    */
   readonly thirdParty: ThirdPartyDeletionReadPort;
-  /** 第三方**写侧**适配器（本期只由注入给出；`null` ⇒ 未装配）。⛔ 本片不 dispatch。 */
+  /** 第三方**写侧**适配器（只由注入给出；`null` ⇒ 未装配）。调度在 `executeHandlers()`（GY-R73 起）。 */
   readonly thirdPartyAdapter: ThirdPartyDeletionAdapter | null;
   /**
    * GY-R73（P2-c）· 第三方删除**写侧**的累计读数（诊断；⛔ 不出契约）。

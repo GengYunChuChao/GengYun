@@ -132,7 +132,7 @@ import { createChatEgress, createMediaJobEgress, createProviderCallLedger, withP
 // GY-R28 W7（#12）：文字问答的真实模型适配器与装配决策（供应商细节只在这两个文件里）。
 import { planConversationChat } from './ai/chat-wiring.ts';
 import { createSynthesisEgress, type SynthesisEgress } from './privacy/synthesis-egress.ts';
-import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs';
+import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs'; import { redactLogRecord, redactErrorForLog, scrubInlineText } from '../../../packages/privacy/redact.mjs';
 import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
@@ -339,7 +339,7 @@ declare module 'fastify' {
      *
      * 四臂可据它判定：真库端口的 `persistent === true`；显式不可用端口的
      * `listThirdPartyDeletions()` 抛 `PROVIDER_UNAVAILABLE`；未接线端口回 `null`。
-     * ⛔ 只读：本片不 dispatch、不落库（写侧 P2-c）。
+     * ⛔ 本装饰面只读：不 dispatch、不落库。写侧调度在 `executeHandlers()`（GY-R73 起）。
      */
     thirdPartyDeletion: ThirdPartyDeletionReadPort;
     /**
@@ -790,11 +790,11 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
 export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisMediaWiring, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, mediaStore: mediaStoreOption, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
-    // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
-    // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
+    // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经写下的日志；
+    // 因此坐标不进日志必须在这里做；全局脱敏（键名 + 值形态双层）只递归纯对象，Request/Reply 类实例原样透传给 serializers —— 否则 method/url/statusCode（prototype getter）会被整层丢掉。
     logger: config.logLevel === 'silent' ? false : {
       level: config.logLevel,
-      serializers: { req: requestLogFields },
+      serializers: { req: requestLogFields, err: redactErrorForLog, msg: scrubInlineText }, formatters: { log: (object) => redactLogRecord(object) as Record<string, unknown> },
       // 仅测试注入；不传时逐字节保持默认行为（写进程 stdout，不新建文件、不改级别与格式）。
       ...(logStream === undefined ? {} : { stream: logStream }),
     },
@@ -2042,7 +2042,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           : {};
   // GY-R59（P2-b）· 第三方删除**写侧适配器**：本期**只支持注入**。
   // `config.ts` 里没有第三方凭据键 ⇒ 装配层不会自造真实适配器（不新增环境变量、不伪造"已接线"）。
-  // 本片只把它接进删除注册表并透出取证（`app.userDataDeletion.thirdPartyAdapter`），⛔ 不 dispatch。
+  // 本段只把它接进删除注册表并透出取证（`app.userDataDeletion.thirdPartyAdapter`）；调度**不在这里**——注销受理链在 `executeHandlers()` 里经 `thirdPartyDispatch` 调它（GY-R73 起）。
   const thirdPartyAdapterWiring: { thirdPartyAdapter?: ThirdPartyDeletionAdapter } =
     userDataDeletionInjection?.thirdPartyAdapter === undefined
       ? {}
@@ -2298,7 +2298,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...backupStatesWiring,
     ...onlineEvidenceWiring,
     ...onlineStatesWiring,
-    // GY-R59（P2-b）：第三方完成态的读侧端口 + 写侧适配器（只登记，不 dispatch）。
+    // GY-R59（P2-b）：第三方完成态的读侧端口 + 写侧适配器（适配器只登记；调度在 executeHandlers，GY-R73）。
     ...thirdPartyWiring,
     ...thirdPartyAdapterWiring,
     ...(durableDeletionRequests === null
@@ -2461,7 +2461,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I19（#19）本片：注销装配的只读取证面（回执台账只含 sha256 摘要，不含明文 bearer）。
   app.decorate('accountDeletion', accountDeletion);
   app.decorate('deletionReceipts', deletionReceipts);
-  // GY-R59（P2-b）：第三方删除读侧端口的取证面（⛔ 只读：本片不 dispatch、不落库）。
+  // GY-R59（P2-b）：第三方删除读侧端口的取证面（⛔ 只读装饰面：不 dispatch、不落库；调度见 executeHandlers）。
   app.decorate('thirdPartyDeletion', userDataDeletion.thirdParty);
   app.decorate('communityService', communityService);
   // GY-I12（#12）：问答服务。注销删除注册已并入 `userDataDeletion`（C1b-3 / P0-3 路径①），

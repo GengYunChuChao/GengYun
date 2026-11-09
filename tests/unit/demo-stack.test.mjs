@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_PORTS,
+  DEMO_FLAG_KEYS,
+  DEMO_FLAG_REASON,
   DEMO_SCHEMA,
   ENV_FILE_TEMPLATE,
   EXTERNAL_KEYS,
@@ -18,6 +20,8 @@ import {
   REQUIRED_REAL_ENV,
   UsageError,
   assembleApiEnv,
+  buildDemoFlagSql,
+  buildDemoFlagStatements,
   buildPidRecord,
   buildPsqlFileArgs,
   classifyFailure,
@@ -61,6 +65,7 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
   assert.equal(defaults.pgPort, DEFAULT_PORTS.pg);
   assert.equal(defaults.envFile, null);
   assert.equal(defaults.reset, false);
+  assert.equal(defaults.demo, false);
   assert.equal(defaults.seedDemo, false);
   assert.equal(defaults.timeoutMs, 90_000);
 
@@ -81,6 +86,7 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
     '12',
     '--reset',
     '--yes',
+    '--demo',
   ]);
   assert.equal(custom.mode, 'stub');
   assert.equal(custom.apiPort, 3111);
@@ -91,6 +97,7 @@ test('parseArgs：默认值与各选项都落在预期位置', () => {
   assert.equal(custom.lines, 12);
   assert.equal(custom.reset, true);
   assert.equal(custom.yes, true);
+  assert.equal(custom.demo, true);
   assert.equal(custom.seedDemo, false);
 });
 
@@ -111,6 +118,7 @@ test('parseArgs：子命令与 --help', () => {
   assert.equal(parseArgs(['--help']).help, true);
   assert.match(usage(), /node tools\/demo-stack\.mjs <up\|down\|status\|logs\|reset>/u);
   assert.match(usage(), /--pg-port/u);
+  assert.match(usage(), /--demo/u);
 });
 
 test('parseArgs：非法输入必须报错（不静默 fallback）', () => {
@@ -312,6 +320,31 @@ test('buildPsqlFileArgs：种子用 -f 且失败即停', () => {
   assert.equal(args[args.indexOf('-f') + 1], 'E:/repo/db/seeds/seed_reference.sql');
   assert.ok(!args.includes('--database'));
   assert.equal(args[args.indexOf('-d') + 1], 'gengyun');
+});
+
+test('buildDemoFlagStatements：--demo 才拼 3 条 UPDATE，不带时 0 条', () => {
+  assert.deepEqual(buildDemoFlagStatements(), []);
+  assert.deepEqual(buildDemoFlagStatements({ demo: false }), []);
+  assert.equal(buildDemoFlagSql({ demo: false }), null);
+
+  assert.deepEqual(DEMO_FLAG_KEYS, ['submissions_enabled', 'specific_herbicide_output_enabled', 'ai_enabled']);
+  const statements = buildDemoFlagStatements({ demo: true });
+  assert.equal(statements.length, 3);
+  for (const [index, key] of DEMO_FLAG_KEYS.entries()) {
+    const statement = statements[index];
+    assert.ok(statement.startsWith('UPDATE public.feature_flags'));
+    assert.ok(statement.includes(`WHERE key = '${key}'`));
+    assert.ok(statement.includes('SET enabled = true'));
+    assert.ok(statement.includes('revision = revision + 1'));
+    assert.ok(statement.includes(`reason = '${DEMO_FLAG_REASON}'`));
+    assert.ok(statement.includes('changed_at = now()'));
+    assert.ok(statement.includes('enabled IS DISTINCT FROM true'));
+    assert.ok(statement.endsWith('RETURNING key;'));
+  }
+
+  const sql = buildDemoFlagSql({ demo: true });
+  assert.equal(sql.split('UPDATE public.feature_flags').length - 1, 3);
+  assert.match(sql, /non-production/u);
 });
 
 test('pid 记录：往返一致，格式不对就当作没有（不猜 pid）', () => {
