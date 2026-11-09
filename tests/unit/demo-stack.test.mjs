@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  APPROVAL_FLAGS,
   CONSENT_EMPTY_WARNING,
   DEFAULT_PORTS,
   DEMO_CONSENT_NOTICE,
@@ -24,6 +25,7 @@ import {
   OPTIONAL_REAL_ENV,
   REQUIRED_REAL_ENV,
   UsageError,
+  approvalRestartLines,
   assembleApiEnv,
   buildApiApprovalArgs,
   buildConsentReadinessSql,
@@ -36,16 +38,20 @@ import {
   classifyFailure,
   commandHasInstance,
   describeEnvSources,
+  desiredApprovals,
+  detectApprovals,
   healthVerdict,
   nextPollDelay,
   nextStepsLines,
   parseArgs,
   parseConsentReadiness,
   parsePidRecord,
+  planRunningStack,
   readEnvFile,
   readSecretsFile,
   renderSecretsFile,
   requiredEnvMissing,
+  resolveApprovals,
   resolvePaths,
   statusLines,
   tailLines,
@@ -432,6 +438,122 @@ test('pid 记录：往返一致，格式不对就当作没有（不猜 pid）', 
   assert.equal(parsePidRecord(JSON.stringify({ ...record, instanceId: '' })), null);
 });
 
+test('pid 记录：档位与批准项一起落盘，旧格式读回是「未知」而不是「没批」', () => {
+  const approved = buildPidRecord({
+    pid: 4321,
+    port: 38110,
+    mode: 'real',
+    instanceId: 'abc-123',
+    startedAt: '2026-11-09T10:00:00.000Z',
+    logFile: 'E:/state/api.log',
+    demo: true,
+    approvals: { media: true, moderation: false },
+  });
+  assert.equal(approved.demo, true);
+  assert.deepEqual(approved.approvals, { media: true, moderation: false });
+  assert.deepEqual(parsePidRecord(JSON.stringify(approved)), approved, '批准项必须能读回来');
+
+  // 旧版本写的 pid 文件没有 demo / approvals：`demo` 当 false，`approvals` 当 null（不知道）。
+  const legacy = {
+    schema: DEMO_SCHEMA,
+    pid: 4321,
+    port: 38110,
+    mode: 'real',
+    instanceId: 'abc-123',
+    startedAt: '2026-11-09T10:00:00.000Z',
+    logFile: 'E:/state/api.log',
+  };
+  const parsedLegacy = parsePidRecord(JSON.stringify(legacy));
+  assert.equal(parsedLegacy.demo, false);
+  assert.equal(parsedLegacy.approvals, null, '旧文件没记批准项：不知道，不是「没批」');
+
+  // 手改出来的坏形状也不许被当成「批过」。
+  assert.deepEqual(buildPidRecord({ ...legacy, approvals: 'yes' }).approvals, null);
+  assert.deepEqual(buildPidRecord({ ...legacy, approvals: { media: 'true' } }).approvals, { media: false, moderation: false });
+});
+
+test('批准项：要求项与真正拼进命令行的参数同源（批的是什么，记的就是什么）', () => {
+  assert.equal(APPROVAL_FLAGS.media, '--approve-real-media-wiring');
+  assert.equal(APPROVAL_FLAGS.moderation, '--approve-moderation-live-wiring');
+  assert.deepEqual(desiredApprovals({ demo: true, mode: 'real' }), { media: true, moderation: false });
+  assert.deepEqual(desiredApprovals({ demo: true, mode: 'stub' }), { media: false, moderation: false });
+  assert.deepEqual(desiredApprovals({ demo: false, mode: 'real' }), { media: false, moderation: false });
+});
+
+test('detectApprovals / resolveApprovals：命令行是真值，读不到才退回 pid 记录', () => {
+  assert.deepEqual(detectApprovals('node server.ts --gy-demo-stack-instance=x --approve-real-media-wiring'), { media: true, moderation: false });
+  assert.deepEqual(detectApprovals('node server.ts --gy-demo-stack-instance=x'), { media: false, moderation: false });
+  assert.equal(detectApprovals(null), null, '拿不到命令行 = 不知道，不是 false');
+  assert.equal(detectApprovals(''), null);
+  assert.equal(detectApprovals('   '), null);
+
+  const record = { approvals: { media: true, moderation: false } };
+  assert.deepEqual(resolveApprovals({ commandLine: 'node x --approve-real-media-wiring', record }), {
+    approvals: { media: true, moderation: false },
+    source: 'command-line',
+  });
+  assert.deepEqual(resolveApprovals({ commandLine: null, record }), { approvals: { media: true, moderation: false }, source: 'pid-record' });
+  assert.deepEqual(resolveApprovals({ commandLine: 'node x', record }), { approvals: { media: false, moderation: false }, source: 'command-line' }, '能读到命令行就以它为准，不信旧记录');
+  assert.deepEqual(resolveApprovals({ commandLine: null, record: { approvals: null } }), { approvals: null, source: 'unknown' });
+  assert.deepEqual(resolveApprovals({}), { approvals: null, source: 'unknown' });
+});
+
+test('planRunningStack：已就绪但缺批准 ⇒ restart（这就是「不许静默通过」的判据）', () => {
+  const record = buildPidRecord({ pid: 5592, port: 38110, mode: 'real', instanceId: 'inst-1', startedAt: '2026-11-09T10:00:00.000Z', logFile: 'E:/state/api.log' });
+  const commandLine = `node server.ts --gy-demo-stack-instance=inst-1`;
+
+  const missing = planRunningStack({ record, commandLine, demo: true, mode: 'real' });
+  assert.equal(missing.action, 'restart');
+  assert.equal(missing.reason, 'missing-approval');
+  assert.deepEqual(missing.missing, ['media']);
+  assert.deepEqual(missing.current, { media: false, moderation: false });
+  assert.deepEqual(missing.desired, { media: true, moderation: false });
+  assert.match(approvalRestartLines(missing).join('\n'), /检测到既有实例未带 --approve-real-media-wiring，已重启 API（数据目录保留）/u);
+});
+
+test('planRunningStack：同样档位重复 up 不重启；要撤批准也不打断在跑的演示', () => {
+  const record = buildPidRecord({ pid: 5592, port: 38110, mode: 'real', instanceId: 'inst-1', startedAt: '2026-11-09T10:00:00.000Z', logFile: 'E:/state/api.log' });
+
+  const same = planRunningStack({
+    record,
+    commandLine: 'node server.ts --gy-demo-stack-instance=inst-1 --approve-real-media-wiring',
+    demo: true,
+    mode: 'real',
+  });
+  assert.equal(same.action, 'reuse');
+  assert.equal(same.reason, 'same-profile');
+  assert.deepEqual(same.missing, []);
+
+  // 不带 --demo 的 up 打到已批准的实例上：不重启（fail-closed 方向是安全的一侧，撤批准不是正确性要求）。
+  const extra = planRunningStack({
+    record,
+    commandLine: 'node server.ts --gy-demo-stack-instance=inst-1 --approve-real-media-wiring',
+    demo: false,
+    mode: 'real',
+  });
+  assert.equal(extra.action, 'reuse');
+  assert.equal(extra.reason, 'extra-approval');
+  assert.deepEqual(extra.extra, ['media']);
+
+  // stub 档不需要媒体批准：即使实例没带，也照样复用。
+  const stub = planRunningStack({ record, commandLine: 'node server.ts --gy-demo-stack-instance=inst-1', demo: true, mode: 'stub' });
+  assert.equal(stub.action, 'reuse');
+});
+
+test('planRunningStack：命令行与旧记录都读不到批准项时，按「没批」处理并说明原因', () => {
+  const legacyRecord = { schema: DEMO_SCHEMA, pid: 5592, port: 38110, mode: 'real', instanceId: 'inst-1' };
+  const parsed = parsePidRecord(JSON.stringify(legacyRecord));
+  const unknown = planRunningStack({ record: parsed, commandLine: null, demo: true, mode: 'real' });
+  assert.equal(unknown.action, 'restart');
+  assert.equal(unknown.reason, 'approvals-unknown');
+  assert.deepEqual(unknown.missing, ['media']);
+  assert.match(approvalRestartLines(unknown).join('\n'), /批准项无法确认/u);
+  assert.match(approvalRestartLines(unknown).join('\n'), /已重启 API（数据目录保留）/u);
+
+  // 没有要求批准项时，「不知道」不构成重启理由。
+  assert.equal(planRunningStack({ record: parsed, commandLine: null, demo: false, mode: 'real' }).action, 'reuse');
+});
+
 test('commandHasInstance：只认带实例标记的命令行', () => {
   assert.equal(commandHasInstance(`node server.ts ${INSTANCE_FLAG}abc-123`, 'abc-123'), true);
   assert.equal(commandHasInstance('node server.ts', 'abc-123'), false);
@@ -459,6 +581,28 @@ test('statusLines：固定三行，分别是进程/端口/健康', () => {
   assert.match(up[0], /pid 111/u);
   assert.match(up[1], /pid 111/u);
   assert.match(up[2], /200 ok/u);
+});
+
+test('statusLines：进程行如实报媒体批准，未知就写未知（不写猜的「已带」）', () => {
+  const base = {
+    port: { port: 38110, listening: true, pid: 111, name: 'node.exe' },
+    health: { state: 'ready', reason: '200 ok（database=ok, mode=real）' },
+  };
+  const render = (approvals) => statusLines({ ...base, api: { running: true, pid: 111, mode: 'real', owned: true, approvals } });
+
+  const approved = render({ media: true, moderation: false });
+  assert.equal(approved.length, 3, '仍是三行：批准项挂在进程行上');
+  assert.match(approved[0], /媒体批准=已带/u);
+
+  const missing = render({ media: false, moderation: false });
+  assert.match(missing[0], /媒体批准=未带/u);
+
+  const unknown = render(null);
+  assert.match(unknown[0], /媒体批准=未知/u);
+  assert.doesNotMatch(unknown[0], /已带/u);
+
+  const dead = statusLines({ api: { running: false, pidFile: true }, port: { port: 38110, listening: false }, health: {} });
+  assert.equal(dead[0], '进程：API 未运行', '没跑就别谈批准项');
 });
 
 test('nextStepsLines：指向根路径 /health，并说清 apiBaseUrl 与 prepare-wechat', () => {
