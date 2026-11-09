@@ -48,13 +48,13 @@ const currentRecords = `SELECT c.*,p.state AS epoch_state,p.current_epoch FROM p
   AND c.epoch=CASE WHEN p.state='granted' THEN p.current_epoch ELSE p.current_epoch-1 END`;
 
 /**
- * 「撤回/注销消费者」端口（GY-I27 接线单）：由装配方注入 `packages/privacy/in-flight.mjs`
- * 的 `createEgressRevoker`（经 `services/api/src/privacy/egress.ts` 的 `createApiEgressRevoker`）。
- *
- * **缺省不注入 ⇒ 行为与接线前逐字不变**（仍以 `OBJECT_UNAVAILABLE` 拒绝有依赖的撤回/授予，
- * 不伪造取消成功）。注入后，撤回/授予会在同一事务内**先撤销在途外发**再继续；
- * 撤销发生在事务内 ⇒ 事务若回滚会「多撤」在途记录，方向是**更安全的一侧**（禁止外发），
- * 且 `revokeInFlight` 幂等，故可接受（已在证据页写明）。
+ * 「撤回/注销消费者」端口（GY-I27）：注入 `packages/privacy/in-flight.mjs` 的 `createEgressRevoker`（经 `egress.ts` 适配）。
+ * 缺省不注入 ⇒ 行为逐字不变（有依赖仍 `OBJECT_UNAVAILABLE`，不伪造取消成功）。注入后，撤回/授予/注销由
+ * 消费者在**自己的事务**里先撤销在途外发再继续（`ledger-pg.ts::withTransaction`，
+ * 自带 `SET LOCAL lock_timeout='4s'`），**不加入**本文件的 `transaction()`。
+ * ① 外层回滚不回滚已提交的撤销（多撤，禁止外发一侧；`revokeInFlight` 幂等）；
+ * ② 授权事务内每次有依赖的调用多占一个连接（池 `max:4`），并发撤回是连接压力点；③ 锁序不相交**不成立**：
+ * `markSent`/`guardWriteback` 先锁 `exports` 再 `users FOR SHARE`，与本路径 `users`→`exports` 相反，形成跨连接等锁环；外层在 JS 里等内层，PG 不报 40P01，由两侧 4s `lock_timeout` 打断。
  */
 export interface EgressRevoker {
   onConsentWithdrawn(input: { userId: string; purpose: string }): Promise<{ revokedInFlight: number }>;
@@ -169,7 +169,7 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, serv
         assertCurrent(record);
         if (`"${positive(record.revision)}"` !== options.ifMatch) throw new ApiError('REVISION_CONFLICT', '授权版本已变化');
         if (record.state === 'granted') {
-          // 撤回消费者（接线单）：注入后**先撤销在途外发**再完成撤回（撤回递增 epoch 使旧凭据失效）。
+          // 撤回消费者：注入后先由账本在自己的事务里撤销在途外发，再完成撤回（撤回递增 epoch 使旧凭据失效）。
           // 未注入 ⇒ 保持既有 fail-closed 兜底，绝不伪造取消成功。
           const dependencies = await client.query(`SELECT EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1::uuid)
             OR EXISTS(SELECT 1 FROM public.exports WHERE user_id=$1::uuid)

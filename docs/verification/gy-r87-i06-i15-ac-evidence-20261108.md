@@ -44,7 +44,7 @@ issue #6「[初版 GY-I06] 实现私有媒体上传、访问权限及EXIF清除�
 | 项 | 内容 |
 | --- | --- |
 | 现状判定 | **已实现且有测试钉住**。公开投影里没有对象引用与 owner；对外的图片是去 EXIF 的衍生件；日志侧对象引用与坐标都被脱敏 |
-| 代码锚点 | `packages/media/exif.mjs:432`（结构性地清除图片元数据段）、`packages/media/tokens.mjs:22`（对外只发短效签名令牌，服务端只存 hash） |
+| 代码锚点 | `packages/media/exif.mjs:438`（结构性地清除图片元数据段）、`packages/media/tokens.mjs:22`（对外只发短效签名令牌，服务端只存 hash） |
 | 测试锚点 | `tests/media/contract.test.mjs:98`（公开投影键集与契约 required 一致）、`tests/media/contract.test.mjs:108`（逐个禁止 object_ref / objectRef / owner_id / ownerId / rawRef / derivativeRef）、`tests/unit/media-http-upload.test.mjs:262`（完成上传后输出不含 EXIF/GPS）、`tests/privacy/redact.test.mjs:33`（data URI / 长 base64 / 对象引用密文被脱敏）、`tests/privacy/redact.test.mjs:45`（精确坐标与坐标对字符串被脱敏）、`tests/media/access.test.mjs:50`（owner 取图拿到去 EXIF 衍生件，非本人与过期均 404） |
 | 还缺什么 | 本页只声称「代码 + 用例」这一层；真实对象存储桶上的完整图片链路仍无证据（所有用例跑在替身对象存储上） |
 

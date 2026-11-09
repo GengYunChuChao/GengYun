@@ -4960,8 +4960,8 @@
       "doc": "docs/verification/gy-r29-i19-closure-20261022.md",
       "line": 34,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 303,
-      "to": 303,
+      "from": 304,
+      "to": 304,
       "kind": "block-comment"
     },
     {
@@ -5552,8 +5552,8 @@
       "doc": "docs/verification/gy-r31-closure-matrix-20261022.md",
       "line": 77,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 303,
-      "to": 303,
+      "from": 304,
+      "to": 304,
       "kind": "block-comment"
     },
     {
@@ -9166,14 +9166,6 @@
     },
     {
       "doc": "docs/verification/gy-r71-jobs-ledger-20261030.md",
-      "line": 79,
-      "target": "services/api/src/jobs/ledger.ts",
-      "from": 265,
-      "to": 265,
-      "kind": "block-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r71-jobs-ledger-20261030.md",
       "line": 125,
       "target": "services/api/src/conversations/store-pg.ts",
       "from": 309,
@@ -9200,8 +9192,8 @@
       "doc": "docs/verification/gy-r71-jobs-ledger-20261030.md",
       "line": 165,
       "target": "services/api/src/jobs/ledger.ts",
-      "from": 99,
-      "to": 99,
+      "from": 108,
+      "to": 111,
       "kind": "block-comment"
     },
     {
@@ -9872,24 +9864,24 @@
       "doc": "docs/verification/gy-r83-i29-consent-negatives-20261107.md",
       "line": 84,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
       "doc": "docs/verification/gy-r83-i29-consent-negatives-20261107.md",
       "line": 89,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
       "doc": "docs/verification/gy-r83-i29-consent-negatives-20261107.md",
       "line": 90,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
@@ -10104,8 +10096,8 @@
       "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
       "line": 37,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
@@ -10128,8 +10120,8 @@
       "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
       "line": 117,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
@@ -10192,8 +10184,8 @@
       "doc": "docs/verification/gy-r87-i29-terminal-reason-20261107.md",
       "line": 258,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
@@ -10208,8 +10200,8 @@
       "doc": "docs/verification/gy-r87-open-issue-acceptance-index-20261107.md",
       "line": 15,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {
@@ -10264,8 +10256,8 @@
       "doc": "docs/verification/gy-r87-open-issue-acceptance-index-20261107.md",
       "line": 45,
       "target": "services/api/src/privacy/ledger-pg.ts",
-      "from": 864,
-      "to": 883,
+      "from": 865,
+      "to": 899,
       "kind": "jsdoc"
     },
     {

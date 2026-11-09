@@ -140,7 +140,7 @@ export const ok = 1; // 这里不是铸造：approveModerationLiveWiring( 只是
 `tests/unit/moderation-live-adapter.test.mjs:883`、
 `tests/unit/moderation-live-wiring-assembly.test.mjs:457`（**本片已修**，现改走 `tools/lib/strip-comments.mjs`）、
 `tests/unit/ocr-image-source.test.mjs:588`、`tests/unit/ocr-media-port.test.mjs:647`、
-`tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:168`、`tests/unit/sql-column-coverage.test.mjs:1562`（`buildConstMap` 的去注释链里 1562 行是 `/* */` 正则；同一链的上一行 1561 才是 `^\s*\/\/` 行注释正则，本项只锚前者）
+`tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:175`、`tests/unit/sql-column-coverage.test.mjs:1562`（`buildConstMap` 的去注释链里 1562 行是 `/* */` 正则；同一链的上一行 1561 才是 `^\s*\/\/` 行注释正则，本项只锚前者）
 
 这一档里有几条**风险面更大**，值得指挥单独立片（见 §10）：
 
@@ -149,7 +149,7 @@ export const ok = 1; // 这里不是铸造：approveModerationLiveWiring( 只是
   ——与 ⑧ **同一批文件**，同一个吞代码风险。
 - `tests/unit/doc-anchors-guard.test.mjs:357`：剥 `tools/verify-doc-anchors.mjs` 后判「不得用内容哈希」。
   这条自己写在判据闸门的**自检**里，被吞代码的后果是「闸门退化了也看不出来」。
-- `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:168`：`//` 用的是 `(^|[^:])\/\/[^\n]*`
+- `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:175`：`//` 用的是 `(^|[^:])\/\/[^\n]*`
   ——带 `://` 前缀豁免，比 `^\s*\/\/` 好一些，但**字符串里的 `//`** 仍会被当注释（形状B 的镜像风险）。
 
 ### 3.2 中档（7 条，CSS/WXSS）
