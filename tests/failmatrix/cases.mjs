@@ -442,6 +442,35 @@ export const CASES = [
   { id: 'C4-19', family: 'C4', title: '注销后旧会话读个人资料（与 C4-03 同形）', actor: 'logout', method: 'GET', path: `${API}/me/profile`, expect: { status: 401, code: 'SESSION_EXPIRED' }, sameShapeAs: 'C4-03', note: '路径依据 services/api/src/routes/profile.ts:25（guards.requireUser）；会话已撤销由 auth/middleware.ts:78-80 判 SESSION_EXPIRED' },
   { id: 'C4-20', family: 'C4', title: '注销后旧会话读目录（与 C4-03 同形）', actor: 'logout', method: 'GET', path: `${API}/catalog/crops`, expect: { status: 401, code: 'SESSION_EXPIRED' }, sameShapeAs: 'C4-03', note: '路径依据 services/api/src/routes/profile.ts:44（GET /catalog/:kind，同一条 requireUser 守卫）' },
   { id: 'C4-21', family: 'C4', title: '注销后旧会话读资料库（与 C4-03 同形）', actor: 'logout', method: 'GET', path: `${API}/knowledge`, expect: { status: 401, code: 'SESSION_EXPIRED' }, sameShapeAs: 'C4-03', note: '路径依据 services/api/src/routes/knowledge.ts:196（preHandler: guards.requireUser）' },
+  // 取消注销（DELETE /me/account/deletion）的失败面。判定顺序逐字见
+  // `services/api/src/routes/account-deletion.ts:362-381`：鉴权 401 → 头 400 → 未装配 503 → 无在途 404 → 成功 200；
+  // 终态再取消由状态机抛 409（`packages/privacy/deletion.mjs:279-281`）。
+  { id: 'C4-22', family: 'C4', title: '游客取消注销（无 authorization 头）', method: 'DELETE', path: `${API}/me/account/deletion`, headers: key('i22-c4-22'), expect: { status: 401, code: 'SESSION_REQUIRED' }, note: '顺序：鉴权 401 → 头 400 → 未装配 503（routes/account-deletion.ts:362-373）。本条故意带合法键，证明 401 来自缺会话，不是缺键' },
+  { id: 'C4-23', family: 'C4', title: '已登录取消注销但缺幂等键', actor: 'fresh', method: 'DELETE', path: `${API}/me/account/deletion`, expect: { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' }, note: '顺序：requireUser 通过 → 键校验（routes/account-deletion.ts:369-372）→ requireWired；缺键在未装配 503 之前判 400' },
+  { id: 'C4-24', family: 'C4', title: '已登录、键合法、账号没有在途注销', actor: 'fresh', method: 'DELETE', path: `${API}/me/account/deletion`, headers: key('i22-c4-24'), expect: { status: 404, code: 'NOT_FOUND' }, note: 'cancelDeletion(userId) 反查不到该用户的在途请求 ⇒ null ⇒ 404（routes/account-deletion.ts:377-381）；与「已取消再取消」的 409 分开：404 是「没有可取消的单」，409 是「单已终态」' },
+  { id: 'C4-25', family: 'C4', title: '取消在途注销成功（200 + 强修订号 + state=cancelled）', actor: 'cancelable', method: 'DELETE', path: `${API}/me/account/deletion`, headers: key('i22-c4-25'), expect: { status: 200, etag: true }, realExpect: { status: 401, code: 'SESSION_EXPIRED' }, check: (result, ctx) => {
+    const problems = [];
+    const data = result.body?.data ?? {};
+    const actor = ctx.actors.cancelable;
+    if (data.id !== actor.deletionId) problems.push(`data.id 期望在途单 ${JSON.stringify(actor.deletionId ?? null)} 实际 ${JSON.stringify(data.id ?? null)}`);
+    // 实际字段是 `state`（不是 `status`）：`projectReceipt()` 逐字投影 `state`（privacy/account-deletion.ts:400-408）。
+    if (data.state !== 'cancelled') problems.push(`data.state 期望 cancelled 实际 ${JSON.stringify(data.state ?? null)}`);
+    // 取消把 revision +1（packages/privacy/deletion.mjs:282-283）；不硬编码 1/2，拿受理时的读数比。
+    if (data.revision !== actor.acceptedRevision + 1) problems.push(`data.revision 期望受理读数 ${JSON.stringify(actor.acceptedRevision ?? null)}+1 实际 ${JSON.stringify(data.revision ?? null)}`);
+    if (result.etag !== `"${data.revision}"`) problems.push(`ETag 期望与 data.revision 逐字一致 "${data.revision}" 实际 ${JSON.stringify(result.etag ?? null)}`);
+    return problems;
+  }, realCheck: (result) => {
+    const problems = [];
+    if (result.body?.data !== undefined) problems.push('real 臂受理已撤该账号全部会话，取消不得成功（响应不得带 data）');
+    if (result.etag !== undefined) problems.push(`real 臂 401 不应带 ETag，实际 ${JSON.stringify(result.etag)}`);
+    return problems;
+  }, note: 'stub：受理只建内存请求、不撤会话（C4-18 已把差异钉成 stub 200 / real 401）⇒ 同一会话可取消；data.state 按实际投影为 cancelled（privacy/account-deletion.ts:400-408），revision 由状态机 +1（packages/privacy/deletion.mjs:282-283）。real：受理即撤该账号全部会话（db/migrations/0016_account_deletion_persistence.sql:122-135）⇒ 本条只能读到 401，真库取消路径未取得，不把 stub 的成功读数冒充真库' },
+  { id: 'C4-26', family: 'C4', title: '对已取消的注销单再取消一次', actor: 'cancelled', method: 'DELETE', path: `${API}/me/account/deletion`, headers: key('i22-c4-26'), expect: { status: 409, code: 'OBJECT_UNAVAILABLE' }, realExpect: { status: 401, code: 'SESSION_EXPIRED' }, check: (result) => (result.body?.error?.retryable === false ? [] : [`终态再取消应 retryable=false 实际 ${JSON.stringify(result.body?.error?.retryable ?? null)}`]), realCheck: (result) => {
+    const problems = [];
+    if (result.body?.data !== undefined) problems.push('real 臂受理已撤该账号全部会话，再取消不得成功（响应不得带 data）');
+    if (result.etag !== undefined) problems.push(`real 臂 401 不应带 ETag，实际 ${JSON.stringify(result.etag)}`);
+    return problems;
+  }, note: '终态（cancelled）由协调器抛 OBJECT_UNAVAILABLE(409)（packages/privacy/deletion.mjs:279-281），经 toContractError 原样映射（routes/account-deletion.ts:376-380）；取消不写 24h 幂等台账（同文件 :368），所以换键也照样 409。夹具 `cancelled` 在播种时已把同一账号的单取消（world.mjs 的 seedInFlightDeletion({cancel:true})），本条不依赖 C4-25 先跑' },
 
   // ---------------------------------------------------------------- C5 媒体
   { id: 'C5-01', family: 'C5', title: '上传句柄带多余字段', actor: 'a', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, object_key: 'evil/key' }, headers: key('i22-c5-01'), expect: { status: 400, code: 'INVALID_REQUEST' } },

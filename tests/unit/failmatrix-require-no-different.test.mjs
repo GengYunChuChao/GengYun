@@ -19,7 +19,7 @@
  *   ⑤ id 多于 10 个时只列 10 个并写「等 N 条」；
  *   ⑥ 参数拼错 `--require-no-diff` ⇒ 与既有非法参数行为一致：`parseArgs()` 顶层 throw，exit 1；
  *   ⑦ `--require-no-different` 被 `parseArgs()` 接受：解析器不崩、直接走到起簇（看 `[pg] bin=`/`[pg] dataDir=` 正向标记）；
- *   ⑧ 结构契约：新内容全在文件末尾，`run-real.mjs` 既有 1518 行一格没动。
+ *   ⑧ 结构契约：新内容全在 `process.exitCode = await main();` 之后，`main()` 之前一格没动。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,8 +38,8 @@ import {
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RUN_REAL = join(ROOT, 'tests', 'failmatrix', 'run-real.mjs');
 const MODULE_RELATIVE = 'tests/failmatrix/require-no-different.mjs';
-/** `run-real.mjs` 在 R89 之前的行数：本片只许**追加**，不许把既有行往下推（docs 里有行号锚点）。 */
-const PRE_R89_LINES = 1518;
+/** R89 追加块的锚点语句：本片的新内容只许**追加**在它之后（docs 里有行号锚点）。 */
+const MAIN_CALL = 'process.exitCode = await main();';
 
 /** 逐条读数的替身：只有 `verdict === 'different'` 的 id 进 FAIL 文案。 */
 function rowsOf(ids) {
@@ -205,7 +205,7 @@ test('--require-no-different 被 parseArgs 接受：解析器不崩、直接走�
 // ---------------------------------------------------------------------------
 // ⑧ 结构契约：开关名映射、短路行、既有行号一格未动
 // ---------------------------------------------------------------------------
-test('结构契约：字段映射独立、短路行接在既有 return 处、新内容全在文件末尾（既有 1518 行不动）', () => {
+test('结构契约：字段映射独立、短路行接在既有 return 处、新内容全在 main() 调用之后', () => {
   assert.equal(requireFlagField('--require-no-different'), 'requireNoDifferent');
   assert.equal(requireFlagField('--require-no-not-runnable'), 'requireNoNotRunnable');
   assert.notEqual(
@@ -216,13 +216,15 @@ test('结构契约：字段映射独立、短路行接在既有 return 处、新
 
   const source = readFileSync(RUN_REAL, 'utf8');
   const lines = source.split('\n');
-  // 新增内容全部在末尾：`process.exitCode = await main();` 仍是第 1518 行。
-  assert.equal(
-    lines[PRE_R89_LINES - 1],
-    'process.exitCode = await main();',
-    `run-real.mjs 的第 ${PRE_R89_LINES} 行必须仍是顶层 main() 调用（新内容只许追加在它之后）`,
+  // 新增内容全部在末尾：`main()` 调用之后只允许出现 R89 的追加块（分隔注释 + 末尾 import）。
+  const mainCallIndex = lines.indexOf(MAIN_CALL);
+  assert.ok(mainCallIndex > 0, `run-real.mjs 必须保留顶层 ${MAIN_CALL}`);
+  const appended = lines.slice(mainCallIndex + 1).filter((line) => line.trim() !== '');
+  assert.ok(appended.length > 0, '必须有追加内容');
+  assert.ok(
+    appended.every((line) => line.startsWith('//') || line.startsWith('import ')),
+    'main() 调用之后只许有 R89 追加块（注释与末尾 import），不许插入代码：' + appended.slice(0, 3).join(' | '),
   );
-  assert.ok(lines.length > PRE_R89_LINES, '必须有追加内容');
   // 解析行同时认识两个开关，且用同一个字段映射。
   assert.match(
     source,
