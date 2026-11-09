@@ -7,7 +7,7 @@
  * 迁移头注，`tests/unit/ai-ops-ledger-pins.test.mjs` 的钉子①把它钉成了结构事实。真实作业行只落在
  * 三张域内表（`ocr_jobs` / `recognition_jobs` / `speech_jobs`）与会话轮次的作业快照列上。
  *
- * ## 本文件做四件事
+ * ## 本文件做五件事
  * 1. **映射**：域内作业行 → 台账行（`ledgerRowFromDomainJob` / `ledgerRowFromTurn`）。纯函数，
  *    不碰数据库 ⇒ 六源 × 五态矩阵可以在单测里逐格断言（`tests/unit/jobs-ledger-mapping.test.mjs`）。
  * 2. **一条幂等语句**：{@link JOB_LEDGER_UPSERT_SQL}。表名/列名**写死**，不拼字符串（静态列审计
@@ -18,12 +18,19 @@
  * 4. **注销清理**：{@link JOB_LEDGER_PURGE_SQL} / {@link purgeJobLedgerByOwner}（GY-R71 补片）。
  *    台账行携带 `owner_id` / `target_id` / `result_ref` 等私有作业关联，因此**必须**在注销闭集里
  *    被按主体删掉 —— 「今天没有读者」不是保留依据，见该常量的注释。
+ * 5. **撤回/注销终止在途作业**：{@link JOB_LEDGER_REVOKE_IN_FLIGHT_SQL} /
+ *    {@link revokeJobLedgerInFlight}（#29 缺口）。与 `privacy/ledger-pg.ts::revokeInFlight` 同一次
+ *    调用：外发账本置 `failed` 的同时，把该主体 `queued`/`running` 的台账行置 `cancelled`。
+ *    为什么状态选 `cancelled` 而不是 `failed`，见该常量的注释。
  *
- * ## 幂等：选 `ON CONFLICT (id)` + 同态守卫（不是"状态机守卫"）
+ * ## 幂等：选 `ON CONFLICT (id)` + 同态守卫 + 撤回墓碑（不是"状态机守卫"）
  * 台账主键就是**作业 id**（域内三表的 `id`、会话轮次的 `job_id`），所以「同一 job_id 的重复迁移
  * 不产生重复行」由 `ON CONFLICT (id) DO UPDATE` 直接成立 —— 重复受理 / 重试 / 迟到结果都只落到
  * 同一行。另加 `WHERE public.jobs.state IS DISTINCT FROM EXCLUDED.state`：**同态重放是严格 no-op**
  * （不刷 `updated_at`、不改 `revision`），这样台账的 `revision` 数的是**真实状态迁移**，不是写次数。
+ * 再叠一条**撤回墓碑**：既有行一旦是 `state='cancelled' AND error_code='CONSENT_WITHDRAWN'`，
+ * 后续任何 upsert 都严格 no-op。域内表仍是权威，但镜像行被撤回终止后**不允许再声称该作业恢复/完成** ——
+ * 否则域内作业下一次写台账（`running` / `succeeded`）会把撤回审计痕迹覆盖掉。它不是状态机，是墓碑。
  * ⛔ 刻意**不**用「先 SELECT 再决定 INSERT/UPDATE」：那需要两次往返，且在并发下要额外的行锁；
  * `ON CONFLICT` 一条语句就够，锁语义由唯一索引给。
  *
@@ -48,6 +55,8 @@
  * - **两源未接**：`moderation` / `synthesis` 没有可落库的作业行（见 {@link UNWIRED_SOURCES_REASON}）。
  */
 import { createHash } from 'node:crypto';
+
+import { jobKindsForPurpose } from '../../../../packages/privacy/job-kinds.mjs';
 
 /**
  * 契约 `JobState` 七值闭集，**逐值抄写**（不是从别处 import 来的）。
@@ -264,6 +273,12 @@ export function ledgerRowFromTurn(turn: TurnJobLedgerInput): JobLedgerRow {
  *
  * `ON CONFLICT (id) DO UPDATE` 只改**会随状态迁移变**的五列；`kind` / `target_*` / `input_hash` /
  * `created_at` 是作业的身份，冲突时**不动**（它们与主键一一对应，改了就是把两笔作业的历史混在一起）。
+ *
+ * 冲突分支的 `WHERE` 有两层：① 同态重放 no-op；② **撤回墓碑** no-op。② 只读 `jobs.state` /
+ * `jobs.error_code` 两列（都在既有的 8 列 SELECT 授权面内），不扩大 grants。墓碑行一旦存在，
+ * 后续 upsert 连 `updated_at` 都不刷新 —— 撤回证据不会因为一次正常状态迁移而消失。
+ * `error_code` 可空，所以墓碑判据用 `IS NOT DISTINCT FROM` 而不是 `=`：普通取消（`error_code=NULL`）
+ * 必须继续按既有「异态才更新」语义走，不能被三值逻辑误判成墓碑。
  */
 export const JOB_LEDGER_UPSERT_SQL =
   `INSERT INTO public.jobs
@@ -278,7 +293,9 @@ export const JOB_LEDGER_UPSERT_SQL =
           error_code = EXCLUDED.error_code,
           result_ref = EXCLUDED.result_ref,
           updated_at = EXCLUDED.updated_at
-    WHERE jobs.state IS DISTINCT FROM EXCLUDED.state`;
+    WHERE jobs.state IS DISTINCT FROM EXCLUDED.state
+      AND NOT (jobs.state = 'cancelled'::job_state
+               AND jobs.error_code IS NOT DISTINCT FROM 'CONSENT_WITHDRAWN')`;
 
 /**
  * 台账行的绑定值（顺序 = {@link JOB_LEDGER_UPSERT_SQL} 的 `$1..$14`）。
@@ -358,6 +375,65 @@ export interface LedgerSqlRunner {
  */
 export async function writeJobLedger(sql: LedgerSqlRunner, row: JobLedgerRow): Promise<void> {
   await sql.query(JOB_LEDGER_UPSERT_SQL, ledgerParams(row));
+}
+
+/**
+ * 撤回/注销：把该主体**仍在途**的台账作业行置终态（#29 缺口）。
+ *
+ * ## 为什么是 `cancelled` 而不是 `failed`
+ * `failed` 的语义是「执行了但失败」；`cancelled` 是「没执行就被停」。撤回授权/注销账号时，
+ * 作业**不应该再被调度执行**，所以是后者。`error_code` 仍写 `CONSENT_WITHDRAWN`，与
+ * `public.exports` 的撤回码逐字一致（`privacy/ledger-pg.ts::revokeInFlight`），读面能把两边对上。
+ * `running` 行也置 `cancelled`：它表示「已被撤回终止」，不是「执行失败」；真正的外发仍由
+ * `packages/privacy/in-flight.mjs` 的执行前重查 fail-closed（本 SQL 不替代那道守卫）。
+ *
+ * ## 判据
+ * - 只动 `owner_id = $1`：`jobs_single_actor` 保证 admin 作业的 `owner_id` 为 NULL，天然不命中；
+ * - 只动 `state IN ('queued','running')`：五个终态（succeeded/uncertain/failed/timed_out/cancelled）
+ *   一行不动；重复调用因此是严格 no-op（state 已变，revision 不再涨）；
+ * - `$2::text[] IS NULL` ⇒ 全量（注销/全撤）；否则只动 `kind = ANY($2)`。表外用途由
+ *   `jobKindsForPurpose` 给空数组 ⇒ `ANY('{}')` 为假 ⇒ 一行不动（不是「猜一个 kind」）。
+ *
+ * ## 返回
+ * `RETURNING id` 只用于取真实命中行数；⛔ 不用 `RETURNING *`（注销/撤回不需要把 target_id /
+ * result_ref 再读出来）。
+ */
+export const JOB_LEDGER_REVOKE_IN_FLIGHT_SQL =
+  `UPDATE public.jobs
+      SET state = 'cancelled'::job_state,
+          error_code = 'CONSENT_WITHDRAWN',
+          revision = revision + 1,
+          updated_at = now()
+    WHERE owner_id = $1::uuid
+      AND state IN ('queued','running')
+      AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
+    RETURNING id`;
+
+/**
+ * 按主体（可选按用途映射出的 kind 集合）终止在途台账作业行，返回**真实命中行数**。
+ *
+ * `purpose` 的翻译只走 {@link jobKindsForPurpose}（`packages/privacy/job-kinds.mjs`）：内存账本
+ * 用的是同一个函数，因此 stub 与真库不会各写一份映射。主体为空 ⇒ 抛错（⛔ 绝不退化成「终止全部」）。
+ */
+export async function revokeJobLedgerInFlight(
+  sql: LedgerSqlRunner,
+  input: { ownerId: string; purpose?: string | null },
+): Promise<number> {
+  const { ownerId, purpose = null } = input ?? {};
+  if (typeof ownerId !== 'string' || ownerId.trim() === '') {
+    throw new Error('台账撤回缺少主体：拒绝终止全部作业行');
+  }
+  const kinds = jobKindsForPurpose(purpose);
+  const result = await sql.query(JOB_LEDGER_REVOKE_IN_FLIGHT_SQL, [ownerId, kinds]);
+  // 与 purge 同一口径：`pg` 的 `rowCount` 是真实值；没有它时回退数 `RETURNING` 的行。
+  // 两者都拿不到 ⇒ 抛错，不把「不知道」报成 0。
+  const reported = typeof result.rowCount === 'number' ? result.rowCount : null;
+  const fallback = Array.isArray(result.rows) ? result.rows.length : null;
+  const revoked = reported ?? fallback;
+  if (revoked === null || !Number.isSafeInteger(revoked) || revoked < 0) {
+    throw new Error('台账撤回拿不到真实终止行数：拒绝把「不知道」报成 0');
+  }
+  return revoked;
 }
 
 /**

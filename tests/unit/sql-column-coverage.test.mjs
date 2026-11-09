@@ -918,9 +918,9 @@ const EXPECTED_EXTENDED_READINGS = {
   // GY-R83 合流（2026-11-07）：0055 侧（provider_call_ledger 记账）与 0056 侧（post_media_attachments 帖级挂载）
   // 的 SQL 同时进树 ⇒ 下面全部读数按**合并树实测**填写，不是任一侧旧值相加（实测手段：跑本文件，读
   // `[sql-column-coverage] 扩展审计：` 那几行）。
-  sqlLiterals: 332, // GY-R83 合流实测：0055 侧 3 条记账 SQL + 0056 侧 2 条（认领 CTE 与换图 DELETE）；PR #1037 P1 +2 —— 注销清 `media_ids` 的两处各补一条 `DELETE … WHERE post_id = $1::uuid`（0056 无外键，只清数组不回收挂载行）
-  statements: { INSERT: 50, UPDATE: 58, SELECT: 178, DELETE: 46 },
-  returningClauses: 100,
+  sqlLiterals: 333, // GY-R83 合流实测：0055 侧 3 条记账 SQL + 0056 侧 2 条（认领 CTE 与换图 DELETE）；PR #1037 P1 +2 —— 注销清 `media_ids` 的两处各补一条 `DELETE … WHERE post_id = $1::uuid`（0056 无外键，只清数组不回收挂载行）；#29 +1 —— `jobs/ledger.ts` 的撤回终止 UPDATE
+  statements: { INSERT: 50, UPDATE: 59, SELECT: 178, DELETE: 46 },
+  returningClauses: 101,
   onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
@@ -929,9 +929,9 @@ const EXPECTED_EXTENDED_READINGS = {
   noTargetTable: 21, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM；GY-R83 P2-3：20 → 21 —— `SELECT set_config(...)` 同样没有顶层 FROM
   referencedTables: 54, // GY-R83 合流：52 → 54 —— 0055 的 `public.provider_call_ledger` 与 0056 的 `public.post_media_attachments` 两张新表
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
-  columnRequirements: 2114, // GY-R83 合流实测（0055 侧 11 条记账列 + 0056 侧认领/换图列）；PR #1037 P1 +2（两处注销 DELETE 只读谓词列 `post_id`）
+  columnRequirements: 2119, // GY-R83 合流实测（0055 侧 11 条记账列 + 0056 侧认领/换图列）；PR #1037 P1 +2（两处注销 DELETE 只读谓词列 `post_id`）；#29 +5（撤回 UPDATE 的 4 个 SET 列 + RETURNING `id`；WHERE 的 owner_id/state/kind 已由既有语句计过，去重后不新增）
   // GY-R73（#17）：1979 → 1981 —— 两处新 SELECT 的列要求都已覆盖（缺 0 条不变）。
-  coveredRequirements: 2013, // GY-R83 合流实测：同上全部已覆盖（0055 有列级授权、0056 有本轮 GRANT；`post_media_attachments` 的 DELETE 是表级授权 ⇒ 两处注销 DELETE 的 `post_id` 也算已覆盖），缺 0 条不变
+  coveredRequirements: 2018, // GY-R83 合流实测：同上全部已覆盖（0055 有列级授权、0056 有本轮 GRANT；`post_media_attachments` 的 DELETE 是表级授权 ⇒ 两处注销 DELETE 的 `post_id` 也算已覆盖），缺 0 条不变；#29 的 5 条也全部由 jobs 的列级授权覆盖（kind 已补进 SELECT）
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -952,7 +952,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'history': 16,
   // GY-R73（#17）：新纳管的收件人过滤宿主（一条 SELECT，public.users 的 id/state 两列已授权）。
   'admin/ops/invalidation-events.ts': 1,
-  'jobs/ledger.ts': 2,
+  'jobs/ledger.ts': 3, // #29：upsert + 注销 DELETE + 撤回终止 UPDATE（原 2 条）
   'knowledge/service.ts': 4,
   'media': 26, // GY-R83（#1030）：25 → 26 —— countPendingCommunityImages 的待用池计数 SELECT
   'messages': 15,

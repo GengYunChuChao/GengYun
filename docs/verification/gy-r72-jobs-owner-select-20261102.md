@@ -9,7 +9,7 @@
 ## 0 结论（先读这段）
 
 1. **缺陷**：注销清理的删除语句是 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`
-   （`services/api/src/jobs/ledger.ts:387`）。PostgreSQL 对 `DELETE` 的 **WHERE 里出现的列**另要 SELECT 权；
+   （`services/api/src/jobs/ledger.ts:463`）。PostgreSQL 对 `DELETE` 的 **WHERE 里出现的列**另要 SELECT 权；
    表级 `DELETE` 早已授予（`deploy/postgres-cvm/sql/20-login-roles.sql:1021` 的 `gy-r71-jobs-ledger-purge-grant`），
    但列级 SELECT 的出厂清单只给了 upsert 需要的 6 列、**没有 `owner_id`**
    ⇒ 用运行时角色跑这条清理必然 `42501 permission denied for table jobs`。
@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | 删除面（表级） | `GRANT DELETE ON public.jobs TO gengyun_api_runtime;` | `deploy/postgres-cvm/sql/20-login-roles.sql:1021` |
 | 谓词列（列级 SELECT） | `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at) ON public.jobs …`（修前 6 列） | `deploy/postgres-cvm/sql/20-login-roles.sql:1004` |
-| 用它的语句 | `JOB_LEDGER_PURGE_SQL = 'DELETE FROM public.jobs WHERE owner_id = $1::uuid'` | `services/api/src/jobs/ledger.ts:387` |
+| 用它的语句 | `JOB_LEDGER_PURGE_SQL = 'DELETE FROM public.jobs WHERE owner_id = $1::uuid'` | `services/api/src/jobs/ledger.ts:463` |
 
 PG 的权限判定不是「有 DELETE 就能删」：`DELETE … WHERE <col>` 要先按 `<col>` 过滤行，
 所以 `<col>` 上另要 SELECT 权。表级 DELETE 只覆盖「删行」这一件事，不覆盖「读谓词列」。
@@ -96,7 +96,7 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
 2. **不升表级 SELECT**：表级 SELECT 会一次性打开全部 22 列（含 `actor_admin_id`、`consent_epoch`、
    `lease_token`、`target_id`、`result_ref` 等私有字段），把 R34 裁定 3「台账零读者」的结论直接推翻；
    本片只放开一条 DELETE 的谓词列，读面仍是零
-   （`tests/unit/jobs-owner-id-grant-scope.test.mjs:161` 的 T3 逐文件扫 `services/api/src` 的 `FROM public.jobs`）。
+   （`tests/unit/jobs-owner-id-grant-scope.test.mjs:162` 的 T3 逐文件扫 `services/api/src` 的 `FROM public.jobs`）。
 3. **不动 INSERT/UPDATE 列清单**：upsert 的 15 + 5 列是按语句逐列反推出来的既有结论，
    本片没有新写入面，动它只会制造无关的授权漂移。
 4. **零迁移**：`public.jobs` 的列早已存在（`services/api/db/migrations/0001_initial_schema.sql`），
@@ -120,10 +120,10 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
 
 | 钉子 | 量法 | 位置 |
 | --- | --- | --- |
-| T1 授权面 | 从 `20-login-roles.sql` 抽 `gy-r71-jobs-ledger-grant` 区、剔注释，断言：恰好一条 `GRANT SELECT (…) ON public.jobs TO <role>`、角色是 `gengyun_api_runtime`、列集合 == 7 列（含 `owner_id`）、区内**无**表级 `GRANT … ON public.jobs`、**无** `DELETE`/`TRUNCATE`、语句恰好三条且前缀是 SELECT/INSERT/UPDATE | `tests/unit/jobs-owner-id-grant-scope.test.mjs:82` |
-| T2 断言面 | 从 `90-assert` 的 `expected(tbl, sel, ins, upd, del)` 里取 `('jobs', …)` 元组，断言 `sel` 与 T1 的授权列**逐列同值**、`del` 仍是 `true`、INSERT 面仍含 `owner_id`、UPDATE 面仍是那 5 列 | `tests/unit/jobs-owner-id-grant-scope.test.mjs:128` |
-| T3 读面 | 递归扫 `services/api/src/**/*.ts` 的每个 `FROM public.jobs`，回看当前语句片段（切到分号/引号），断言**全部**是 `DELETE` 且无 `SELECT`；再断言 `online-purge-port.ts` 仍保留 `has_column_privilege(…,'public.jobs','owner_id','SELECT')` 探测、且该文件没有 `SELECT … FROM public.jobs` | `tests/unit/jobs-owner-id-grant-scope.test.mjs:161` |
-| T4 语句面 | 直接 import `JOB_LEDGER_PURGE_SQL`，断言逐字等于 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`、带 `owner_id` 谓词、无 `RETURNING` | `tests/unit/jobs-owner-id-grant-scope.test.mjs:202` |
+| T1 授权面 | 从 `20-login-roles.sql` 抽 `gy-r71-jobs-ledger-grant` 区、剔注释，断言：恰好一条 `GRANT SELECT (…) ON public.jobs TO <role>`、角色是 `gengyun_api_runtime`、列集合 == 7 列（含 `owner_id`）、区内**无**表级 `GRANT … ON public.jobs`、**无** `DELETE`/`TRUNCATE`、语句恰好三条且前缀是 SELECT/INSERT/UPDATE | `tests/unit/jobs-owner-id-grant-scope.test.mjs:83` |
+| T2 断言面 | 从 `90-assert` 的 `expected(tbl, sel, ins, upd, del)` 里取 `('jobs', …)` 元组，断言 `sel` 与 T1 的授权列**逐列同值**、`del` 仍是 `true`、INSERT 面仍含 `owner_id`、UPDATE 面仍是那 5 列 | `tests/unit/jobs-owner-id-grant-scope.test.mjs:129` |
+| T3 读面 | 递归扫 `services/api/src/**/*.ts` 的每个 `FROM public.jobs`，回看当前语句片段（切到分号/引号），断言**全部**是 `DELETE` 且无 `SELECT`；再断言 `online-purge-port.ts` 仍保留 `has_column_privilege(…,'public.jobs','owner_id','SELECT')` 探测、且该文件没有 `SELECT … FROM public.jobs` | `tests/unit/jobs-owner-id-grant-scope.test.mjs:162` |
+| T4 语句面 | 直接 import `JOB_LEDGER_PURGE_SQL`，断言逐字等于 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`、带 `owner_id` 谓词、无 `RETURNING` | `tests/unit/jobs-owner-id-grant-scope.test.mjs:203` |
 
 ### 5.1 三条负控制（真做 + 副本还原 + sha256）
 

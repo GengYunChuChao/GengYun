@@ -144,7 +144,7 @@ PostgreSQL 上按 `README`「提交一致性契约」的部署义务实现为**�
   真实第三方外发仍未授权：`real` 未接真实传输 ⇒ 受理处在**任何账本变更之前** 503
   `PROVIDER_UNAVAILABLE`(retryable)，**零 `sent` 记录**；替身/演示**不记账**。
 - 撤回/授予的 `OBJECT_UNAVAILABLE` 兜底（`consent-pg.ts` / `grant-pg.ts`）在**注入**
-  `egressRevoker` 之前保持不变（fail-closed，不伪造取消成功）；注入后在同一事务内先撤销在途外发再继续。
+  `egressRevoker` 之前保持不变（fail-closed，不伪造取消成功）；注入后先由账本在**自己的事务**里撤销在途外发再继续（不加入 `consent-pg.ts` 的 `transaction()`；外层回滚不回滚已提交的撤销；有依赖时每次多占一个连接，池 `max:4`）。
 - 训练**不是**首版 `ConsentPurpose`；`user_training_consents.training_enabled` 默认 `false`，
   启用需独立同意 + 模型谱系验收（迁移 CHECK 强制），首版无放行训练路径。
 - 用户端页面（手选地区/文字替代交互）不实现，由 GY-I05/F12 消费 `CONSENT_REQUIRED` 错误码兜底。

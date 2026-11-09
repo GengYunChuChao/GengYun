@@ -191,7 +191,7 @@ discoverSqlHosts() 的结果  ==  16 个已审计文件  ∪  5 条 UNAUDITED_SQ
 | --- | --- | --- |
 | 行锁 | `public.exports` 的 `UPDATE`，站点 `services/api/src/privacy/ledger-pg.ts:244` | 与上面 33 条同一范畴：`exports` 对运行时角色无任何 UPDATE 授权 |
 | 不可判插值 | `services/api/src/privacy/ledger-pg.ts:399` | 三元选择 `object_key=$3` / `object_id=$3::uuid`，两列都已在列面里 |
-| 不可判插值 | `services/api/src/privacy/ledger-pg.ts:669` | `byKey` 决定锁 `object_key` 还是 `object_id` |
+| 不可判插值 | `services/api/src/privacy/ledger-pg.ts:670` | `byKey` 决定锁 `object_key` 还是 `object_id` |
 | 不可判插值 | `services/api/src/privacy/ledger-pg.ts` 第 550 行（20261021 快照；N1 修复后 +6） | `scoped` 时追加 `AND user_id=$4::uuid`，`user_id` 已在列面里 |
 
 行锁豁免比列级豁免多一个 `ref: file:line`：行锁要求没有列名，若只按表豁免，同表上**新增**的 `FOR UPDATE` 语句会被一起放行（躺平）。反向核对：登记了却对不上任何行锁要求 ⇒ `staleExemptions` 判红（NC8 走一遍）。

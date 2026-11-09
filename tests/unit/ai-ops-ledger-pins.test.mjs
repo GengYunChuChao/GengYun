@@ -26,8 +26,8 @@
  * 一一对应**。翻面后的判据是：
  *   ①-a 语句级命中**恰 1 条**，且落在 `services/api/src/jobs/ledger.ts`（唯一写入点；多一个文件、
  *       多一条语句都红）；
- *   ①-b 那条语句必须是**幂等**形状（`ON CONFLICT (id) DO UPDATE` + 同态守卫），否则「重复迁移不产生
- *       重复行」这条不变量只是注释；
+ *   ①-b 那条语句必须是**幂等**形状（`ON CONFLICT (id) DO UPDATE` + 同态守卫 + 撤回墓碑守卫），
+ *       否则「重复迁移不产生重复行」这条不变量只是注释，撤回终止也可能被下一次正常迁移复活；
  *   ①-c 写入者只能从**已登记**的源进入（`LEDGER_WIRED_SOURCES` 四值；未接的 `moderation` /
  *       `synthesis` 必须在 `UNWIRED_SOURCES_REASON` 里有理由），防止"某天悄悄多接一源却没人改口径"。
  * 翻面的理由与边界见 `docs/verification/gy-r71-jobs-ledger-20261030.md`；`0013_conversations.sql:19`
@@ -153,9 +153,10 @@ test('钉子①：public.jobs 的语句级写入者恰一个文件（jobs/ledger
   );
   assert.match(
     writer,
-    /WHERE jobs\.state IS DISTINCT FROM EXCLUDED\.state/,
-    '同态守卫不见了（`WHERE jobs.state IS DISTINCT FROM EXCLUDED.state`）：同态重放会刷 `updated_at`/`revision`，'
-      + '台账的 revision 就不再是"真实状态迁移数"而是"写次数"',
+    /WHERE jobs\.state IS DISTINCT FROM EXCLUDED\.state\s+AND NOT \(jobs\.state = 'cancelled'::job_state\s+AND jobs\.error_code IS NOT DISTINCT FROM 'CONSENT_WITHDRAWN'\)/,
+    '同态守卫或撤回墓碑守卫不见了：前者失效 ⇒ 同态重放会刷 `updated_at`/`revision`（revision 不再是"真实状态迁移数"）；'
+      + '后者失效 ⇒ 撤回终止（`cancelled` + `CONSENT_WITHDRAWN`）会被下一次 `running`/`succeeded` 写台账复活，'
+      + '撤回审计痕迹被静默覆盖',
   );
   // 本质是行形状检查（建表语句只有一种写法），故用 match 而不是把整段 DDL 抄进来。
   assert.match(

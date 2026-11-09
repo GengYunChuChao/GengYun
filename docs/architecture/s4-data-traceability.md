@@ -78,7 +78,7 @@
 | D09 | 在线 7 日、备份 30 日、恢复重放 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/privacy/deletion-aging.ts:60` | 恢复重放未装配；无生产安装证据 |
 | D10 | 帖评保留、去身份、已注销用户、不可反查 | 部分 | `docs/implementation-requirements.md:279` | `services/api/src/community/authors.ts:112` | 进程内 Map（`services/api/src/community/authors.ts:92`）仍以 userId 为键可反查 |
 | D11 | 保留正文脱敏、不能脱敏的媒体隐藏/移除 | 部分 | `docs/implementation-requirements.md:280` | `services/api/src/community/purge.ts:24` | 注销时媒体批量清除未接线（2026-11-04 复核：**此句已过期**——`services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia(ownerId)` **不调 `purge_owner_media`，也不删 `media` 行**——它在单事务里只做①社区图片 `state → 'deleted'` 软隐藏、②对象键 upsert 进 `media_object_cleanup`（`reason='owner_delete'`）、③清 `media.object_ref_cipher` 与 `media_derivatives` 行，读数叫 `objectsRegistered`（已登记待删）；`SELECT public.purge_owner_media(...)` 是**另一条路**：`purgeOwnerMediaRows`（`services/api/src/media/store-pg.ts` 第 563 行声明、第 566 行发起）按 owner 调它，上级 `purgeRetiredRows`（`services/api/src/media/service.ts` 第 1552 行声明、第 1571 行调用）只扫 `rejected`/`deleted` 终态行做 7 日到期后清扫，读数 `rowsDeleted`／`derivativesDeleted`／`rowsRetainedByReference`，与注销主链分开；桶内对象真删由清理台账重试器（`cleanupOrphans` 第二循环）承担，该清理器今日无生产调用者。`services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort`（`purgeOwnedMedia`）已由注销装配注入（识别域注册处传 `input.mediaStore`），有效闭集已是四域 + 条件追加共 9 项，缺的是「必需闭集不含媒体」。同源另见本页下文「G2 注销时媒体本体批量清除」段与 §7.1「G2 未接线」行，那两处本轮未改） |
-| D12 | 外发记录与接收方门禁 | 已实现 | `docs/implementation-requirements.md:281` | `services/api/src/privacy/ledger-pg.ts:451` | 真实外发通路未接，真库零 sent 记录 |
+| D12 | 外发记录与接收方门禁 | 已实现 | `docs/implementation-requirements.md:281` | `services/api/src/privacy/ledger-pg.ts:452` | 真实外发通路未接，真库零 sent 记录 |
 | D13 | 第三方删除请求/完成/失败与证据 | 未实现 | `docs/implementation-requirements.md:281` | `services/api/db/migrations/0003_privacy_consent.sql:185` | 写侧调度器已在（`services/api/src/privacy/third-party-deletion-dispatch.ts`）但生产零写入：无凭据 ⇒ `ADAPTER_UNAVAILABLE`、零接收方 ⇒ `RECIPIENTS_UNWIRED`，回执 `unsupported`，无一条完成证据 |
 | D14 | 训练单独授权、撤回 7 日清理衍生物 | 已搁置 | `docs/implementation-requirements.md:282` | 无（产品裁定首版不做） | 无缺口；开启训练即降级为未实现 |
 | D15 | 受影响模型停部署、删权重、重训重验 | 未实现 | `docs/implementation-requirements.md:283` | 无（`model_version` 只是回答标注） | 无部署登记、无停用开关、无权重删除 |
@@ -104,9 +104,9 @@
 - **判定**：已实现。需求 `docs/implementation-requirements.md:281` 前半（记录接收方、目的、对象、授权版本与时间），
   产品面 `docs/product-requirements.md:226`。
 - **实现**：账本表 `services/api/db/migrations/0003_privacy_consent.sql:116`
-  （列含 `recipient_id`、`purpose`、`consent_epoch`、`requested_at`、`sent_at`）；写入 `services/api/src/privacy/ledger-pg.ts:451`，
+  （列含 `recipient_id`、`purpose`、`consent_epoch`、`requested_at`、`sent_at`）；写入 `services/api/src/privacy/ledger-pg.ts:452`，
   写回 `:650`；读面 `services/api/src/routes/exports.ts:42`（无池即 503，不降级内存账本 `:55`）；
-  接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
+  接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:222`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
 - **证据**：契约 `packages/contracts/openapi.json:1378`（`GET /me/exports`；2026-10-28 合并复核：#707 删掉 540 行错误响应后本锚由 `:1474` 落到 `:1378`，按符号 `"/me/exports"` 复取）；装配 `services/api/src/app.ts:2489`（`registerExportRoutes(app, config, pool, guards)`；2026-10-28 复核纠正：原引 2238 行实测是应用时钟注释段，按符号 `registerExportRoutes` 重锚）。
 - **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接。账本装配在 `services/api/src/app.ts:1007`（`egressPoolUsable` 才建 `createPostgresExportLedger`）（2026-11-04 复核：**此锚错位**——该行号今日只是 `egressPoolUsable` 的定义，真正建账本的是它之后第 1012 行的 `createPostgresExportLedger`；按纪律不改锚，只在此说明），同段 `//` 装配注释自述：real 模式
