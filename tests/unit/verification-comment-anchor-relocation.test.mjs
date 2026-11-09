@@ -196,3 +196,42 @@ test('R3 两行引用同一目标行：删一条只消一条，不吞另一条',
   assert.deepEqual(readNumbers(shifted.out), { hit: 2, base: 2, added: 0, stale: 0 });
   assert.equal(readRelocated(shifted.out), 2, '同一身份的两条应按重数各配一条');
 });
+
+test('R4 区间锚点写基线时不写 range-covers-code（kind 直方图不被污染）', (t) => {
+  const root = temporaryRoot(t);
+  mkdirSync(join(root, 'src'), { recursive: true });
+  mkdirSync(join(root, 'tools'), { recursive: true });
+  writeFileSync(join(root, 'src/range.mjs'), [
+    '// 头注释',
+    '',
+    'export const B = 2;',
+    '',
+    '// 区间起点：注释行',
+    'export const C = 3;',
+    '',
+  ].join('\n'));
+  const docPath = 'docs/verification/reloc-range-kind.md';
+  mkdirSync(dirname(join(root, docPath)), { recursive: true });
+  writeFileSync(join(root, docPath), `${['# 区间 kind 负控制', '', '- 区间：`src/range.mjs:5-6`'].join('\n')}\n`);
+
+  const written = spawnSync(
+    process.execPath,
+    [TOOL, '--root', root, '--baseline', 'tools/test-baseline.json', '--write-baseline'],
+    { cwd: root, encoding: 'utf8', timeout: GATE_TIMEOUT_MS },
+  );
+  assert.equal(written.status, 0, `--write-baseline 应成功：\n${written.stdout}\n${written.stderr}`);
+  const entries = JSON.parse(readFileSync(join(root, 'tools/test-baseline.json'), 'utf8')).entries;
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].from, 5);
+  assert.equal(entries[0].to, 6);
+  assert.equal(
+    entries[0].kind,
+    'line-comment',
+    `基线应记真实注释 kind（不是判定期的 range-covers-code）：${JSON.stringify(entries[0])}`,
+  );
+
+  const again = runGate(root);
+  assert.equal(again.code, 0, `写盘后复跑应绿：\n${again.out}`);
+  assert.deepEqual(readNumbers(again.out), { hit: 1, base: 1, added: 0, stale: 0 });
+  assert.equal(readRelocated(again.out), 0);
+});

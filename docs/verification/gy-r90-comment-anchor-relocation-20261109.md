@@ -1,6 +1,6 @@
 # 注释锚点闸门：把「位移」与「真新增」分开判（R90，2026-11-09）
 
-> 读数快照：2026-11-09（Asia/Hong_Kong）。本分支 base `origin/main` `a4183da623215b675d3d088d402dec091f57c41e`。
+> 读数快照：2026-11-09（Asia/Hong_Kong）。本分支 base `origin/main` `3ea5792554c8e675208dcdb8349ef6bca2cbd39d`（派单时的 main 是 `a4183da6`；此后 `#1134` 又合入一页，本页读数已在 `3ea57925` 上重测）。
 > 改动面：`tools/verify-verification-comment-anchors.mjs`（判定面：新增位移配对、区间证据行、逐条 FAIL 落点）、`tests/unit/verification-comment-anchor-relocation.test.mjs`（新增 R1/R2/R3 三条用例）、`docs/verification/gy-r90-comment-anchor-gate-wiring-20261109.md`（第 19/20 行耗时读数与第 99 行位移结论按实测改写）、`docs/verification/gy-r90-verification-comment-anchor-guard-20261109.md`（工具行号引用刷新）。
 > **基线 JSON 没有重写**：`tools/verification-comment-anchor-baseline.json` 的 `version` / `scope` / `accepted` / `why` 与条目字段（`doc,line,target,from,to,kind`）逐字未动，`entries` 仍是 1422 条。
 
@@ -31,7 +31,7 @@ VERIFICATION-COMMENT-ANCHOR-RELOCATED: RELOCATED 45 条（同一身份 doc|targe
 4. node tools/verify-verification-comment-anchors.mjs --root <临时根> --baseline tools/test-baseline.json
 ```
 
-后果（为什么必须修）：全仓 200/371 篇验证页带锚点，任何 docs PR 只要在锚点上方插删一行就红；补救只能 `--write-baseline` 重写整份基线，而 `tools/**` 属 B 档（`docs/pr-review-policy.md` §3），常规文档改动因此被拖离 A 档自合并通道。
+后果（为什么必须修）：全仓 200/373 篇验证页带锚点，任何 docs PR 只要在锚点上方插删一行就红；补救只能 `--write-baseline` 重写整份基线，而 `tools/**` 属 B 档（`docs/pr-review-policy.md` §3），常规文档改动因此被拖离 A 档自合并通道。
 
 ## 二、配对规则：身份 / 位置 / 多重集
 
@@ -81,9 +81,9 @@ RELOCATED docs/verification/gy-r28-contract-line-anchors-20261021.md:109 -> serv
 ✖ / ✔ R2 新增一条指向注释行的锚点：仍然 EXIT 1，并逐条点名
 VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 46、基线 45、基线外新增 1、可收紧 0（--require-no-new=on、--require-no-stale=off）
 VERIFICATION-COMMENT-ANCHOR-RELOCATED: RELOCATED 0 条（同一身份 doc|target|from、文档行号变化；默认只告警、不判红）
-NEW  docs/verification/gy-r28-contract-line-anchors-20261021.md:425 -> tools/verify-verification-comment-anchors.mjs:544  // 新增读数另起一行（上面 -GATE 行的格式被测试与证据页 grep，逐字不动）。
+NEW  docs/verification/gy-r28-contract-line-anchors-20261021.md:425 -> tools/verify-verification-comment-anchors.mjs:557  // 新增读数另起一行（上面 -GATE 行的格式被测试与证据页 grep，逐字不动）。
 VERIFICATION-COMMENT-ANCHOR-FAIL: 基线外新增 1 条注释锚点（见上面的 NEW 行）——要么把锚点改到实质行，要么显式 --write-baseline 登记并写明理由
-VERIFICATION-COMMENT-ANCHOR-FAIL-ENTRY: docs/verification/gy-r28-contract-line-anchors-20261021.md:425 -> tools/verify-verification-comment-anchors.mjs:544（kind=line-comment；登记落点：doc/line/target/from 四字段）
+VERIFICATION-COMMENT-ANCHOR-FAIL-ENTRY: docs/verification/gy-r28-contract-line-anchors-20261021.md:425 -> tools/verify-verification-comment-anchors.mjs:557（kind=line-comment；登记落点：doc/line/target/from 四字段）
 [EXIT 1]
 ```
 
@@ -98,7 +98,7 @@ VERIFICATION-COMMENT-ANCHOR-FAIL-ENTRY: docs/verification/gy-r28-contract-line-a
 VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 1、基线 2、基线外新增 0、可收紧 1（--require-no-new=on、--require-no-stale=off）
 VERIFICATION-COMMENT-ANCHOR-RELOCATED: RELOCATED 0 条（同一身份 doc|target|from、文档行号变化；默认只告警、不判红）
 WARN docs/verification/reloc-multiplicity.md:3 -> src/multi.mjs:5  // 目标行：下面两行文档锚点都指向这里
-STALE docs/verification/reloc-multiplicity.md:4 -> src/multi.mjs:5 （可收紧基线：文档已不存在…）
+STALE docs/verification/reloc-multiplicity.md:4 -> src/multi.mjs:5 （可收紧基线：目标行仍是注释行（基线文档行 4 未配到同身份条目：锚点可能已删/改编，或目标行位移后仍无法配对）；确认后跑 --write-baseline 收册）
 [EXIT 0]
 
 # 同一条再插一行把两条一起下移：应两条都位移，不该一配一漏
@@ -107,30 +107,33 @@ VERIFICATION-COMMENT-ANCHOR-RELOCATED: RELOCATED 2 条（同一身份 doc|target
 [EXIT 0]
 ```
 
-（上例 STALE 的原因文案在夹具里是「文档已不存在」，因为夹具删行后基线里第二条指向的文档行已不在；真实仓里更常见的是「目标行仍是注释行，未配到同身份条目」或「目标行已不是注释行（疑似已修）」。）
+（上例 STALE 的判据是「同一身份组里没有可配的文档行了」：基线里两条同身份条目、当前只剩一条，多出来的那条走 `describeStale()` 的「目标行仍是注释行」分支——它说的是「锚点可能已删/改编」，不是「文档已不存在」（文档文件仍在，同次输出里那条 WARN 就来自它，文档第 3 行）。「文档已不存在」只在整篇文档被删时才出现。）
 
 ## 四、整仓读数：只改标签与配对，不改收集面
 
-同一棵树、同一基线，修前（`origin/main` 版工具）与修后（本分支）的收集面逐字相同：
+同一棵树、同一基线，修前（`3ea57925` 版工具，用 `git show 3ea57925:tools/verify-verification-comment-anchors.mjs` 另存到 `tools/` 下运行）与修后（本分支当前判定面）的收集面**逐字相同**：
 
 ```text
-VERIFICATION-COMMENT-ANCHOR: candidates=9529 comment=1422 code=7169 blank=139 out-of-range=16 unresolved=285 fenced=491 duplicate=7
-VERIFICATION-COMMENT-ANCHOR-SCOPE: docs/verification/**/*.md documents=372 （unresolved 中 ambiguous=285）
+VERIFICATION-COMMENT-ANCHOR: candidates=9582 comment=1422 code=7214 blank=138 out-of-range=16 unresolved=284 fenced=501 duplicate=7
+VERIFICATION-COMMENT-ANCHOR-SCOPE: docs/verification/**/*.md documents=373 （unresolved 中 ambiguous=284）
 
-# 修后多出的两行读数
+# 修前版工具没有下面两行；修后多出这两行读数
 VERIFICATION-COMMENT-ANCHOR-RELOCATED: RELOCATED 0 条（同一身份 doc|target|from、文档行号变化；默认只告警、不判红）
 VERIFICATION-COMMENT-ANCHOR-RANGE: 区间锚点 679 条，其中窗口内有行为行 403 条（kind=range-covers-code；行上标注「区间证据行」）
 ```
 
-- `RELOCATED 0` 是真仓的现状：基线里 1422 条与当前 1422 条同身份同文档行，全部 SAME。
-- 真仓 `-GATE` 行仍是 `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0。
-- 收集面（`comment=1422`、`documents=372`、`candidates=9529`）在修前修后一致，说明这次改的是**配对与标签**，不是「少收一点让它变绿」。
+- 上面那两行是 2026-11-09 在 **base `3ea57925`** 的树上重测的：修前版工具与修后版工具打出**同一行计数**（`comment=1422`、`code=7214`、`blank=138`、`out-of-range=16`、`unresolved=284`、`fenced=501`、`duplicate=7`、`documents=373` 两侧一致）。
+- 本页首版（提交 `1807cf32`）写的 `candidates=9529 code=7169 blank=139 unresolved=285 documents=372` 是 `a4183da6` 上的旧树读数，已作废：`#1134` 在 `a4183da6` 之后又合入一页（200/371 → 200/373），候选数随之 9529 → 9582。
+- `RELOCATED 0` 是真仓的现状：基线里 1422 条与当前 1422 条同身份、同文档行，全部 SAME。
+- 真仓 `-GATE` 行仍是 `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0；修前版工具在同一棵树上也是这一行。
+- 收集面在修前修后一致，说明这次改的是**配对与标签**，不是「少收一点让它变绿」。
 
-## 五、随修的三条 P2
+## 五、随修的三条 P2 与两处复审小修
 
 1. **FAIL 文案有 per-entry 落点**：`-FAIL` 之后逐条打 `-FAIL-ENTRY: doc:line -> target:range（kind=…；登记落点：doc/line/target/from 四字段）`（上限 100 条，超出再打一行汇总），直接告诉人「是哪一条、该往基线 JSON 的哪四个字段登记」，不再是只有一句「登记并写明理由」。
 2. **区间锚点按窗口内首个行为行判 kind**：`services/api/src/community/service.ts` 的 1337–1342 行这种区间，`1337` 可能只是注释而证据在 `1338`；现在 `findRangeEvidenceLine` 取窗口内**首个非空且非注释**的行作为证据行（`evidenceFrom`），并把 `kind` 标成 `range-covers-code`、WARN 行后缀「（区间证据行 N）」、正文引用证据行原文。**仍然按 `from` 决定是否计入注释锚点**——这一点是刻意的：若把「窗口含代码行」的区间锚点整体踢出判定面，实测 679 条区间锚点里 403 条会消失（目标页 45 → 11），等于变相放宽判定 + 逼着重写整份基线，与「不许整份基线重写」「NEW 仍判红」都冲突。
-3. **耗时读数改成实测**：见 `docs/verification/gy-r90-comment-anchor-gate-wiring-20261109.md` 第 19/20 行（整道闸门 3.5–3.9 s / 5 次，整份 on-repo 测试 4.6–5.0 s / 3 次；机器 Windows 11 10.0.26200、Intel i7-12650H 10C16T、Node v24.16.0；规模 `documents=372`、`comment=1422`）。
+3. **耗时读数改成实测**：见 `docs/verification/gy-r90-comment-anchor-gate-wiring-20261109.md` 第 19/20 行（整道闸门 3.5–3.9 s / 5 次，整份 on-repo 测试 4.6–5.0 s / 3 次；机器 Windows 11 10.0.26200、Intel i7-12650H 10C16T、Node v24.16.0；规模 `documents=373`、`comment=1422`）。
+4. **第二轮审查的两处小修**：`renderBaseline()` 写盘时把判定期的 `range-covers-code` 还原成真实注释 kind（`commentKind`，采集时随每条锚点一起记下），否则下一次 `--write-baseline` 会把 403 条区间锚点的 `kind` 改名、与 `docs/verification/gy-r90-verification-comment-anchor-guard-20261109.md` 公布的直方图冲突；`identityKey()` 里恒假的 `|| undefined` 分支已删（`kind == null` 显式判）。两条分别由 R4 与 §六 末两条钉住。
 
 ## 六、不声称
 
@@ -139,12 +142,15 @@ VERIFICATION-COMMENT-ANCHOR-RANGE: 区间锚点 679 条，其中窗口内有行�
 - 不声称 `RELOCATED` 等于「锚点正确」：它只说明「同一身份换了文档行号」，不说明证据仍然支持结论。
 - 不声称改了 `--write-baseline` / `--require-no-stale` 的语义，也不声称改了基线 JSON 的字段结构：`--write-baseline` 仍是唯一写盘入口，`--require-no-stale` 仍缺省关。
 - 不声称本页的绝对读数可跨树复现：命中数随树变化，耗时随机器变化；能复现的是「同一夹具下修前 45 条新增 / 修后 45 条位移」这个对照。
+- 不声称多重集配对能识别「删一条、又在别处补一条同身份」：条目净数不变时它会判 `RELOCATED 1`、NEW 0、EXIT 0（实测：两行同身份夹具删掉第 4 行、再在页内另加一行同 `(doc,target,from)` 的锚点 ⇒ `本次命中 2、基线 2、基线外新增 0、可收紧 0`、`RELOCATED 1`、EXIT 0）。危害低（条数没少），但语义上是「换了一条」而不是「挪了一条」。
+- 不声称身份键能看见区间长度：`to` 不在身份里 ⇒ 已登记的单行锚点改成任意长区间仍判 SAME（实测：基线登记目标文件 `src/multi.mjs` 的第 5 行，页内把该锚点改成 5–6 行区间、5–8 行区间，都是 `本次命中 1、基线 1、基线外新增 0、可收紧 0`、`RELOCATED 0`、EXIT 0，只有 WARN 行的区间后缀变化）。要让区间长度也进身份，得升基线版本号。
+- 不声称 `--write-baseline` 会写出 `range-covers-code`：基线 JSON 只登记「这条算哪种注释」（`commentKind`），`range-covers-code` 只是判定期的证据行标签。实测把 5–8 行区间写盘得到 `kind=line-comment`，复跑 EXIT 0——因此 403 条区间锚点不会被下一次 `--write-baseline` 改掉 `kind` 直方图。
 - 不声称位移配对能替代人工复核：它只把「文档行号漂移」从红里摘出来，锚点本身对不对仍要人看。
 
 ## 七、运行方式
 
 ```text
-node --test tests/unit/verification-comment-anchor-relocation.test.mjs   # 3/3 pass（R1/R2/R3）
+node --test tests/unit/verification-comment-anchor-relocation.test.mjs   # 4/4 pass（R1/R2/R3/R4）
 node tools/verify-verification-comment-anchors.mjs                      # 真仓读数：1422/1422/0/0，EXIT 0
 node tools/verify-verification-comment-anchors.mjs --require-no-stale    # 语义未变：可收紧条目才判红
 ```

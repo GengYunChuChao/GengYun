@@ -264,6 +264,9 @@ export function collectCommentAnchors({ root = TOOL_ROOT, scan = DEFAULT_SCAN } 
         from: reference.from,
         to: reference.to,
         kind: evidenceFrom === null ? kind : 'range-covers-code',
+        // `kind` 是**判定用的证据行标签**（区间锚点可能是 `range-covers-code`），落盘不能写它：
+        // 基线只登记「这一条算哪种注释」，`commentKind` 保留 `from` 行的真实注释类型。
+        commentKind: kind,
         evidenceFrom,
         text: evidenceRaw.trim().slice(0, 120),
         bare: reference.bare === true,
@@ -296,7 +299,7 @@ export function baselineKey(entry) {
  * 会让冻结条目整体掉出配对、被误判成 NEW。
  */
 export function identityKey(entry) {
-  const kindClass = entry.kind === null || entry.kind === undefined || entry.kind === 'code' ? 'code' : 'comment';
+  const kindClass = entry.kind == null || entry.kind === 'code' ? 'code' : 'comment';
   return `${entry.doc}|${entry.target}|${entry.from}|${kindClass}`;
 }
 
@@ -315,10 +318,20 @@ export function loadBaseline(root = TOOL_ROOT, baselinePath = DEFAULT_BASELINE) 
   };
 }
 
-/** 生成基线 JSON：排序稳定、不带时间戳；条目只留四元组 + `to` / `kind`（不带原文，避免注释文案改动刷 diff）。 */
+/** 生成基线 JSON：排序稳定、不带时间戳；条目只留四元组 + `to` / `kind`（不带原文，避免注释文案改动刷 diff）。
+ *  `kind` 落盘用的是 `commentKind`（`from` 行的真实注释类型），**不是**判定标签：否则一次
+ *  `--write-baseline` 会把 403 条区间锚点改写成 `range-covers-code`，与证据页公布的 kind 直方图冲突。 */
 export function renderBaseline({ anchors, accepted = DEFAULT_ACCEPTED, why = DEFAULT_WHY }) {
   const entries = anchors
-    .map(({ doc, line, target, from, to, kind }) => ({ doc, line, target, from, to, kind }))
+    .map(({ doc, line, target, from, to, kind, commentKind }) => ({
+      doc,
+      line,
+      target,
+      from,
+      to,
+      // 兜底：万一来路不明的条目没有 commentKind，也不让 `range-covers-code` 这种判定标签进基线。
+      kind: commentKind ?? (kind === 'range-covers-code' ? 'block-comment' : kind),
+    }))
     .sort(compareAnchors);
   const book = {
     version: 1,

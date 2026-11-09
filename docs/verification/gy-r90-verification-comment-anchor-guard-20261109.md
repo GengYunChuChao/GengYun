@@ -41,8 +41,8 @@
 - 锚点提取与主工具同口径：复用 `extractReferences` 与 `attributeBareAnchors`，显式 `path:line` 直接取，同行裸锚点按最近前置路径归属；围栏代码块单独计入 `fenced`，不混进注释计数。
 - `tools/verify-verification-comment-anchors.mjs:100` 的 `commentKindsOf` 做有状态块注释掩码：识别 `//`、`/* */`、`*` 续行、`--`、shell/sql/yml 语境的 `#`、`<!-- -->`。块状态只在整行以 `/*` 或 `<!--` 开头时打开，避免把 `packages/contracts/openapi.json` 里 `"description": "audio/*"` 这类字符串误判成块注释。
 - `tools/verify-verification-comment-anchors.mjs:161` 的 `collectCommentAnchors` 先去重（同一 `docLine|target|from|to` 的显式/继承撞车只算一次），再解析目标文件，按首行分类：`comment`、`code`、`blank`、`outOfRange`、`unresolved`（`ambiguous` 单列子计数）、`fenced`，另有 `duplicate`；六格加 `duplicate` 等于 `candidates`。
-- 基线条目键是 `tools/verify-verification-comment-anchors.mjs:288` 的 `baselineKey`，即 `doc|line|target|from` 四元组；`to` 与 `kind` 只作说明，不参与键。`tools/verify-verification-comment-anchors.mjs:334` 的 `describeStale` 负责说明「文档没了 / 目标无法解析 / 行号越界 / 目标仍是注释但文档行号疑似位移 / 目标已不是注释」。
-- `tools/verify-verification-comment-anchors.mjs:357` 的 `evaluateCommentAnchorGate` 只做三件事：基线内命中、基线外新增、基线可收紧。`tools/verify-verification-comment-anchors.mjs:483` 的 `main` 负责打印与退出码。
+- 基线条目键是 `tools/verify-verification-comment-anchors.mjs:291` 的 `baselineKey`，即 `doc|line|target|from` 四元组；`to` 与 `kind` 只作说明，不参与键。`tools/verify-verification-comment-anchors.mjs:347` 的 `describeStale` 负责说明「文档没了 / 目标无法解析 / 行号越界 / 目标仍是注释但文档行号疑似位移 / 目标已不是注释」。
+- `tools/verify-verification-comment-anchors.mjs:370` 的 `evaluateCommentAnchorGate` 只做三件事：基线内命中、基线外新增、基线可收紧。`tools/verify-verification-comment-anchors.mjs:496` 的 `main` 负责打印与退出码。
 - 闸门语义：`--require-no-new` 默认开，基线外新增 ⇒ EXIT 1 并逐条点名；基线内 ⇒ EXIT 0 但逐条 WARN；基线里已有、实际已不再命中 ⇒ 默认 EXIT 0 + `可收紧基线` WARN，`--require-no-stale` 时 EXIT 1；`--write-baseline` 只在显式传参时写盘，并打印 `写入了 N 条`。
 - 基线文件 `tools/verification-comment-anchor-baseline.json`：**1427 条、197 个文档、316,705 字节**（`#1119` 时刻的读数；2026-11-09 已在 `af39bfe6` 上重收为 1422 条 / 200 文档 / 315,546 字节，新旧对照与逐条 `added`／`removed` 见 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`，本页其余读数保持当时原样、不追改），`accepted` 为 `gy-r90-comment-anchor-shadow-batch`。`why` 原文：「逐字引用判据注释原文」在本仓是合法证据形态的一类（例如证据页引用 workflow 注释说明不变量），这批历史命中未经逐条人工裁定，先整批登记为影子基线；闸门只拦基线之外的新增，修掉一条再由 `--write-baseline` 收紧。
 

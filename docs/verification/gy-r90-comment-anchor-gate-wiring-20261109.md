@@ -1,6 +1,6 @@
 # 注释锚点影子闸门接线到单元测试（R90，2026-11-09）
 
-> 读数快照：2026-11-09（Asia/Hong_Kong），本分支 base `origin/main` `a40fba6cacef43b2c746f90f6f1d89484fa34c14`（此前一版读数取自 `a30c8adb`；两者在本页引用的计数上逐字相同：命中 1422、基线 1422、`documents=371`，加了 `#1135` 那页后只有 `candidates` 从 9382 变 9387）。（2026-11-09 修订：§二 的两个耗时数字与 §四 末段的位移结论已按实测改写。）本片只做一件事：给 `tools/verify-verification-comment-anchors.mjs` 补一条**在真仓上跑整道闸门**的单元测试，让它从「有工具、没接线」变成「CI 里真的会红」。工具口径、1422 条基线的构成、逐条收紧路径见 `docs/verification/gy-r90-verification-comment-anchor-guard-20261109.md` 与 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`，本页不重复，也不改那些结论。
+> 读数快照：2026-11-09（Asia/Hong_Kong），本分支 base `origin/main` `a40fba6cacef43b2c746f90f6f1d89484fa34c14`（此前一版读数取自 `a30c8adb`；两者在本页引用的计数上逐字相同：命中 1422、基线 1422、`documents=371`，加了 `#1135` 那页后只有 `candidates` 从 9382 变 9387）。（2026-11-09 修订：§二 的两个耗时数字与 §四 末段的位移结论已按实测改写。二次修订：第 19 行与表 ② 的规模读数按 base `3ea57925` 复测刷新为 `documents=373`、`candidates=9582`。）本片只做一件事：给 `tools/verify-verification-comment-anchors.mjs` 补一条**在真仓上跑整道闸门**的单元测试，让它从「有工具、没接线」变成「CI 里真的会红」。工具口径、1422 条基线的构成、逐条收紧路径见 `docs/verification/gy-r90-verification-comment-anchor-guard-20261109.md` 与 `docs/verification/gy-r90-comment-anchor-rebaseline-20261109.md`，本页不重复，也不改那些结论。
 
 ## 一、为什么需要：工具在，但没有任何作业在真仓上跑它
 
@@ -16,7 +16,7 @@
   - `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs:115` 判据 ②（防「扫了个寂寞」）；
   - `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs:187` 判据 ③（防「永远红」）；
   - `tests/unit/verification-comment-anchor-gate-on-repo.test.mjs:222` 判据 ④（负控制）。
-- 真仓那一跑是 `spawnSync(process.execPath, ['tools/verify-verification-comment-anchors.mjs'], { cwd: 仓库根 })`，超时 60 s（实测整道闸门 3.5–3.9 s，5 次：3.55 / 3.57 / 3.61 / 3.64 / 3.87 s；规模 `documents=372`、`candidates=9529`、`comment=1422`；2026-11-09 在本分支实测，机器 Windows 11 10.0.26200 / Intel i7-12650H 10C16T / Node v24.16.0）。不 import `main()`、不换夹具：扫的就是当前这棵树。
+- 真仓那一跑是 `spawnSync(process.execPath, ['tools/verify-verification-comment-anchors.mjs'], { cwd: 仓库根 })`，超时 60 s（实测整道闸门 3.5–3.9 s，5 次：3.55 / 3.57 / 3.61 / 3.64 / 3.87 s；规模 `documents=373`、`candidates=9582`、`comment=1422`；2026-11-09 在本分支（base `3ea57925`）实测，机器 Windows 11 10.0.26200 / Intel i7-12650H 10C16T / Node v24.16.0）。不 import `main()`、不换夹具：扫的就是当前这棵树。
 - 真仓读数只跑一次（① 与 ② 共用同一次输出），整份文件实测 4.6–5.0 s（3 次：4.55 / 4.74 / 4.96 s，同机同规模）：`node --test tests/unit/verification-comment-anchor-gate-on-repo.test.mjs` ⇒ 4/4 pass。
 - 全程只读真仓：⛔ 不写仓内文件、⛔ 不改基线。① 用基线文件 sha256 断言「跑前跑后字节相同」，确保这条测试自己不会变成第二个写盘入口。
 
@@ -25,7 +25,7 @@
 | 判据 | 断言 | 本片读数 |
 | --- | --- | --- |
 | ① 正向（主判据） | `EXIT 0`；无 `-FAIL` 行、无 `ERR:` 行、无 `NEW` 行；`基线外新增 0`、`可收紧 0`；`--require-no-new=on`、`--require-no-stale=off`；`-PASS:` 行存在；基线 sha256 前后一致 | `本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，EXIT 0；同次运行另有 `RELOCATED 0 条`、`区间锚点 679 条 / 窗口内有行为行 403 条` |
-| ② 防「扫了个寂寞」 | `本次命中` == 基线 JSON 条目数；`documents` ≥ 300；基线 `scope` 逐字等于 `docs/verification/**/*.md` | 1422 == 1422（基线 entries=1422）；`documents=371`（含本页） |
+| ② 防「扫了个寂寞」 | `本次命中` == 基线 JSON 条目数；`documents` ≥ 300；基线 `scope` 逐字等于 `docs/verification/**/*.md` | 1422 == 1422（基线 entries=1422）；`documents=373`（含本页；2026-11-09 复测，`#1137` 当时为 371） |
 | ③ 防「永远红」 | 真仓读数里 `--require-no-stale=off`；临时夹具里把基线内锚点的目标行从注释改成行为行 ⇒ 默认 EXIT 0 + `STALE` + `可收紧 1`；加 `--require-no-stale` 才 EXIT 1 | 见 §四 D 段 |
 | ④ 负控制 | 同一临时目录、同一临时基线：注入指向注释行的锚点 ⇒ EXIT 1 + `基线外新增 1` + `NEW` 行点名 `doc:line -> target:line`；同一条改指行为行 ⇒ EXIT 0 且命中回到基线条目数 | 见 §四 A/B/C |
 
@@ -144,7 +144,7 @@ merge-tree      git merge-tree --write-tree origin/main <本分支 head>（无�
 
 ## 七、这道工具有哪些参数（负控制按它们做才不需要改工具）
 
-| 参数 | 语义（读 `tools/verify-verification-comment-anchors.mjs:416` 的 `parseArgs`） |
+| 参数 | 语义（读 `tools/verify-verification-comment-anchors.mjs:429` 的 `parseArgs`） |
 | --- | --- |
 | `--root <dir>` | 换根。扫描根、文件名索引、基线解析都跟着它走（`--baseline` 是相对它解析的） |
 | `--scan <path>` | 扫描面，默认 `docs/verification` |
@@ -152,11 +152,11 @@ merge-tree      git merge-tree --write-tree origin/main <本分支 head>（无�
 | `--accepted <text>` | 写基线时记的 `accepted` 标记 |
 | `--why <text>` | 写基线时记的理由 |
 | `--write-baseline` | **唯一**写盘入口；不传就绝不改基线（本片的临时基线靠它生成） |
-| `--require-no-new` / `--no-require-no-new` | 基线外新增是否判红，缺省开（`tools/verify-verification-comment-anchors.mjs:412` 是判定式） |
+| `--require-no-new` / `--no-require-no-new` | 基线外新增是否判红，缺省开（`tools/verify-verification-comment-anchors.mjs:425` 是判定式） |
 | `--require-no-stale` | 可收紧条目是否判红，缺省关 |
 | `--help` / `-h` | 用法 |
 
-未知参数会打 `ERR: 未知参数：…` 并以 EXIT 2 结束。读数列的格式（`-GATE` 行的两个开关显示）在 `tools/verify-verification-comment-anchors.mjs:543`。
+未知参数会打 `ERR: 未知参数：…` 并以 EXIT 2 结束。读数列的格式（`-GATE` 行的两个开关显示）在 `tools/verify-verification-comment-anchors.mjs:554`。
 
 ## 八、不声称
 
