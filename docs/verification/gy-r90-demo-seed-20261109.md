@@ -36,7 +36,7 @@
 | `sources.canonical_url` | `https://example.invalid/gengyun/demo-seed-not-for-production` | `.invalid` 是 RFC 2606 保留域名，解析不了；**不**放任何真实公告链接来冒充出处 |
 | `source_versions.review_status` | `verified` | 这是视图的硬条件。它是**演示侧的自我标注**，不是第三方结论——所以才要把上面三行写得那么显眼 |
 | `source_versions.reviewed_by` | 占位账号 `demo-seed-placeholder（演示占位，非真人）` | `review_status <> 'unverified'` 时表约束要求 `reviewed_by`/`reviewed_at` 非空，只能落到一行 `admin_accounts` 上；这行的 `credential_hash` 是不可用占位串（`!demo-seed-placeholder-not-a-credential`），**登不进来**，`login_name` 里也写明「非真人」 |
-| `knowledge_versions.body` | `【演示资料·非生产数据】<中文名>（学名 …）；别名：…。本卡片由 … 派生，只用于本机演示首页；不含识别结论、防治建议或用药指引，也不代表任何第三方审核。` | 卡片正文里就带标记，截图流传出去也不会被当成真资料；文字**只**来自 `seed_reference.sql` 已有的物种行（中文名/学名/别名），没有新增任何农艺结论 |
+| `knowledge_versions.body` | `【演示资料·非生产数据】<中文名>（学名 …）；别名：…。本条为演示用占位说明，用于展示「资料卡 → 检索 → 带引用回答」的链路；不含识别结论、防治建议与用药指引，也不代表任何第三方审核。` | 卡片正文里就带标记，截图流传出去也不会被当成真资料；文字**只**来自 `seed_reference.sql` 已有的物种行（中文名/学名/别名），没有新增任何农艺结论。2026-11-09 GY-R92 起改了措辞：旧版把 `db/seeds/*.sql` 路径与派生过程写进正文，演示时会被当知识正文念给观众听；句尾两段声明与「文字只来自 species 行」不变 |
 | `knowledge_versions.visibility` / `type` | `published` / `species` | 视图要求；`species_ids` 用 `jsonb_build_array(s.id)` 指回参考行，能顺着查回原表 |
 
 8 条映射是**写死的** `knowledge_id ↔ species_id`（稗、狗尾草、荨麻属、马唐属、牛筋草、看麦娘、藜、空心莲子草），不是全表扫：谁上了首页，看文件就能数出来。
@@ -96,7 +96,7 @@ previews=8   human_review_state=under_construction   execution_mode=real
 标题：稗 / 狗尾草 / 荨麻属 / 马唐属 / 牛筋草 / 看麦娘 / 藜 / 空心莲子草
 ```
 
-第一条（原文，未删字）：
+第一条（原文，未删字；这是 **GY-R92 之前**的措辞，改后形状见 §三 的 `knowledge_versions.body` 行）：
 
 ```json
 {

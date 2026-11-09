@@ -16,7 +16,7 @@
 
 根因：展示投影层把契约字段原样透传。`miniprogram/pages/community/community.js:212` 的 `time: require('../../utils/time-format').formatRelative(post.created_at)` 之前是 `time: post.created_at`，而契约 `Post.created_at` 是 ISO-8601 UTC（`2026-11-09T09:00:35.053Z`）。同一处写法在 7 个投影响应点上都有：社区列表、社区详情（帖子 + 评论）、消息列表、收藏列表、历史列表、历史详情、知识卡片来源时间。
 
-修法：新增 `miniprogram/utils/time-format.js`（`formatRelative` 在 `miniprogram/utils/time-format.js:62`、`formatDateTime` 在同文件 `:77`、`formatDate` 在 `:89`），口径：1 分钟内「刚刚」、1 小时内「N 分钟前」、同日「今天 HH:mm」、前一天「昨天 HH:mm」、同年「MM-DD」、跨年「YYYY-MM-DD」；解析失败**原样返回**、空值返回空串（不编造时间）。7 处投影改为调用它，页面结构与请求逻辑零改动。
+修法：新增 `miniprogram/utils/time-format.js`（`formatRelative` 在 `miniprogram/utils/time-format.js:65`、`formatDateTime` 在同文件 `:80`、`formatDate` 在 `:92`），口径：1 分钟内「刚刚」、1 小时内「N 分钟前」、同日「今天 HH:mm」、前一天「昨天 HH:mm」、同年「MM-DD」、跨年「YYYY-MM-DD」；解析失败**原样返回**、空值返回空串（不编造时间）。7 处投影改为调用它，页面结构与请求逻辑零改动。
 
 不引入 WXS：全仓 `miniprogram/**` 里 0 个 `.wxs` 文件，多一套格式化实现只会让口径漂移。
 

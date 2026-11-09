@@ -275,8 +275,8 @@ function consentView(item) {
     stateLabel: STATE_LABELS[item.state] || item.state,
     policyVersion: item.policy_version,
     grantedAt: item.granted_at,
-    withdrawnAt: item.withdrawn_at,
-    changedAt: item.state === 'withdrawn' ? item.withdrawn_at : item.granted_at,
+    withdrawnAt: item.withdrawn_at, withdrawnText: require('./time-format').formatDateTime(item.withdrawn_at),
+    changedAt: item.state === 'withdrawn' ? item.withdrawn_at : item.granted_at, changedText: require('./time-format').formatDateTime(item.state === 'withdrawn' ? item.withdrawn_at : item.granted_at),
     recipientCount: item.recipient_ids.length,
     // 写面要用到的两个版本：`revision` 是 `If-Match` 的取值来源，`epoch` 是"旧凭据随之失效"的
     // 计数器。两者都**原样**透出，页面不自己算、也不缓存成"应该是最新的"。

@@ -217,7 +217,7 @@ function shapeOf(answer) {
   if (answer === null) return 'no-answer';
   const prefixed = answer.model_version.startsWith(UNIMPLEMENTED_VERSION_PREFIX);
   const bindsCitation = answer.prompt_version === CHAT_PROMPT_VERSION;
-  const excerptMarker = answer.checked_text.includes('（未接真实模型·确定性检索结果·规则 ');
+  const excerptMarker = answer.checked_text.includes('（未接真实模型·确定性检索结果）');
   if (prefixed && !bindsCitation && excerptMarker) return 'deterministic-excerpt';
   if (prefixed && !bindsCitation) return 'deterministic-prefix-only';
   if (!prefixed && bindsCitation) return 'live-wired';
@@ -622,7 +622,7 @@ test('C4 可区分性：同题同集合下，摘录与真实回答在三处判�
   const extract = (answer) => ({
     modelPrefix: answer.model_version.startsWith(UNIMPLEMENTED_VERSION_PREFIX),
     promptVersion: answer.prompt_version,
-    excerptMarker: answer.checked_text.includes('（未接真实模型·确定性检索结果·规则 '),
+    excerptMarker: answer.checked_text.includes('（未接真实模型·确定性检索结果）'),
   });
   const left = extract(deterministic.answer);
   const right = extract(live.answer);

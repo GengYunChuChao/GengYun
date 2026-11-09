@@ -31,7 +31,7 @@
         <view class="consent-control" wx:for="{{rows}}" wx:key="purpose">
           <view class="consent-control__copy">
             <text class="info-row__title">{{item.label}}（{{item.purpose}}）</text>
-            <text class="info-row__desc">当前状态 {{item.stateLabel}}{{item.changedAt ? ' · 最近更新 ' + item.changedAt : ''}}</text>
+            <text class="info-row__desc">当前状态 {{item.stateLabel}}{{item.changedText ? ' · 最近更新 ' + item.changedText : ''}}</text>
             <text class="info-row__desc" wx:if="{{item.policyVersion}}">服务端记录的政策版本 {{item.policyVersion}}</text>
 
             <!-- 需要第三方接收方的用途（media_processing / external_inference）：把"交给谁"的选择权交回用户。
@@ -118,8 +118,8 @@
             <view class="info-row consent-row" wx:for="{{items}}" wx:key="id">
               <view class="info-row__copy">
                 <text class="info-row__title">{{item.purposeLabel}}（{{item.purpose}}）</text>
-                <text class="info-row__desc">状态 {{item.stateLabel}}{{item.withdrawnAt ? ' · 撤回时间 ' + item.withdrawnAt : ''}}</text>
-                <text class="info-row__desc">政策版本 {{item.policyVersion}} · 最近更新 {{item.changedAt}}</text>
+                <text class="info-row__desc">状态 {{item.stateLabel}}{{item.withdrawnText ? ' · 撤回时间 ' + item.withdrawnText : ''}}</text>
+                <text class="info-row__desc">政策版本 {{item.policyVersion}} · 最近更新 {{item.changedText}}</text>
                 <text class="info-row__desc">接收方标识 {{item.recipientCount}} 个 · 版本 revision {{item.revision}}</text>
               </view>
             </view>
