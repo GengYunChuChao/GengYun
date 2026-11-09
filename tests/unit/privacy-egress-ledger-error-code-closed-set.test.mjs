@@ -94,6 +94,10 @@ const KNOWN_SITES = Object.freeze([
   'services/api/src/privacy/ledger-pg.ts:OBJECT_CANCELLED',
   'services/api/src/privacy/synthesis-egress.ts:OBJECT_UNAVAILABLE',
   'services/api/src/privacy/task-egress.ts:OBJECT_UNAVAILABLE',
+  // #1145 可观测性片（GY-R94）：`egress_failed` 事件把失败码当字段发出去，因此本文件多两个写入点
+  // （未登记拒绝的 `OBJECT_UNAVAILABLE`、real 未接线的 `PROVIDER_UNAVAILABLE`）。
+  'services/api/src/privacy/task-egress.ts:OBJECT_UNAVAILABLE',
+  'services/api/src/privacy/task-egress.ts:PROVIDER_UNAVAILABLE',
 ]);
 
 /**

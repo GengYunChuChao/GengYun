@@ -23,7 +23,7 @@
 
 第 3 步让这张表**不进 87 号的域**，因此 87 号从不要求它被分类；`domain_manifest` 是手写字面量清单，同样只覆盖「有人想起来登记」的表。两端都是「谁记得」驱动 ⇒ 「建表但忘了授权」整类缺口 CI 恒绿。
 
-实证（本片立项时复核）：`public.provider_invocations` 由 `services/api/db/migrations/0050_provider_invocations.sql:147` 建表，写入点在 `services/api/src/privacy/ledger-pg.ts:954`（另有 `services/api/src/privacy/task-egress.ts:345`），而 `20-login-roles.sql` 对它零 GRANT 零 REVOKE、扩域之前本文件对 `provider_` 前缀 0 命中。
+实证（本片立项时复核）：`public.provider_invocations` 由 `services/api/db/migrations/0050_provider_invocations.sql:147` 建表，写入点在 `services/api/src/privacy/ledger-pg.ts:954`（另有 `services/api/src/privacy/task-egress.ts:379`），而 `20-login-roles.sql` 对它零 GRANT 零 REVOKE、扩域之前本文件对 `provider_` 前缀 0 命中。
 
 ## 2 改了什么
 

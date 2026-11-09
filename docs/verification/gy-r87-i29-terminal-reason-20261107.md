@@ -87,7 +87,7 @@ export function terminalFailureCodeOf(error: unknown): ErrorCode {
 
 > **审查后修正（P2-1）**：初版是鸭子类型（`(error as { code?: unknown })?.code` + `isErrorCode`），并在注释里声称「域外错误对象的任意 `{code}` 鸭子类型冒充不了契约码」。**这句话是假的**：`terminalFailureCodeOf({ code: 'CONSENT_REQUIRED' })` 实测返回 `CONSENT_WITHDRAWN`。今天调用点只有各域自己的 threw 分支（对象必是这两类之一），所以不可达；但「不可达」不等于「某天不会变成假合规证据」（第三方 SDK 自带 `code` 字段就会冒充）。故改成 instanceof 口径，注释改成实话，并由 `tests/unit/job-terminal-reason-consent-withdrawn.test.mjs` 把这条负空间钉住：普通对象、`Object.assign(new Error(...), {code})`、连 `name: 'PrivacyError'` 一起改的，一律 `PROVIDER_OUTCOME_UNKNOWN`。
 
-> 为什么不复用现成的 `failureCodeOf`：`services/api/src/privacy/ledger-pg.ts:1100-1104` 的 `failureCodeOf` 只认**账本摘要形状** `{kind:'failed', code}`，直接传抛出的 `PrivacyError` 必得 `null`（`services/api/src/privacy/task-egress.ts:443` 的注释也写明「不认 Error」）。`services/api/src/privacy/task-egress.ts:210-213` 的 `errorCodeOf` 认 `{code}` 但是模块私有、且会把任意闭集码原样放行（含 `OBJECT_UNAVAILABLE`）——用它会误标，故新写一个小函数。
+> 为什么不复用现成的 `failureCodeOf`：`services/api/src/privacy/ledger-pg.ts:1100-1104` 的 `failureCodeOf` 只认**账本摘要形状** `{kind:'failed', code}`，直接传抛出的 `PrivacyError` 必得 `null`（`services/api/src/privacy/task-egress.ts:477` 的注释也写明「不认 Error」）。`services/api/src/privacy/task-egress.ts:244-247` 的 `errorCodeOf` 认 `{code}` 但是模块私有、且会把任意闭集码原样放行（含 `OBJECT_UNAVAILABLE`）——用它会误标，故新写一个小函数。
 
 ### 3.3 各域保留错误对象并裁决原因（识别／OCR／语音／TTS）
 
@@ -104,13 +104,13 @@ TTS 的 `services/api/src/tts/service.ts:663` 的 `SynthesisArtifactError` 分�
 
 ### 3.4 外发层把「账本终态原因」翻译成契约码（`services/api/src/privacy/task-egress.ts`）
 
-四处守卫调用点改成 try/catch 包装（媒体外发在 `services/api/src/privacy/task-egress.ts:127`、`services/api/src/privacy/task-egress.ts:143`；问答外发在 `services/api/src/privacy/task-egress.ts:424`、`services/api/src/privacy/task-egress.ts:475`），文件末尾（原 500 行）追加三个 helper（**`export`**，供合成域复用；行数零位移）：
+四处守卫调用点改成 try/catch 包装（媒体外发在 `services/api/src/privacy/task-egress.ts:150`、`services/api/src/privacy/task-egress.ts:176`；问答外发在 `services/api/src/privacy/task-egress.ts:458`、`services/api/src/privacy/task-egress.ts:509`），文件末尾（原 500 行）追加三个 helper（**`export`**，供合成域复用；行数零位移）：
 
-- `withdrawalAwareFailure(ledger, exportId, error)`（`services/api/src/privacy/task-egress.ts:522`）：
+- `withdrawalAwareFailure(ledger, exportId, error)`（`services/api/src/privacy/task-egress.ts:556`）：
   - `code === 'CONSENT_REQUIRED'`（执行前重查直接抛）⇒ 立刻翻译成 `PrivacyError('CONSENT_WITHDRAWN', '外发因撤回同意而终止，结果不予写入')`；
   - `code !== 'OBJECT_UNAVAILABLE'` ⇒ 原样返回（**不碰**取消墓碑、无预留、版本变化）；
   - 否则读 `ledger.get(exportId)`（try/catch 包住，假账本可能没有 `get`），**仅当** `record.state === 'failed'` 且 `record.errorCode === 'CONSENT_WITHDRAWN'` 才翻译。
-- `assertExecutableOrWithdrawn(...)`（`services/api/src/privacy/task-egress.ts:546`）、`saveResultOrWithdrawn(...)`（`services/api/src/privacy/task-egress.ts:559`）：薄包装，`throw await withdrawalAwareFailure(...)`。
+- `assertExecutableOrWithdrawn(...)`（`services/api/src/privacy/task-egress.ts:580`）、`saveResultOrWithdrawn(...)`（`services/api/src/privacy/task-egress.ts:593`）：薄包装，`throw await withdrawalAwareFailure(...)`。（2026-11-09 跟位：`createMediaJobEgress` 加了外发日志钩子，本文件随之整体下移；上面四条守卫调用点与下面两条 wrapper 声明均已按新行号更新。）
 
 合成（TTS）外发**同一层缺口、同一套修法**：`services/api/src/privacy/synthesis-egress.ts:40` import 这两个包装器，`services/api/src/privacy/synthesis-egress.ts:315`（`assertExecutable` 原裸调用）与 `services/api/src/privacy/synthesis-egress.ts:333`（`saveResult` 原裸调用）改成包装调用。此前这两处抛出的 `OBJECT_UNAVAILABLE` / `CONSENT_REQUIRED` 不翻译，一路撞 `packages/privacy/in-flight.mjs:168-170` 的终态分支，最终在 `services/api/src/tts/service.ts:645` 被折成 `PROVIDER_OUTCOME_UNKNOWN`——同一个坑，两处。**审查 P2-2 之前，本页 §4 把 TTS 写成「未改·本无缺口」，那是错的。**
 
