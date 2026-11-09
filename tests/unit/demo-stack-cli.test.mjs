@@ -37,6 +37,7 @@ test('demo-stack.mjs --help：exit 0，且五个子命令都在用法里', () =>
     assert.match(result.stdout, new RegExp(`^\\s+${command}\\s`, 'm'), `用法里缺子命令 ${command}`);
   }
   assert.match(result.stdout, /--env-file/, '用法里缺 --env-file');
+  assert.match(result.stdout, /--demo/, '用法里缺 --demo');
 });
 
 test('demo-stack.mjs status：空状态目录下 exit 0，三行结论齐全且都说「未运行」', () => {

@@ -106,6 +106,7 @@ export function parseArgs(argv = []) {
     timeoutMs: 90_000,
     reset: false,
     yes: false,
+    demo: false,
     lines: 40,
     json: false,
     help: false,
@@ -130,6 +131,10 @@ export function parseArgs(argv = []) {
     }
     if (token === '--yes' || token === '-y') {
       options.yes = true;
+      continue;
+    }
+    if (token === '--demo') {
+      options.demo = true;
       continue;
     }
     if (!token.startsWith('-')) {
@@ -209,6 +214,7 @@ export function usage() {
     '  --pg-bin <dir>     PostgreSQL bin 目录，默认 <仓库上级>/.pg17/pgsql/bin',
     '  --timeout-ms <n>   等 /health 200 的上限，默认 90000',
     '  --lines <n>        logs 打印行数，默认 40',
+    '  --demo             演示档：把三个 feature flag 置为开启（仅本机演示；幂等）',
     '  --reset            up 前先重来一遍（停栈 + 删数据目录）',
     '  --yes, -y          reset 的确认开关',
     '',
@@ -410,6 +416,7 @@ export function classifyFailure(failure = {}) {
     createdb: { code: 'CREATEDB_FAILED', hint: '建库失败：看上面的 psql 报错；多半是簇没起或权限问题' },
     migrate: { code: 'MIGRATE_FAILED', hint: '迁移失败：把上面的 psql 报错原文发出来；reset --yes 可重来' },
     seed: { code: 'SEED_FAILED', hint: '种子失败：种子 SQL 期望先跑完迁移；reset --yes 后重试' },
+    'demo-profile': { code: 'DEMO_PROFILE_FAILED', hint: '演示开关写入失败：确认迁移 0020 已应用、psql 能连上库；reset --yes 后重试' },
     'api-start': { code: 'API_EXITED', hint: 'API 进程退出了：看上面 API 日志尾部（缺 env / 端口占用 / 语法错）' },
     health: { code: 'HEALTH_NOT_READY', hint: '健康检查没通过：看 API 日志尾部与 `status` 输出' },
   };
@@ -431,6 +438,44 @@ export function tailLines(text, n = 30) {
 /** psql 执行 SQL 文件（种子用）：-f 而不是 -c，避免超长语句被命令行截断。 */
 export function buildPsqlFileArgs({ port, database = 'gengyun', file, host = '127.0.0.1', user = 'postgres' }) {
   return ['-v', 'ON_ERROR_STOP=1', '-h', host, '-p', String(port), '-U', user, '-d', database, '-q', '-f', file];
+}
+
+/** `--demo` 要打开的三个契约开关；顺序与迁移 0020 的闭集一致。 */
+export const DEMO_FLAG_KEYS = Object.freeze(['submissions_enabled', 'specific_herbicide_output_enabled', 'ai_enabled']);
+
+/** 演示档写入的 reason：固定字面量，既用于审计，也用于重复 `up` 的幂等判定。 */
+export const DEMO_FLAG_REASON = 'demo-stack local demo profile (non-production)';
+
+/**
+ * `--demo` 的 SQL 语句（纯函数：不执行、不读库、不读环境变量）。
+ *
+ * 不带 `--demo` 返回空数组，调用方据此**完全不碰** `public.feature_flags`；
+ * 带则每个键一条 UPDATE，由调用方拼成 **一个** `psql -c` 参数执行（单条 simple query，
+ * PostgreSQL 会把它当同一事务；任一语句失败则整组回滚）。
+ *
+ * 幂等策略：只有「`enabled` 不是 true」或「`reason` 还不是演示档」的行才 `revision + 1`；
+ * 已经是目标状态的行不更新，所以重复 `up --demo` 不会把 revision 继续抬高。
+ */
+export function buildDemoFlagStatements({ demo = false } = {}) {
+  if (!demo) return [];
+  return DEMO_FLAG_KEYS.map((key) =>
+    [
+      'UPDATE public.feature_flags',
+      '   SET enabled = true,',
+      '       revision = revision + 1,',
+      `       reason = '${DEMO_FLAG_REASON}',`,
+      '       changed_at = now()',
+      ` WHERE key = '${key}'`,
+      `   AND (enabled IS DISTINCT FROM true OR reason IS DISTINCT FROM '${DEMO_FLAG_REASON}')`,
+      'RETURNING key;',
+    ].join('\n'),
+  );
+}
+
+/** 把三条 UPDATE 拼成 psql 的单条 `-c` SQL；未开演示档返回 null。 */
+export function buildDemoFlagSql(options = {}) {
+  const statements = buildDemoFlagStatements(options);
+  return statements.length === 0 ? null : statements.join('\n');
 }
 
 /** pid 文件内容：带上实例标记与端口，`down`/`status` 靠它判断「这是不是本工具起的」。 */
