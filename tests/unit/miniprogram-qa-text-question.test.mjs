@@ -216,7 +216,7 @@ function createLoader(wxApi) {
     if (base === 'runtime') return runtime
     if (base === 'font-scale') return fontScale
     if (base === 'page-gate') return pageGate
-    if (base === 'qa-api') return loadReal(join(ROOT, 'miniprogram/utils/qa-api.js'), resolveDep)
+    if (base === 'qa-api') return loadReal(join(ROOT, 'miniprogram/utils/qa-api.js'), resolveDep); if (base === 'time-format') return loadReal(join(ROOT, 'miniprogram/utils/time-format.js'), resolveDep)
     throw new Error('unexpected require: ' + id)
   }
   return { loadReal: loadReal, resolveDep: resolveDep, auth: auth, runtime: runtime, identity: identity }

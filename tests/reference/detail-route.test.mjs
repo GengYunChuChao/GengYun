@@ -32,6 +32,9 @@ function fixture(name,verified=true,gateSource=read('utils/page-gate.js')){let p
   const loadGate=src=>vm.runInNewContext(src,{module:{exports:{}},require:id=>{if(!gateDependencies.has(id))throw Error('Unexpected page dependency '+id);return gateDependencies.get(id)}});
   const gate={exports:loadGate(gateSource)};
   const font={exports:{}};vm.runInNewContext(read('utils/font-scale.js'),{module:font});
+  // GY-R92：referencedetail 用 `require('../../utils/time-format')` 渲染来源取得时间。登记**真实模块**，
+  // 让时间文案仍由真源码决定；空壳或只替 formatDate 会让页面在真依赖缺失时仍绿。
+  const time={exports:{}};vm.runInNewContext(read('utils/time-format.js'),{module:time});
   const adapter={...reference,detail:id=>{calls.lookup.push(id);return reference.detail(id)},seedHerbicideDetail:id=>{calls.lookup.push(id);return reference.seedHerbicideDetail(id)}};
   // 页面依赖按**完整说明符**登记（逐字取自 referencedetail / referenceseeddetail 两个页面的 require），
   // 不做后缀匹配：`id.endsWith('/reference')` 一类会把 `require('../../data/reference')` 静默喂成
@@ -50,6 +53,7 @@ function fixture(name,verified=true,gateSource=read('utils/page-gate.js')){let p
   const pageDependencies=new Map([
     ['../../utils/page-gate',gate.exports],
     ['../../utils/font-scale',font.exports],
+    ['../../utils/time-format',time.exports],
     ['../../utils/auth',auth],
     ['../../utils/profile-api',profileApiStub(calls)],
     ['../../utils/reference',adapter],

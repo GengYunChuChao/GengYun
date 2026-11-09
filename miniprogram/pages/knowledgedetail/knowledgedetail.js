@@ -45,7 +45,7 @@ Page({
       const names = { crop_id: '作物', region_code: '地区', species_id: '杂草', growth_stage: '生育期', planting_method: '种植方式', use_scene: '使用场景' }
       const conditionsText = c ? Object.keys(names).map(k => names[k] + '：' + (c[k] || '未提供')).join('；') : '条件资料不足，作物／地区等条件未完整提供，不能据此确定适用性或用量。'
       this._displayBinding = b
-      this.setData({ item: r.item, labels: api.labels(r.item), busy: false, status: '已重新读取当前资料。', modeNote: api.modeNote(r.mode), conditionsText, stateKind: 'ready' })
+      this.setData({ item: Object.assign({}, r.item, { source: Object.assign({}, r.item.source, { updatedText: require('../../utils/time-format').formatDate(r.item.source.updated_at) }) }), labels: api.labels(r.item), busy: false, status: '已重新读取当前资料。', modeNote: api.modeNote(r.mode), conditionsText, stateKind: 'ready' })
     } catch (e) {
       if (!current()) { if (this._gateActive === true && this._readOperation === operation) { this.clear(); this.setData({ gatePassed: false, status: api.message(e) }) }; return }
       this.setData({ item: null, labels: null, busy: false, status: api.message(e), stateKind: 'error' })

@@ -305,7 +305,7 @@ Page({
             name: [src.publisher, src.title].filter(function (v) { return typeof v === 'string' && v !== '' }).join(' · '),
             issue: src.title,
             original_url: src.url,
-            retrieved_at: src.updated_at
+            retrieved_at: src.updated_at, retrievedText: require('../../utils/time-format').formatDate(src.updated_at)
           }
         },
         labels: row.labels,
@@ -384,7 +384,7 @@ Page({
     }
     const base = {
       found: true,
-      detail: detail,
+      detail: Object.assign({}, detail, { source: Object.assign({}, detail.source, { retrievedText: require('../../utils/time-format').formatDate(detail.source && detail.source.retrieved_at) }) }),
       labels: detail.labels,
       verifiedScope: detail.verified_scope || [],
       notCollected: detail.not_collected || [],
