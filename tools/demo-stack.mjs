@@ -20,11 +20,13 @@ import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 
 import {
+  APPROVAL_FLAGS,
   DEFAULT_PORTS, DEMO_FLAG_KEYS,
   ENV_FILE_TEMPLATE,
   GENERATED_KEYS,
   INSTANCE_FLAG,
   UsageError,
+  approvalRestartLines,
   assembleApiEnv, buildDemoFlagSql,
   buildConsentReadinessSql, buildDemoConsentSql,
   buildApiApprovalArgs,
@@ -37,6 +39,7 @@ import {
   DEMO_CONSENT_PURPOSES,
   DEMO_CONSENT_POLICY_VERSION,
   DEMO_RECIPIENT_ID,
+  desiredApprovals,
   parseConsentReadiness,
   describeEnvSources,
   healthVerdict,
@@ -44,10 +47,12 @@ import {
   nextStepsLines,
   parseArgs,
   parsePidRecord,
+  planRunningStack,
   readEnvFile,
   readSecretsFile,
   renderSecretsFile,
   requiredEnvMissing,
+  resolveApprovals,
   resolvePaths,
   statusLines,
   tailLines,
@@ -499,36 +504,56 @@ function consentReadinessWarning({ options, pgBin }) {
   return count === 0 ? `  ！${CONSENT_EMPTY_WARNING}` : null;
 }
 
+/**
+ * 停掉一个「本工具起」的 API 实例：pid 还活着、且命令行仍带实例标记才动手，
+ * 否则只清 pid 文件——绝不因为 pid 复用去杀别人的进程（`down` 与「缺批准重启」共用这一段）。
+ */
+async function stopApiInstance({ paths, pid, instanceId }) {
+  if (!processAlive(pid)) {
+    rmSync(paths.pidFile, { force: true });
+    return `pid ${pid} 已不在（清理陈旧 pid 文件）`;
+  }
+  const commandLine = commandLineOf(pid);
+  if (!commandHasInstance(commandLine, instanceId)) {
+    return `pid ${pid} 不是本工具起的实例（命令行无实例标记），不杀`;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    /* 已经退出 */
+  }
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && processAlive(pid)) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
+  }
+  if (processAlive(pid) && WIN) {
+    run('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 20000 });
+  }
+  if (processAlive(pid)) return `pid ${pid} 仍在运行（强制失败）`;
+  rmSync(paths.pidFile, { force: true });
+  return `已停（pid ${pid}）`;
+}
+
+/** 等端口真正释放（SIGTERM 之后监听不会立刻消失，别让新实例撞上 TIME_WAIT 里的旧监听）。 */
+async function waitForPortFree(port, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const holder = await probePort(port);
+    if (!holder.listening) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
+  }
+}
+
 async function teardown(context, { keepData = true } = {}) {
   const { options, paths, pgBin } = context;
   const stopped = { api: '未运行', pg: '未运行' };
 
   const pidRecord = parsePidRecord(readTextIfExists(paths.pidFile) ?? '');
   if (pidRecord) {
-    if (!processAlive(pidRecord.pid)) {
-      stopped.api = `pid ${pidRecord.pid} 已不在（清理陈旧 pid 文件）`;
-      rmSync(paths.pidFile, { force: true });
-    } else {
-      const commandLine = commandLineOf(pidRecord.pid);
-      if (!commandHasInstance(commandLine, pidRecord.instanceId)) {
-        stopped.api = `pid ${pidRecord.pid} 不是本工具起的实例（命令行无实例标记），不杀`;
-        warn(`  ！${stopped.api}；如确认要停它，请手动结束该进程`);
-      } else {
-        try {
-          process.kill(pidRecord.pid, 'SIGTERM');
-        } catch {
-          /* 已经退出 */
-        }
-        const deadline = Date.now() + 10_000;
-        while (Date.now() < deadline && processAlive(pidRecord.pid)) {
-          await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
-        }
-        if (processAlive(pidRecord.pid) && WIN) {
-          run('taskkill', ['/PID', String(pidRecord.pid), '/T', '/F'], { timeoutMs: 20000 });
-        }
-        stopped.api = processAlive(pidRecord.pid) ? `pid ${pidRecord.pid} 仍在运行（强制失败）` : `已停（pid ${pidRecord.pid}）`;
-        if (!processAlive(pidRecord.pid)) rmSync(paths.pidFile, { force: true });
-      }
+    stopped.api = await stopApiInstance({ paths, pid: pidRecord.pid, instanceId: pidRecord.instanceId });
+    if (stopped.api.includes('不是本工具起的实例')) {
+      warn(`  ！${stopped.api}；如确认要停它，请手动结束该进程`);
     }
   }
 
@@ -561,6 +586,12 @@ async function commandUp(options) {
   say(`  API ${options.apiPort}：${describeHolder(apiHolder)}`);
   say(`  PG  ${options.pgPort}：${describeHolder(pgHolder)}`);
 
+  // 「栈已就绪」≠「这次要的档位已经在跑」：批准项只存在于 API 进程的命令行里，
+  // 不会因为再敲一次 up 就长到旧进程上（旧实现在这里直接 return 0，于是演示第一步就 503）。
+  let restartPlan = null;
+  let restartPid = null;
+  let restartRecord = null;
+
   if (apiHolder.listening) {
     const record = parsePidRecord(readTextIfExists(paths.pidFile) ?? '');
     const ours = record !== null && record.pid === apiHolder.pid && commandHasInstance(apiHolder.commandLine, record.instanceId);
@@ -571,17 +602,39 @@ async function commandUp(options) {
       warn(`  处理：换一个端口（--port 3001）或先结束该进程；本工具不会去杀不是自己起的进程`);
       return EXIT.PORT;
     }
-    say(`  API 是本工具上一次起的实例（pid ${apiHolder.pid}）⇒ 不重复启动，等它变健康`);
-    const health = await waitForHealth(options.apiPort, options.timeoutMs);
-    if (!health.ok) {
-      failHead('健康检查未通过', `${health.elapsedMs}ms 后仍 ${health.last.state}`);
-      warn(`  API 日志（最后 30 行，${paths.apiLog}）：`);
-      for (const line of tailLines(readTextIfExists(paths.apiLog) ?? '', 30).split('\n')) warn(`    ${line}`);
-      return EXIT.HEALTH;
+
+    const plan = planRunningStack({ record, commandLine: apiHolder.commandLine, demo: options.demo, mode: options.mode });
+    if (plan.action === 'restart') {
+      // 不在这里杀进程：先把 env / PG / 演示档走到位，确认能重新起来再动那个正在跑的 API。
+      restartPlan = plan;
+      restartPid = apiHolder.pid;
+      restartRecord = record;
+      say(`  API 是本工具上一次起的实例（pid ${apiHolder.pid}），但批准项不满足这次的要求 ⇒ 起 API 前会重启它（数据目录保留）`);
+      for (const key of plan.missing) {
+        say(`  · 缺 ${APPROVAL_FLAGS[key]}`);
+      }
+      if (plan.reason === 'approvals-unknown') {
+        say('  · 旧 pid 文件没记批准项、进程命令行也读不到 ⇒ 按「没批」处理（宁可多重启一次，也不装作批过）');
+      } else {
+        say('  · 媒体域是 fail-closed：不带 --approve-real-media-wiring 时 POST /api/v1/media/uploads 会 503');
+      }
+      warn('  ！批准项只能靠重启 API 生效，不能靠再跑一次 up；下面照常走收敛步骤（迁移与种子幂等，数据目录不动）');
+    } else {
+      say(`  API 是本工具上一次起的实例（pid ${apiHolder.pid}）⇒ 不重复启动，等它变健康`);
+      if (plan.reason === 'extra-approval') {
+        warn(`  ！既有实例带着 ${plan.extra.map((key) => APPROVAL_FLAGS[key]).join(' ')}，但这次没要求：不重启（撤掉批准不是正确性要求），演示完记得 down`);
+      }
+      const health = await waitForHealth(options.apiPort, options.timeoutMs);
+      if (!health.ok) {
+        failHead('健康检查未通过', `${health.elapsedMs}ms 后仍 ${health.last.state}`);
+        warn(`  API 日志（最后 30 行，${paths.apiLog}）：`);
+        for (const line of tailLines(readTextIfExists(paths.apiLog) ?? '', 30).split('\n')) warn(`    ${line}`);
+        return EXIT.HEALTH;
+      }
+      say(`  ✓ /health → ${health.last.reason}（${health.elapsedMs}ms）`);
+      for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo })) say(line);
+      return EXIT.OK;
     }
-    say(`  ✓ /health → ${health.last.reason}（${health.elapsedMs}ms）`);
-    for (const line of nextStepsLines({ mode: options.mode, apiPort: options.apiPort, seedDemo: options.seedDemo })) say(line);
-    return EXIT.OK;
   }
 
   if (pgHolder.listening && !pgRunning(pgBin, paths.dataDir)) {
@@ -842,9 +895,21 @@ async function commandUp(options) {
     return EXIT.USAGE;
   }
 
+  if (restartPlan !== null) {
+    // 走到这里说明 env / PG / 演示档都已就绪 —— 现在才动那个正在跑的 API。
+    const stopping = await stopApiInstance({ paths, pid: restartPid, instanceId: restartRecord.instanceId });
+    say(`  重启 API：${stopping}`);
+    if (!(await waitForPortFree(options.apiPort, 10_000))) {
+      failHead(`API 端口 ${options.apiPort} 重启后仍被占用`, '旧进程可能还在退出中');
+      warn('  处理：等几秒再跑一次 up；或先 down 确认端口释放');
+      return EXIT.PORT;
+    }
+  }
+
   const instanceId = randomUUID();
   const startedAt = new Date().toISOString();
   const approvalArgs = buildApiApprovalArgs({ demo: options.demo, mode: options.mode });
+  const approvals = desiredApprovals({ demo: options.demo, mode: options.mode });
   if (approvalArgs.length > 0) {
     say('  媒体域真实接线：已随 --demo 显式批准（--approve-real-media-wiring；本机演示，非生产）');
   }
@@ -869,8 +934,11 @@ async function commandUp(options) {
     failHead('spawn 没有返回 pid', '不写假 pid 进文件');
     return EXIT.API;
   }
-  writeFileSync(paths.pidFile, `${JSON.stringify(buildPidRecord({ pid, port: options.apiPort, mode: options.mode, instanceId, startedAt, logFile: paths.apiLog }), null, 2)}\n`, 'utf8');
-  writeState(paths, { mode: options.mode, apiPort: options.apiPort, pgPort: options.pgPort, lastUpAt: startedAt });
+  writeFileSync(paths.pidFile, `${JSON.stringify(buildPidRecord({ pid, port: options.apiPort, mode: options.mode, instanceId, startedAt, logFile: paths.apiLog, demo: options.demo === true, approvals }), null, 2)}\n`, 'utf8');
+  writeState(paths, { mode: options.mode, demo: options.demo === true, approvals, apiPort: options.apiPort, pgPort: options.pgPort, lastUpAt: startedAt });
+  if (restartPlan !== null) {
+    for (const line of approvalRestartLines(restartPlan)) say(line);
+  }
   say(`  已启动：pid ${pid}（日志 ${paths.apiLog}）`);
 
   // 进程早退要立刻发现，而不是等满超时。
@@ -943,12 +1011,14 @@ async function commandStatus(options) {
   const alive = record !== null && processAlive(record.pid);
   const commandLine = alive ? commandLineOf(record.pid) : null;
   const owned = alive && commandHasInstance(commandLine, record.instanceId);
+  // 批准项只认活进程的命令行；读不到再退回 pid 记录（status 宁可写「未知」也不写猜的「已带」）。
+  const { approvals, source: approvalsSource } = resolveApprovals({ commandLine, record });
 
   const port = await probePort(options.apiPort);
   const pgUp = pgRunning(pgBin, paths.dataDir);
   const health = await probeHealth(options.apiPort);
   const lines = statusLines({
-    api: { running: alive, pid: record?.pid, mode: record?.mode, owned, pidFile: record !== null },
+    api: { running: alive, pid: record?.pid, mode: record?.mode, owned, pidFile: record !== null, approvals: alive ? approvals : null },
     port,
     health,
   });
@@ -956,7 +1026,14 @@ async function commandStatus(options) {
     say(
       JSON.stringify(
         {
-          api: { running: alive, pid: record?.pid ?? null, owned, mode: record?.mode ?? null },
+          api: {
+            running: alive,
+            pid: record?.pid ?? null,
+            owned,
+            mode: record?.mode ?? null,
+            approvals: alive ? approvals : null,
+            approvalsSource: alive ? approvalsSource : null,
+          },
           port: { port: options.apiPort, listening: port.listening, pid: port.pid, name: port.name },
           pg: { running: pgUp, port: options.pgPort, dataDir: paths.dataDir },
           health: { state: health.state, statusCode: health.statusCode, reason: health.reason, url: health.url },
@@ -970,6 +1047,9 @@ async function commandStatus(options) {
   for (const line of lines) say(line);
   say(`  PG 簇：${pgUp ? '在运行' : '未运行'}（127.0.0.1:${options.pgPort}，数据 ${paths.dataDir}）`);
   say(`  日志：${paths.apiLog}`);
+  if (alive && approvals === null) {
+    say('  ！批准项未知：进程命令行读不到、pid 文件也没记（旧版本写的）；要确认就 down 再 up');
+  }
   if (record && !alive) say(`  ！pid 文件还在（pid ${record.pid}），进程已退出；下一次 up 会清理`);
   return EXIT.OK;
 }
