@@ -32,6 +32,8 @@
 .stat-label { color: #4a5a4e; }
 .stat-value { font-weight: 700; }
 .knowledge-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 12px; }
+/* 来源两行：小一号的灰字、行距统一，避免 5 行无样式正文挤在一起、也没有 ISO 时间撑宽 */
+.card-source { font-size: calc(15px * var(--font-scale, 1)); line-height: 1.7; color: #4a5a4e; margin-top: 8px; overflow-wrap: anywhere; word-break: break-word; }
 .source-url { overflow-wrap: anywhere; word-break: break-all; }
 .detail-heading { display: flex; gap: 12px; align-items: flex-start; }
 .detail-heading .page-title { flex: 1; min-width: 0; }

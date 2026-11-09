@@ -325,7 +325,7 @@ Page({
         icon: meta.icon,
         unread: message.read_at === null,
         readAt: message.read_at || '',
-        time: message.created_at,
+        time: require('../../utils/time-format').formatRelative(message.created_at),
         // `target_ref` 只用于跳转定位（帖子 uuid／评论 uuid），不渲染成正文，也不拼进任何文案。
         targetType: target === null ? '' : target.type,
         targetId: target === null ? '' : target.id,

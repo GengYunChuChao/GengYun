@@ -194,7 +194,7 @@ Page({
       author: author.name,
       authorAvatar: author.avatar,
       authorAnonymized: author.anonymized,
-      time: post.created_at,
+      time: require('../../utils/time-format').formatRelative(post.created_at),
       updated: post.updated_at,
       crop_id: post.crop_id,
       region_code: post.region_code,
@@ -224,7 +224,7 @@ Page({
         authorAvatar: author.avatar,
         authorAnonymized: author.anonymized,
         body: comment.body,
-        time: comment.created_at,
+        time: require('../../utils/time-format').formatRelative(comment.created_at),
         stateLabel: outcome.key === 'approved' ? '' : outcome.title
       }
     })

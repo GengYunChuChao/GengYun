@@ -13,10 +13,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve, dirname } from 'node:path';
 import vm from 'node:vm';
 
 const root = resolve(import.meta.dirname, '../..');
+// 时间展示走 `miniprogram/utils/time-format.js`（GY-R92：不再把 ISO 串原样印在作者行）。
+// 这里与页面加载的是同一份文件，故投影里的 `time` 仍逐字段比对得起来。
+const hostRequire = createRequire(import.meta.url);
+const timeFormat = hostRequire('../../miniprogram/utils/time-format.js');
 const META = {
   request_id: '99999999-9999-4999-8999-999999999999',
   contract_version: '1.0.0',
@@ -195,7 +200,7 @@ function decorated(item) {
     author: item.author.display_name,
     authorAvatar: item.author.display_name.slice(0, 1),
     authorAnonymized: false,
-    time: item.created_at,
+    time: timeFormat.formatRelative(item.created_at),
     crop_id: item.crop_id,
     region_code: item.region_code,
     visibility: item.visibility,

@@ -136,7 +136,7 @@ Page({
       typeLabel: favoritesApi.targetTypeLabel(item.target_ref.type),
       targetId: item.target_ref.id,
       title: this.titleFor(item.target_ref.type, item.target_ref.id),
-      createdAt: item.created_at.replace('T', ' ').replace(/\.\d+/, '').replace(/Z$/, ' UTC'),
+      createdAt: require('../../utils/time-format').formatDateTime(item.created_at),
       stateTone: view.tone,
       stateLabel: view.label,
       stateHint: view.hint,
