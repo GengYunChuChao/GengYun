@@ -853,6 +853,28 @@ async function commandUp(options) {
     if (catalogCode !== EXIT.OK) return catalogCode;
     const demoCode = applyDemoProfile({ options, pgBin });
     if (demoCode !== EXIT.OK) return demoCode;
+
+    // 演示页（社区 / 消息）的最小演示数据：只补本机演示库里的行，幂等，可反复执行。
+    // 社区帖子连「规则引擎结论行」一起写 —— 没有结论行，公开列表会把行降级成 hidden，
+    // 写了帖子也照样是空列表（见 db/seeds/demo_community_messages.sql 的头注）。
+    if (options.mode !== 'real') {
+      say('  · 演示页数据：stub 模式跳过（stub 读面是预设数据，写库对它没有意义）');
+    } else {
+      // 演示页种子（GY-R91）：社区 3 条已发布帖 + 消息 3 条系统通知。只写本机演示库的行（固定 uuid + ON CONFLICT，可复跑），
+      // 不改产品代码、不代表真实审核；real 才跑 —— stub 的读面是预设数据，往库里写行对它没有意义。
+      const seedFile = join(REPO_ROOT, 'db', 'seeds', 'demo_community_messages.sql');
+      const pages = psql(pgBin, buildPsqlFileArgs({ port: options.pgPort, database: DATABASE_NAME, file: seedFile }), 120_000);
+      if (pages.status !== 0) {
+        failWith({ stage: 'seed', output: `${pages.stdout ?? ''}\n${pages.stderr ?? ''}` }, [
+          '  失败的种子：demo_community_messages.sql',
+          '  输出（最后 15 行）：',
+          ...tailLines(`${pages.stdout ?? ''}\n${pages.stderr ?? ''}`, 15).split('\n').map((line) => `    ${line}`),
+        ]);
+        return EXIT.SEED;
+      }
+      say('  ✓ 灌入演示数据（非生产）：db/seeds/demo_community_messages.sql（社区 3 帖 + 消息 3 条系统通知，幂等）');
+      say('    认行 / 删除：见该文件头注（title 前缀「【演示数据·非生产】」、event_key 前缀 demo-pages-notice-）。');
+    }
   } else {
     say('演示开关：未开（默认）');
     consentWarning = consentReadinessWarning({ options, pgBin });

@@ -207,10 +207,10 @@ export function retrievalItemOf(value: unknown, where = 'unknown'): RetrievalIte
     review_status: requiredString(source, 'review_status', id),
     updated_at: requiredString(source, 'updated_at', id),
   };
-  if (ref.id !== id) {
-    // 读面把条目 id 与来源 id 混为一谈 ⇒ 引用核对会失去意义。
+  if (!UUID_PATTERN.test(ref.id)) {
+    // `source.id` 是**来源**的 id（`public.sources` 行），本就不等于知识条目 id：同一来源可挂多条知识（迁移 0010 的 `s.id AS source_id`）；引用核对走 guard.ts 的 sameSourceRef 逐字段相等。
     // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
-    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 的来源 id 与条目 id 不一致`, { retryable: false });
+    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 的来源 id 不是 uuid：${ref.id}`, { retryable: false });
   }
   return {
     id,
