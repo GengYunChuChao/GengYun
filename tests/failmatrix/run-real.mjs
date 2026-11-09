@@ -29,7 +29,7 @@
  *   0   真库起得来、矩阵权限面在真 PG 上取得逐条读数，且如实记录差异（不是「全绿」才算 0）；
  *   77  没设 GY_PG_BIN ⇒ **未取得**（POSIX skipped），不是通过；`--allow-skip`/`GY_ALLOW_SKIP=1` 才降级 0（仅本机开发，⛔ 不得接门禁）；
  *   其它非 0（通常 1）真失败（集群起不来 / 迁移失败 / 装配抛错）。
- *   --require-no-not-runnable  打开后：not_runnable > 0 也算 exit 1（「没跑」不等于通过；CI 用它把 13→0 钉住）。另有 --require-no-different：different > 0 也算 exit 1（语义见文件末尾 `shouldFailOnDifferent`；CI 尚未接它）。
+ *   --require-no-not-runnable  打开后：not_runnable > 0 也算 exit 1（「没跑」不等于通过；CI 用它把 13→0 钉住）。另有 --require-no-different：different > 0 也算 exit 1（语义见文件末尾 `shouldFailOnDifferent`；CI 的真 PG 臂已接它）。
  */
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';

@@ -272,3 +272,29 @@ test('requireFlagField 对未知参数抛错：不再静默映射成 requireNoNo
   assert.equal(requireFlagField('--require-no-different'), 'requireNoDifferent');
   assert.equal(requireFlagField('--require-no-not-runnable'), 'requireNoNotRunnable');
 });
+
+// ---------------------------------------------------------------------------
+// ⑪ CI 契约：真 PG 臂的那一行调用必须同时带两个开关（本片把开关接进 CI）
+// ---------------------------------------------------------------------------
+test('CI 契约：real-pg-integration.yml 的真 PG 臂同一行同时带 --require-no-not-runnable 与 --require-no-different', () => {
+  // 判据放在 workflow 文本上，而不是「跑一遍 CI」：这条用例要能在任何一次本地 `node --test` 里
+  // 立刻回答「接线还在不在」。只认同一行、且两个开关按此顺序出现（`--require-no-different`
+  // 紧跟在 `--require-no-not-runnable` 之后），别让注释里的字样或另一条臂的调用冒充。
+  const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'real-pg-integration.yml'), 'utf8');
+  const sameLine = /node tests\/failmatrix\/run-real\.mjs[^\n]*--require-no-not-runnable[^\n]*--require-no-different/;
+  assert.match(
+    workflow,
+    sameLine,
+    '真 PG 臂的调用必须同时带 --require-no-not-runnable 与 --require-no-different（前者在前、后者紧随其后）：' +
+      '只带 not_runnable 时「different 悄悄变多」会静默变绿，只带 different 时「not_runnable 悄悄变多」会静默变绿。' +
+      '2026-11-09 之前 CI 只带了前者，所以 different > 0 仍然 exit 0 —— 与当初 13 条 not_runnable 却 CI 绿是同一个失效模式。',
+  );
+  // 反向自证：把开关字样从文本里全部删掉，同一条正则必须不匹配。
+  // 若它仍然匹配，说明这条断言根本没盯着那个开关（恒真），挡不住「有人把开关删了」。
+  const withoutFlag = workflow.split('--require-no-different').join('');
+  assert.doesNotMatch(
+    withoutFlag,
+    sameLine,
+    '删掉 --require-no-different 后正则仍然匹配 ⇒ 这条断言没有盯着那个开关（恒真，钉不住任何东西）',
+  );
+});

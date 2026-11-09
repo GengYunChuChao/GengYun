@@ -1,8 +1,8 @@
 {
   "version": 1,
   "scope": "docs/verification/**/*.md",
-  "accepted": "gy-r90-comment-anchor-shadow-batch",
-  "why": "「逐字引用判据注释原文」在本仓是合法证据形态的一类（例如证据页引用 workflow 注释说明不变量），这批历史命中未经逐条人工裁定，先整批登记为影子基线；闸门只拦基线之外的新增，修掉一条再由 --write-baseline 收紧。",
+  "accepted": "gy-r90-comment-anchor-shadow-batch + gy-r96-different-gate-comment-refs",
+  "why": "「逐字引用判据注释原文」在本仓是合法证据形态的一类（例如证据页引用 workflow 注释说明不变量），这批历史命中未经逐条人工裁定，先整批登记为影子基线；闸门只拦基线之外的新增，修掉一条再由 --write-baseline 收紧。2026-11-09 追加 4 条（gy-r96-different-gate-comment-refs）：docs/verification/gy-r96-i22-different-gate-20261109.md 逐字引用 tests/failmatrix/run-real.mjs:32 与 .github/workflows/real-pg-integration.yml:1366 两行注释原文，用来证明这两处与新行为矛盾的注释已在同一 PR 内订正（行号零位移），属上述合法形态。",
   "entries": [
     {
       "doc": "docs/verification/gy-flake-clock-20261019.md",
@@ -10874,6 +10874,38 @@
       "target": "services/api/src/recognitions/openai-vision-adapter.ts",
       "from": 22,
       "to": 22,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r96-i22-different-gate-20261109.md",
+      "line": 31,
+      "target": "tests/failmatrix/run-real.mjs",
+      "from": 32,
+      "to": 32,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r96-i22-different-gate-20261109.md",
+      "line": 32,
+      "target": ".github/workflows/real-pg-integration.yml",
+      "from": 1366,
+      "to": 1366,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r96-i22-different-gate-20261109.md",
+      "line": 37,
+      "target": ".github/workflows/real-pg-integration.yml",
+      "from": 1366,
+      "to": 1366,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r96-i22-different-gate-20261109.md",
+      "line": 38,
+      "target": "tests/failmatrix/run-real.mjs",
+      "from": 32,
+      "to": 32,
       "kind": "block-comment"
     },
     {
