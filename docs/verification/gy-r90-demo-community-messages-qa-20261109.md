@@ -67,9 +67,9 @@ rule_version=unimplemented:no-real-rule/cjk-bigram+word-match/1+dose/gy-i08/1.2.
 
 ## 5. `tools/demo-stack.mjs --demo` 接线
 
-- 常量：`tools/demo-stack.mjs:865` `const seedFile = join(REPO_ROOT, 'db', 'seeds', 'demo_community_messages.sql');`（在 `--demo` 档内声明，避免上移模块常量时把别的文档锚点整体推移）
-- 执行：`tools/demo-stack.mjs:866`（`--demo` 档内、`applyDemoProfile` 之后；只在 `mode === 'real'` 跑，`stub` 打印跳过原因）
-- 日志：`tools/demo-stack.mjs:875` `✓ 灌入演示数据（非生产）：db/seeds/demo_community_messages.sql（社区 3 帖 + 消息 3 条系统通知，幂等）`
+- 常量：`tools/demo-stack.mjs:920` `const seedFile = join(REPO_ROOT, 'db', 'seeds', 'demo_community_messages.sql');`（在 `--demo` 档内声明，避免上移模块常量时把别的文档锚点整体推移）
+- 执行：`tools/demo-stack.mjs:921`（`--demo` 档内、`applyDemoProfile` 之后；只在 `mode === 'real'` 跑，`stub` 打印跳过原因）
+- 日志：`tools/demo-stack.mjs:930` `✓ 灌入演示数据（非生产）：db/seeds/demo_community_messages.sql（社区 3 帖 + 消息 3 条系统通知，幂等）`
 
 既有 `--seed-demo`（`demo_catalog_verified.sql`）与 `--demo`（三个 feature flag）逻辑未改。本机一次 `up` 的相关日志原文：
 
