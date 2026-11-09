@@ -57,7 +57,7 @@ import {
   type RecognitionTerminalHistoryInput,
   type RecognitionTerminalHistoryPort,
 } from './recognitions/service.ts';
-import { createRecognitionProvider, type RecognitionProvider } from './recognitions/provider.ts';
+import { createRecognitionProvider, type RecognitionProvider } from './recognitions/provider.ts'; import { createRecognitionObservationSink } from './recognitions/observation-log.ts'; /* GY-R94：与上一条同行，独占一行会推移本文件行号并让 docs/** 里 1124／1125／1131 等 app.ts 锚点漂移 */
 import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts'; import { createObjectStoreRecognitionImageSource } from './recognitions/image-source.ts'; /* GY-R70：与上一条同行，独占一行会推移本文件行号并让 docs/verification 里 11 条历史 app.ts 锚点变 SUSPECT */
 import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
 import { registerSynthesisRoutes } from './routes/synthesis.ts';
@@ -1122,7 +1122,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     createRecognitionProvider({
       executionMode: config.executionMode,
       endpoint: process.env['RECOGNITION_PROVIDER_URL'] ?? null, profile: process.env['RECOGNITION_PROVIDER_PROFILE'] ?? null, model: process.env['RECOGNITION_PROVIDER_MODEL'] ?? null,
-      apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null, /* GY-R70：真实字节来源（**只**读去元数据衍生件）；非 real 与缺凭据时该端口不被使用。 */ imageSource: createObjectStoreRecognitionImageSource(recognitionMediaPorts),
+      apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null, /* GY-R70：真实字节来源（**只**读去元数据衍生件）；非 real 与缺凭据时该端口不被使用。 */ imageSource: createObjectStoreRecognitionImageSource(recognitionMediaPorts), /* GY-R94：观测端口（只记结构读数，不记正文）——失败时一眼分清预算类与结构类。 */ onObservation: createRecognitionObservationSink(app.log),
     });
   const recognitionService = createRecognitionService({
     store: recognitionStore ?? (config.executionMode === 'real' && pool !== null ? createPostgresRecognitionStore({ pool }) : createMemoryRecognitionStore()),
