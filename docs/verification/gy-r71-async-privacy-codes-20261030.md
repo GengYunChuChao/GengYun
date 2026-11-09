@@ -38,7 +38,7 @@
 | F5 | `services/api/src/privacy/task-egress.ts:313` / `:314` | `inFlight.assertExecutable(…)` / `ledger.markSent(…)` | 403/409 档被折叠的两条（由守卫与账本抛出） |
 | F6 | `packages/privacy/in-flight.mjs:132` | 用途授权已撤回 ⇒ `PrivacyError('CONSENT_REQUIRED', …)` | 「去授权」类失败的真实抛点之一 |
 | F7 | `packages/privacy/in-flight.mjs:151` | 外发已终态 ⇒ `PrivacyError('OBJECT_UNAVAILABLE', …)` | 「对象取不到」类失败的真实抛点之一 |
-| F8 | `services/api/src/privacy/ledger-pg.ts:521` | 无唯一可用接收方 ⇒ `PrivacyError('CONSENT_REQUIRED', …)` | 同上（账本侧） |
+| F8 | `services/api/src/privacy/ledger-pg.ts:522` | 无唯一可用接收方 ⇒ `PrivacyError('CONSENT_REQUIRED', …)` | 同上（账本侧） |
 | F9 | `services/api/src/ai/chat-live-adapter.ts:304` | `egress.send(…)` 的 `catch` 里 `throw error` —— **原样上抛**，不改写 | 证明 `PrivacyError` 能一路走到 F2，中间没有第二次包装 |
 | F10 | `services/api/src/contract.ts:14` | `ERROR_STATUS_MAP`：`CONSENT_REQUIRED`→403、`OBJECT_UNAVAILABLE`→409、`INVALID_REQUEST`→400、`PROVIDER_UNAVAILABLE`→503 | 这四个码是**同一张契约表**的成员 ⇒ 保留原码不是新增暴露面 |
 

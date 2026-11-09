@@ -277,7 +277,7 @@ if (!answerProvider.available) {
 | --- | --- | --- | --- |
 | **R-1** | 应用侧（`services/api/src`）是否允许直接消费 `tools/ai-config.mjs` 的 `llm` allowlist / `DEEPSEEK_API_KEY`？ | 目前该 allowlist 的定位是「手工验证工具专用」，`verify-llm-live.mjs:1` 逐字写明 never used by application consumers；`live-ports.ts:156` 只是**注释**里提它，代码不 import。跨这条线是**合规决定**，不是实现细节 | 两条路：① 保持隔离，应用侧只认 `ANSWER_PROVIDER_*` 独立凭据；② 正式把 allowlist 升格为应用配置源，需同步改 `docs/verification/provider-adapter-live-wiring.md` 的口径段 |
 | **R-2** | 接真模型后 `rule_version` 是否仍带 `unimplemented:no-real-` 前缀？ | `service.ts:93-95` 把「规则版本」和「无模型」绑在同一个前缀上。真模型接入后这个绑定失去意义，但改它会让 NC2 判据失效 —— 而 NC2 是当前唯一能防「假装 real 已通过」的机器闸门 | 建议保留前缀语义不动，另加一个正交字段/独立串（`rule_version` 只描述 GY-I08 规则版本），NC2 改判 `model_version`/`prompt_version` 两串；具体口径请监工定 |
-| **R-3** | 真实 LLM 的外发账本落在哪？ | `exports` 表已有 `purpose='external_inference'` 分支（`privacy/ledger-pg.ts:322`、`:430`、`:509`），capability 闭集已含 `'llm'` ⇒ **不需要新迁移**；但如果需要独立的调用配额/计费表，就要 0027 | 建议复用现有 `exports` 账本，**不新增迁移** |
+| **R-3** | 真实 LLM 的外发账本落在哪？ | `exports` 表已有 `purpose='external_inference'` 分支（`privacy/ledger-pg.ts:323`、`:431`、`:510`），capability 闭集已含 `'llm'` ⇒ **不需要新迁移**；但如果需要独立的调用配额/计费表，就要 0027 | 建议复用现有 `exports` 账本，**不新增迁移** |
 | **R-4** | 受理口 fail-closed 的时机 | 若把 `!provider.available` 的 503 加在 `createTurn` 受理口（照 `ocr/service.ts:459-463`），real 模式下「确定性回答器还不能用」的过渡期会让**所有**提问 503 | 建议加在受理口（这是唯一不说谎的位置）；若要过渡期可用，须显式引入「确定性回答器仍算合法回答」的配置开关，且版本串继续带前缀 |
 | **R-5** | 上下文（`context.ts:29` `CONTEXT_MAX_TURNS = 5`）能否进 prompt？ | `service.ts:183-185` 明确「回答器只可用它如实标注这是追问，**不得**用它扩大引用集合」。真实模型会把 `history` 拼进 prompt ⇒ 用户上文的**真实内容**会外发，涉及 `external_inference` 同意范围与最小化原则 | 建议外发前对 `history` 做与 `question` 同级的风险筛查，或以「不带 history」为默认 |
 

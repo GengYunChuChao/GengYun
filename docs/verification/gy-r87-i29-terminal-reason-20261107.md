@@ -34,7 +34,7 @@
 
 真库用例的时序是：`synthetic.hang()` → 等 export `state='sent'` → `DELETE /me/consents/external_inference` → `synthetic.release()`。
 
-撤回提交发生在 `markSent` **之后**，于是 `ledger.revokeInFlight()`（`services/api/src/privacy/ledger-pg.ts:864-883`，本片未改）先把该 export 置 `state='failed', error_code='CONSENT_WITHDRAWN'`；等提供者结果真的回来时，守卫命中的是 `packages/privacy/in-flight.mjs:168-170` 的**终态分支**：
+撤回提交发生在 `markSent` **之后**，于是 `ledger.revokeInFlight()`（`services/api/src/privacy/ledger-pg.ts:865-899`，本片未改）先把该 export 置 `state='failed', error_code='CONSENT_WITHDRAWN'`；等提供者结果真的回来时，守卫命中的是 `packages/privacy/in-flight.mjs:168-170` 的**终态分支**：
 
 ```js
 throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终态（${record.state}），回写被阻断`);
@@ -62,7 +62,7 @@ throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终态（${record.state}�
 | `apps/admin/src/lib/admin-content-view-model.mjs:319` | `READ_FAILURE_CODE_LABELS` 增中文文案（该表要求与 `ERROR_CODES` 完全同集） |
 | `tests/unit/contract-code-name-pairs.test.mjs:493`、`tests/unit/contract-code-name-pairs.test.mjs:530` | 28 → 29（两处硬编码计数钉子） |
 | `docs/architecture/ai-ops-spec-status.md:61`、`docs/architecture/ai-ops-spec-status.md:107` | 「错误码单源 28 码」→ 29、「恰好 28 个错误码」→ 29 |
-| `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:99` | `DOCUMENTED_EXCEPTIONS` 删掉 `'CONSENT_WITHDRAWN'`，只留 `['OBJECT_CANCELLED']`（该测要求例外表成员必须**不在**契约闭集） |
+| `tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:100` | `DOCUMENTED_EXCEPTIONS` 删掉 `'CONSENT_WITHDRAWN'`，只留 `['OBJECT_CANCELLED']`（该测要求例外表成员必须**不在**契约闭集） |
 
 **契约影响**：`CONSENT_WITHDRAWN` 落在 **403** 档（撤回后继续处理是权限问题，与既有 `CONSENT_REQUIRED` 同档），与 `public.exports.error_code` 同名，便于逐行对账。`services/api/src/jobs/registry.ts:244-246` 的「failed/timed_out 必须带契约 `error_code`」约束因此可被合法满足（新码在闭集内）；数据库侧 `error_code` 列是 `varchar(80)` + 长度 CHECK，**无闭集约束，故无迁移**。
 
@@ -87,7 +87,7 @@ export function terminalFailureCodeOf(error: unknown): ErrorCode {
 
 > **审查后修正（P2-1）**：初版是鸭子类型（`(error as { code?: unknown })?.code` + `isErrorCode`），并在注释里声称「域外错误对象的任意 `{code}` 鸭子类型冒充不了契约码」。**这句话是假的**：`terminalFailureCodeOf({ code: 'CONSENT_REQUIRED' })` 实测返回 `CONSENT_WITHDRAWN`。今天调用点只有各域自己的 threw 分支（对象必是这两类之一），所以不可达；但「不可达」不等于「某天不会变成假合规证据」（第三方 SDK 自带 `code` 字段就会冒充）。故改成 instanceof 口径，注释改成实话，并由 `tests/unit/job-terminal-reason-consent-withdrawn.test.mjs` 把这条负空间钉住：普通对象、`Object.assign(new Error(...), {code})`、连 `name: 'PrivacyError'` 一起改的，一律 `PROVIDER_OUTCOME_UNKNOWN`。
 
-> 为什么不复用现成的 `failureCodeOf`：`services/api/src/privacy/ledger-pg.ts:1084-1088` 的 `failureCodeOf` 只认**账本摘要形状** `{kind:'failed', code}`，直接传抛出的 `PrivacyError` 必得 `null`（`services/api/src/privacy/task-egress.ts:443` 的注释也写明「不认 Error」）。`services/api/src/privacy/task-egress.ts:210-213` 的 `errorCodeOf` 认 `{code}` 但是模块私有、且会把任意闭集码原样放行（含 `OBJECT_UNAVAILABLE`）——用它会误标，故新写一个小函数。
+> 为什么不复用现成的 `failureCodeOf`：`services/api/src/privacy/ledger-pg.ts:1100-1104` 的 `failureCodeOf` 只认**账本摘要形状** `{kind:'failed', code}`，直接传抛出的 `PrivacyError` 必得 `null`（`services/api/src/privacy/task-egress.ts:443` 的注释也写明「不认 Error」）。`services/api/src/privacy/task-egress.ts:210-213` 的 `errorCodeOf` 认 `{code}` 但是模块私有、且会把任意闭集码原样放行（含 `OBJECT_UNAVAILABLE`）——用它会误标，故新写一个小函数。
 
 ### 3.3 各域保留错误对象并裁决原因（识别／OCR／语音／TTS）
 
@@ -114,7 +114,7 @@ TTS 的 `services/api/src/tts/service.ts:663` 的 `SynthesisArtifactError` 分�
 
 合成（TTS）外发**同一层缺口、同一套修法**：`services/api/src/privacy/synthesis-egress.ts:40` import 这两个包装器，`services/api/src/privacy/synthesis-egress.ts:315`（`assertExecutable` 原裸调用）与 `services/api/src/privacy/synthesis-egress.ts:333`（`saveResult` 原裸调用）改成包装调用。此前这两处抛出的 `OBJECT_UNAVAILABLE` / `CONSENT_REQUIRED` 不翻译，一路撞 `packages/privacy/in-flight.mjs:168-170` 的终态分支，最终在 `services/api/src/tts/service.ts:645` 被折成 `PROVIDER_OUTCOME_UNKNOWN`——同一个坑，两处。**审查 P2-2 之前，本页 §4 把 TTS 写成「未改·本无缺口」，那是错的。**
 
-`packages/privacy/in-flight.mjs` 与 `services/api/src/privacy/ledger-pg.ts:864-883` 的 SQL 一字未改。
+`packages/privacy/in-flight.mjs` 与 `services/api/src/privacy/ledger-pg.ts:865-899` 的 SQL 一字未改。
 
 ### 3.5 小程序状态面（新错误码必须有状态可渲染）
 
@@ -255,7 +255,7 @@ stderr 有一行既有噪音 `GY-I16 识别终态历史写入失败（端口=wir
 
 ## 9. 本页不声称什么
 
-- **不声称 B1 已完成**：没有跨域 `UPDATE public.jobs` 把 job 级联置 `cancelled`；`services/api/src/privacy/ledger-pg.ts:864-883` 仍然只动 `public.exports`。
+- **不声称 B1 已完成**：没有跨域 `UPDATE public.jobs` 把 job 级联置 `cancelled`；`services/api/src/privacy/ledger-pg.ts:865-899` 仍然只动 `public.exports`。
 - **不声称 jobs 被置 `cancelled`**：本片只让 `failed` 的原因可读；`state` 仍是 `failed`，不是 `cancelled`。
 - **不声称供应商侧被物理取消**：`docs/architecture/state-contract.md:48` 明确「不承诺供应商物理取消」，本片也未触达供应商控制面。
 - **不声称 `public.exports.cancelled_at` / `cancellation_reason` 在撤回时被写**：产品口径未定，本片未动（要动是另一张单）。

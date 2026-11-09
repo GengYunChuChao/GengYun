@@ -82,6 +82,7 @@ const KNOWN_SITES = Object.freeze([
   'packages/privacy/egress.mjs:PROVIDER_UNAVAILABLE',
   'packages/privacy/in-flight.mjs:OBJECT_CANCELLED',
   'packages/privacy/ledger.mjs:CONSENT_WITHDRAWN',
+  'packages/privacy/ledger.mjs:CONSENT_WITHDRAWN',
   'services/api/src/privacy/ledger-pg.ts:CONSENT_WITHDRAWN',
   'services/api/src/privacy/ledger-pg.ts:OBJECT_CANCELLED',
   'services/api/src/privacy/ledger-pg.ts:OBJECT_CANCELLED',
