@@ -215,6 +215,7 @@ node --test --test-name-pattern="AMR|R100|require-base" tests/unit/release-gate.
 
 全部读数的树 = 本页所在提交。七道闸门在工作推进的三个前沿各跑过一遍，EXIT **全为 0**：
 首轮 `4c7cb2d7`、P2 修订后 `487977f0`、以及把 `origin/main`（`f130343e`，"R90 本机绝对路径清查" #1140）并入分支之后的 HEAD。
+此后每次把 `origin/main` 再并进本分支（主干一直在动），都按同表整套重跑，EXIT 同样全为 0。
 本页刻意不钉死最终提交号——写进去就过期；要复核请对当时的 HEAD 重跑下表命令。
 
 | # | 闸门 | 命令 | 尾行原文（节选） | EXIT |
