@@ -45,6 +45,9 @@ function clock (date) {
   return pad2(date.getHours()) + ':' + pad2(date.getMinutes())
 }
 
+/** 「HH:mm:ss」（本地）——同一分钟内会连出多行的时间线（识别进度、本机索引）用 */
+function formatClock (value) { const date = toDate(value); return date ? clock(date) + ':' + pad2(date.getSeconds()) : fallback(value) }
+
 function dayStart (date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
 }
@@ -95,5 +98,6 @@ function formatDate (value) {
 module.exports = {
   formatRelative: formatRelative,
   formatDateTime: formatDateTime,
-  formatDate: formatDate
+  formatDate: formatDate,
+  formatClock: formatClock
 }

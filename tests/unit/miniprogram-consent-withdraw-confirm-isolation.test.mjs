@@ -151,7 +151,7 @@ function createHarness() {
   };
   const api = loadModule('miniprogram/utils/consent-api.js', {
     './auth': auth,
-    '../config/runtime': { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' },
+    '../config/runtime': { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }, './time-format': require('../../miniprogram/utils/time-format.js'),
   }, wx);
 
   let definition = null;
