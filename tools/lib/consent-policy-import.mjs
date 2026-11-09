@@ -861,3 +861,234 @@ export function renderPolicyImportReport({ policy, plan, mode, file, row = null,
   for (const warning of warnings) lines.push(`warning=${warning}`);
   return lines;
 }
+
+// ---------------------------------------------------------------- recipient 子命令
+
+/**
+ * 接收方清单允许的键（白名单：写错键名不能被静默忽略）。
+ *
+ * `enabled` 不在清单里：**能不能用**是运维在命令行上的断言（`--enable`），
+ * 不是文件里的一个字段 —— 否则「清单自带 enabled=true」就等于让文件给自己授权。
+ */
+export const RECIPIENT_MANIFEST_KEYS = Object.freeze([
+  'id',
+  'display_name',
+  'capability',
+  'policy_version',
+  'retention_online_days',
+  'retention_backup_days',
+  'no_training_verified',
+  'deletion_verified',
+  'config_version',
+]);
+
+/**
+ * ⛔ 调用方绝不许传的键（本工具自算或由库维护）：
+ * `updated_at` 由库钟写，`enabled` 只认 `--enable`。
+ */
+export const RECIPIENT_FORBIDDEN_MANIFEST_KEYS = Object.freeze(['enabled', 'updated_at', 'created_at']);
+
+/** 接收方导入的三种判定（与政策的 `PLAN_ACTIONS` 同形，但用独立常量避免混用）。 */
+export const RECIPIENT_PLAN_ACTIONS = Object.freeze({
+  INSERT: 'insert',
+  ENABLE: 'enable',
+  UNCHANGED: 'unchanged',
+});
+
+/** `display_name varchar(200)` / `config_version varchar(40)`（`0003_privacy_consent.sql`）。 */
+export const MAX_RECIPIENT_DISPLAY_NAME_CHARS = 200;
+export const MAX_RECIPIENT_CONFIG_VERSION_CHARS = 40;
+
+/**
+ * `id varchar(80)`。额外要求小写 ASCII：这个 id 会出现在 `recipient_bindings` 的键、
+ * 导出记录的 `recipient_id` 与日志里，大小写混用只会制造「看起来不同、其实是同一家」的歧义。
+ */
+const RECIPIENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/u;
+
+/**
+ * 读一份**仓外**接收方清单并做全部强校验（唯一入口；命令行与测试都走它）。
+ *
+ * 校验逐条对应 `0003_privacy_consent.sql` 的列定义与 `CHECK`，外加两条应用层边界：
+ *   * `id` 必须是小写 ASCII（见 `RECIPIENT_ID_PATTERN`）；
+ *   * `policy_version` 不接受读面哨兵 `unpublished`（写进库就等于把空态伪装成已发布政策）。
+ *
+ * @param {string|object} input JSON 文本或已解析对象
+ * @returns {{ ok: true, recipient: object } | { ok: false, code: string, errors: string[] }}
+ */
+export function readRecipientManifest(input) {
+  /** @type {string[]} */
+  const errors = [];
+  let manifest = input;
+  if (typeof input === 'string') {
+    try {
+      manifest = JSON.parse(input);
+    } catch {
+      return { ok: false, code: FAILURE_KINDS.CONFIG, errors: ['接收方清单不是合法 JSON'] };
+    }
+  }
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return { ok: false, code: FAILURE_KINDS.CONFIG, errors: ['接收方清单必须是一个 JSON 对象'] };
+  }
+  const record = /** @type {Record<string, unknown>} */ (manifest);
+
+  for (const key of Object.keys(record)) {
+    if (RECIPIENT_FORBIDDEN_MANIFEST_KEYS.includes(key)) {
+      errors.push(`${key} 不是清单字段：${key === 'enabled' ? '能不能用由命令行 --enable 断言' : '由库维护'}（清单里删掉这个键）`);
+      continue;
+    }
+    if (!RECIPIENT_MANIFEST_KEYS.includes(key)) {
+      errors.push(`未知字段「${key}」：清单只接受 ${RECIPIENT_MANIFEST_KEYS.join(' / ')}`);
+    }
+  }
+  for (const key of RECIPIENT_MANIFEST_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) errors.push(`缺少字段「${key}」`);
+  }
+
+  const id = record['id'];
+  if (typeof id !== 'string' || id.length < 1 || id.length > 80) {
+    errors.push('id 必须是 1..80 字符的字符串（0003 的 id varchar(80)）');
+  } else if (!RECIPIENT_ID_PATTERN.test(id)) {
+    errors.push('id 只能用小写 ASCII 字母/数字与 . _ -，且以字母或数字开头（它会进 recipient_bindings 的键与导出记录）');
+  }
+
+  const displayName = record['display_name'];
+  if (typeof displayName !== 'string' || displayName.trim().length === 0 || charCount(displayName) > MAX_RECIPIENT_DISPLAY_NAME_CHARS) {
+    errors.push(`display_name 必须是 1..${MAX_RECIPIENT_DISPLAY_NAME_CHARS} 字符的非空字符串（0003 的 display_name varchar(200)）`);
+  }
+
+  const capability = record['capability'];
+  if (typeof capability !== 'string' || !RECIPIENT_CAPABILITY_CLOSED_SET.includes(capability)) {
+    errors.push(`capability 必须是 ${RECIPIENT_CAPABILITY_CLOSED_SET.join(' / ')} 之一（0003 的 CHECK）`);
+  }
+
+  const policyVersion = record['policy_version'];
+  if (typeof policyVersion !== 'string' || policyVersion.length < 1 || policyVersion.length > MAX_POLICY_VERSION_CHARS) {
+    errors.push(`policy_version 必须是 1..${MAX_POLICY_VERSION_CHARS} 字符的字符串（0003 的 policy_version varchar(80)）`);
+  } else if (policyVersion === UNPUBLISHED_POLICY_VERSION) {
+    errors.push(`policy_version 不能是保留值 ${UNPUBLISHED_POLICY_VERSION}：读面把它当「没有已发布政策」的哨兵`);
+  }
+
+  for (const [key, max] of [['retention_online_days', RETENTION_ONLINE_MAX], ['retention_backup_days', RETENTION_BACKUP_MAX]]) {
+    const value = record[key];
+    if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+      errors.push(`${key} 必须是 0..${max} 的整数（0003 的 CHECK）`);
+    }
+  }
+
+  for (const key of ['no_training_verified', 'deletion_verified']) {
+    if (typeof record[key] !== 'boolean') errors.push(`${key} 必须是布尔值（库里是 NOT NULL boolean）`);
+  }
+
+  const configVersion = record['config_version'];
+  if (typeof configVersion !== 'string' || configVersion.length < 1 || charCount(configVersion) > MAX_RECIPIENT_CONFIG_VERSION_CHARS) {
+    errors.push(`config_version 必须是 1..${MAX_RECIPIENT_CONFIG_VERSION_CHARS} 字符的字符串（0003 的 config_version varchar(40)）`);
+  }
+
+  if (errors.length > 0) return { ok: false, code: FAILURE_KINDS.INVALID_POLICY, errors };
+  return {
+    ok: true,
+    recipient: {
+      id,
+      display_name: displayName,
+      capability,
+      policy_version: policyVersion,
+      retention_online_days: record['retention_online_days'],
+      retention_backup_days: record['retention_backup_days'],
+      no_training_verified: record['no_training_verified'],
+      deletion_verified: record['deletion_verified'],
+      config_version: configVersion,
+    },
+  };
+}
+
+/** 接收方「除 enabled 外」必须逐列相等的字段（`grant-pg` 就是按这几列与绑定逐字段比）。 */
+export const RECIPIENT_COMPARABLE_FIELDS = Object.freeze([
+  'display_name',
+  'capability',
+  'policy_version',
+  'retention_online_days',
+  'retention_backup_days',
+  'no_training_verified',
+  'deletion_verified',
+  'config_version',
+]);
+
+/** 单一字段的比较：数字/布尔按值，其余按字符串（pg 的 integer 回来就是 number）。 */
+function recipientFieldEqual(field, left, right) {
+  if (field === 'retention_online_days' || field === 'retention_backup_days') {
+    return Number(left) === Number(right);
+  }
+  if (field === 'no_training_verified' || field === 'deletion_verified') {
+    return Boolean(left) === Boolean(right);
+  }
+  return String(left) === String(right);
+}
+
+/**
+ * 判定一条接收方清单该 insert / enable / unchanged。
+ *
+ * ⛔ 已存在且**除 enabled 外**任何一列不同 ⇒ `POLICY_CONFLICT`（退出码 4），不静默覆盖：
+ * `grant-pg` 按这些字段逐列比对，悄悄改一行等于悄悄改授权面。要换配置就换新的 `id`
+ * （或先在库里下线旧行），让变更留下痕迹。
+ *
+ * @param {{ recipient: object, existing?: object|null, wantEnable?: boolean }} input
+ * @returns {{ ok: true, action: string, enabled_after: boolean } | { ok: false, code: string, reason: string }}
+ */
+export function planRecipientImport({ recipient, existing = null, wantEnable = false }) {
+  if (existing === null || existing === undefined) {
+    return { ok: true, action: RECIPIENT_PLAN_ACTIONS.INSERT, enabled_after: wantEnable === true };
+  }
+  const conflicts = RECIPIENT_COMPARABLE_FIELDS
+    .filter((field) => !recipientFieldEqual(field, existing[field], recipient[field]))
+    .map((field) => `${field}: ${String(existing[field])} → ${String(recipient[field])}`);
+  if (conflicts.length > 0) {
+    return {
+      ok: false,
+      code: FAILURE_KINDS.POLICY_CONFLICT,
+      reason: `接收方 ${recipient.id} 已存在且除 enabled 外有字段不同：${conflicts.join('；')}。不静默覆盖授权面：请换新 id 或先在库里下线旧行`,
+    };
+  }
+  const currentlyEnabled = existing.enabled === true;
+  return {
+    ok: true,
+    action: currentlyEnabled === (wantEnable === true) ? RECIPIENT_PLAN_ACTIONS.UNCHANGED : RECIPIENT_PLAN_ACTIONS.ENABLE,
+    enabled_after: wantEnable === true,
+  };
+}
+
+/**
+ * 接收方导入报告：与 `renderPolicyImportReport` 同风格（`key= value` 一行一项），
+ * 值**只取库行**（`row`）；dry-run 首次插入没有行时打印 `(未写入)`，清单值以 `manifest_` 前缀出现。
+ *
+ * @param {{ recipient: object, plan: object, mode: 'dry-run'|'apply', file: string,
+ *   row?: object|null, enabledAfter: boolean }} input
+ * @returns {string[]}
+ */
+export function renderRecipientImportReport({ recipient, plan, mode, file, row = null, enabledAfter }) {
+  const hasRow = row !== null && row !== undefined;
+  const fromRow = (field, fallback) => (hasRow ? (row[field] ?? fallback) : '(未写入)');
+  const lines = [
+    `mode=${mode}`,
+    `file=${file}`,
+    `action=${plan.action}`,
+    `unchanged=${plan.action === RECIPIENT_PLAN_ACTIONS.UNCHANGED ? 'true' : 'false'}`,
+    `metadata_source=${hasRow ? 'library_row' : 'none'}`,
+    `recipient_id=${recipient.id}`,
+    `display_name=${fromRow('display_name', recipient.display_name)}`,
+    `capability=${fromRow('capability', recipient.capability)}`,
+    `policy_version=${fromRow('policy_version', recipient.policy_version)}`,
+    `retention_online_days=${fromRow('retention_online_days', recipient.retention_online_days)}`,
+    `retention_backup_days=${fromRow('retention_backup_days', recipient.retention_backup_days)}`,
+    `no_training_verified=${hasRow ? String(row.no_training_verified === true) : '(未写入)'}`,
+    `deletion_verified=${hasRow ? String(row.deletion_verified === true) : '(未写入)'}`,
+    `config_version=${fromRow('config_version', recipient.config_version)}`,
+    `enabled=${hasRow ? String(row.enabled === true) : '(未写入)'}`,
+    `enabled_after=${enabledAfter ? 'true' : 'false'}`,
+  ];
+  if (!hasRow) {
+    for (const field of RECIPIENT_COMPARABLE_FIELDS) {
+      lines.push(`manifest_${field}=${String(recipient[field])}`);
+    }
+  }
+  return lines;
+}

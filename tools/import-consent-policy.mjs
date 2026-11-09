@@ -63,21 +63,20 @@
  *   挡住，本命令也不尝试绕过 —— 换正文只能是新 `policy_version` 新行；
  * - ⛔ **不内置任何政策正文**，也不把正文写进日志/库里（表里只有 `content_sha256`，正文留在仓外的
  *   清单与其 `source_ref` 指向处）；
- * - ⛔ **不建表、不改迁移、不改授权**：它假定 `0009` 已执行、连接角色是迁移属主/运维角色；
- * - ⛔ **不写 `public.recipients`**：`recipients` 目前同样是**生产零写入**，本片只交付 `policy`
- *   子命令。`recipient` 子命令因此**未交付**（见 `docs/reference/consent-policy-import.md` 的
- *   「已登记的依赖」）。后果是 `external_inference` 这条用途**目前仍打不开**：没有已核验接收方，
- *   `persistConsentGrant` 会以「对外推理需要已核验接收方」403。本工具对「`external_inference` +
- *   空绑定」会打印 `warning=` 行，⛔ 不许把这半个门说成门已开。
+ * - ⛔ **不建表、不改迁移、不改授权**：它假定 `0003`/`0009` 已执行、连接角色是迁移属主/运维角色；
+ *   `recipient` 子命令只写 `public.recipients` 的**一行**，不碰 `services/api/db/roles/*.sql`，
+ *   也不给运行时角色加任何 GRANT；
+ * - ⛔ **不替政策签字**：`recipient` 清单不接受 `enabled` / `updated_at`，能不能用只认命令行
+ *   `--enable`；已存在且除 `enabled` 外任何字段不同 ⇒ 冲突退出 4，不静默覆盖授权面。
  *
  * ## 退出码（cron / 证据页的唯一判据）
  *
  * | 码 | 含义 |
  * | --- | --- |
  * | 0 | 成功：dry-run 已出形状 / `--apply` 已落库 / 二次执行 `unchanged=true`（零行改动） |
- * | 2 | 参数或环境问题（缺子命令、缺 `--file`、缺 `DATABASE_URL`、清单读不到、JSON 不合法、`recipient` 未交付） |
- * | 3 | 政策内容强校验失败（purpose 越界 / 正文空或占位 / 有效期不合法 / 传了 `content_sha256` / 来源形状不符 / 绑定不存在 / 复核主体不存在），或库内 CHECK 拒绝 |
- * | 4 | 政策冲突（版本回退 / 同版本不同正文 / 同版本安全元数据不一致 `METADATA_CONFLICT` / 启用非最新版本） |
+ * | 2 | 参数或环境问题（缺子命令、缺 `--file`、缺 `DATABASE_URL`、清单读不到、JSON 不合法、`recipient` 清单缺字段） |
+ * | 3 | 内容强校验失败（purpose 越界 / 正文空或占位 / 有效期不合法 / 传了 `content_sha256` / 来源形状不符 / 绑定不存在 / 复核主体不存在 / 接收方字段形状不符），或库内 CHECK 拒绝 |
+ * | 4 | 冲突（政策版本回退 / 同版本不同正文 / 同版本安全元数据不一致 `METADATA_CONFLICT` / 启用非最新版本 / 接收方同 id 不同配置） |
  * | 5 | 数据库错误（连不上 / 缺表 / 权限不足 / 未知），事务已回滚 |
  */
 import { readFileSync } from 'node:fs';
@@ -89,12 +88,16 @@ import {
   EXIT_CODES,
   FAILURE_KINDS,
   PLAN_ACTIONS,
+  RECIPIENT_PLAN_ACTIONS,
   exitCodeFor,
   isUuid,
   planConsentPolicyImport,
+  planRecipientImport,
   policyImportWarnings,
   readPolicyManifest,
+  readRecipientManifest,
   renderPolicyImportReport,
+  renderRecipientImportReport,
 } from './lib/consent-policy-import.mjs';
 
 const TAG = '[import-consent-policy]';
@@ -113,20 +116,31 @@ const SELECT_POLICY_ROW_COLUMNS = `SELECT id,purpose,policy_version,content_sha2
          reviewed_by::text AS reviewed_by,recipient_bindings
     FROM public.consent_policies`;
 
+/**
+ * `recipient` 子命令读库行时取全的列：判定用除 `enabled` 外的八列，报告再多读 `enabled`/`updated_at`。
+ * ⛔ 少取一列会让「同一 id 不同配置」被误判成 `unchanged`——那等于把旧授权当成新清单。
+ */
+const SELECT_RECIPIENT_ROW_COLUMNS = `SELECT id,display_name,capability,policy_version,
+         retention_online_days,retention_backup_days,no_training_verified,deletion_verified,
+         enabled,config_version,updated_at
+    FROM public.recipients`;
+
 const USAGE = `${TAG} 用法：
   DATABASE_URL=postgresql://… node tools/import-consent-policy.mjs policy --file <仓外政策清单.json> [--apply] [--enable --reviewed-by <admin uuid>]
+  DATABASE_URL=postgresql://… node tools/import-consent-policy.mjs recipient --file <仓外接收方清单.json> [--apply] [--enable]
 
-  子命令 policy   导入一行 consent_policies（本片唯一交付的子命令）
-  子命令 recipient 未交付：public.recipients 仍是生产零写入（见 docs/reference/consent-policy-import.md）
+  子命令 policy    导入一行 consent_policies（版本/正文 sha/安全元数据都走强校验）
+  子命令 recipient 导入一行 public.recipients（接收方登记；external_inference 要求接收方 enabled 且两项核验为 true）
 
-  --file P         仓外政策清单（JSON，含政策正文）；⛔ 不接受内联正文，也不接受 content_sha256 / reviewed_by
-  --enable         导入后把目标版本设为该 purpose 唯一启用行（同 purpose 其它行落 enabled=false）
-  --reviewed-by U  --enable 必填：复核人 = public.admin_accounts.id（小写 uuid，工具会先查它在不在）
+  --file P         仓外清单（JSON）；⛔ 不接受内联正文，也不接受 content_sha256 / reviewed_by / enabled
+  --enable         policy：把目标版本设为该 purpose 唯一启用行（同 purpose 其它行落 enabled=false）
+                   recipient：把该接收方置为 enabled=true（缺省写 disabled 草稿行）
+  --reviewed-by U  仅 policy --enable：复核人 = public.admin_accounts.id（小写 uuid，工具会先查它在不在）
   --apply          真正写库；缺省 = dry-run（连库算形状，最后回滚，零行改动）
   --help           打印本说明
 
 连接串只从环境变量 DATABASE_URL 读取，且必须是迁移属主/运维身份（⛔ 运行时角色对这张表零写权限）。
-退出码：0 成功 / 2 参数或环境 / 3 内容校验 / 4 政策冲突 / 5 数据库错误。`;
+退出码：0 成功 / 2 参数或环境 / 3 内容校验 / 4 冲突 / 5 数据库错误。`;
 
 /** 安全分类的数据库错误：只报类别与 SQLSTATE，⛔ 不回显驱动原文（可能带主机/用户名/SQL）。 */
 function classifyDatabaseFailure(error) {
@@ -185,6 +199,133 @@ function parseArgv(argv) {
   });
 }
 
+/**
+ * `recipient` 子命令：读仓外清单 → 强校验 → 连库 → 事务内比对 → dry-run 回滚 / 写入并读回。
+ *
+ * 与 `policy` 共用同一套边界：连接串只从 `DATABASE_URL`、失败统一走 `classifyDatabaseFailure`、
+ * 事务内失败必 `ROLLBACK`、写完**同事务读回**（读不回就拒绝提交）、报告只认库行。
+ *
+ * 审计口径与 `policy` 一致：本工具**不写** `public.admin_audit_events`——那张表的 `actor_id`
+ * 语义是「已登录管理员的会话」，运维脚本没有管理员会话；留痕由「这一行本身 + stdout 的
+ * `key= value` 报告」承担（`recipient_id`、`config_version`、`updated_at` 都可回查）。
+ */
+async function runRecipient({ file, enable, apply }) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    return fail(FAILURE_KINDS.CONFIG, [`读不到接收方清单：${file}（${error.code ?? '未知错误'}）`]);
+  }
+  const manifest = readRecipientManifest(text);
+  if (manifest.ok !== true) {
+    return fail(manifest.code, manifest.errors);
+  }
+  const { recipient } = manifest;
+
+  const databaseUrl = typeof process.env.DATABASE_URL === 'string' ? process.env.DATABASE_URL : '';
+  if (databaseUrl.trim() === '') {
+    return fail(FAILURE_KINDS.CONFIG, ['缺少环境变量 DATABASE_URL（连接串只从环境读取，⛔ 不读 argv、不回显值）']);
+  }
+
+  const client = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 5000 });
+  let settled = false;
+  client.on('error', () => {});
+
+  /** 同 `policy` 分支：调用点必须 `return await rollbackAndFail(...)`，否则 ROLLBACK 会被 `client.end()` 打断。 */
+  const rollbackAndFail = async (kind, lines) => {
+    await client.query('ROLLBACK').catch(() => {});
+    settled = true;
+    return fail(kind, lines);
+  };
+
+  try {
+    try {
+      await client.connect();
+    } catch (error) {
+      const { kind, detail } = classifyDatabaseFailure(error);
+      return fail(kind, [detail]);
+    }
+
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '4s'");
+    await client.query("SET LOCAL statement_timeout = '15s'");
+
+    // 现库行：同 id 已存在时锁住它，判定与写入看到的是同一份状态。
+    const existing = (await client.query(`${SELECT_RECIPIENT_ROW_COLUMNS} WHERE id=$1 FOR UPDATE`, [recipient.id])).rows[0] ?? null;
+    const plan = planRecipientImport({ recipient, existing, wantEnable: enable });
+    if (plan.ok !== true) {
+      return await rollbackAndFail(plan.code, [plan.reason]);
+    }
+    const enabledAfter = plan.enabled_after === true;
+    const report = (mode, changedRows, row) => {
+      for (const line of renderRecipientImportReport({ recipient, plan, mode, file, row, enabledAfter })) console.log(line);
+      console.log(`changed_rows=${changedRows}`);
+    };
+
+    if (plan.action === RECIPIENT_PLAN_ACTIONS.UNCHANGED || apply !== true) {
+      // dry-run 与幂等重放都不写：报告用现库行（首次插入的 dry-run 没有行 ⇒ `(未写入)`）。
+      await client.query('ROLLBACK');
+      settled = true;
+      report(apply === true ? 'apply' : 'dry-run', 0, existing);
+      console.log('transaction=rollback（本次没有写任何行）');
+      if (apply === true) console.log('结论：除 enabled 外逐列一致、enabled 也已到位 ⇒ 幂等重放，零行改动。');
+      else console.log('结论：dry-run 结束（加 --apply 才写库）。');
+      return;
+    }
+
+    let changedRows = 0;
+    if (plan.action === RECIPIENT_PLAN_ACTIONS.INSERT) {
+      await client.query(
+        `INSERT INTO public.recipients
+           (id,display_name,capability,policy_version,retention_online_days,retention_backup_days,
+            no_training_verified,deletion_verified,enabled,config_version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false,$9)`,
+        [
+          recipient.id,
+          recipient.display_name,
+          recipient.capability,
+          recipient.policy_version,
+          recipient.retention_online_days,
+          recipient.retention_backup_days,
+          recipient.no_training_verified,
+          recipient.deletion_verified,
+          recipient.config_version,
+        ],
+      );
+      changedRows += 1;
+    }
+
+    if (enable === true) {
+      // 只开这一行；`public.recipients` 没有「同能力唯一启用」约束，不需要先关别人。
+      const enabled = await client.query(
+        `UPDATE public.recipients
+            SET enabled=true, updated_at=clock_timestamp()
+          WHERE id=$1 AND enabled IS DISTINCT FROM true
+          RETURNING enabled`,
+        [recipient.id],
+      );
+      changedRows += enabled.rowCount;
+    }
+
+    const writtenRow = (await client.query(`${SELECT_RECIPIENT_ROW_COLUMNS} WHERE id=$1`, [recipient.id])).rows[0] ?? null;
+    if (writtenRow === null) {
+      return await rollbackAndFail(FAILURE_KINDS.DB_ERROR, ['写入后读不回目标接收方（同事务内），拒绝提交：报告不允许拿清单顶替库行']);
+    }
+
+    await client.query('COMMIT');
+    settled = true;
+    report('apply', changedRows, writtenRow);
+    console.log('transaction=commit');
+  } catch (error) {
+    if (!settled) await client.query('ROLLBACK').catch(() => {});
+    settled = true;
+    const { kind, detail } = classifyDatabaseFailure(error);
+    return fail(kind, [detail]);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function main() {
   let parsed;
   try {
@@ -200,17 +341,18 @@ async function main() {
   }
   const [subcommand, ...extra] = parsed.positionals;
   if (extra.length > 0) return fail(FAILURE_KINDS.CONFIG, [`子命令之后不接受位置参数：${extra.join(' ')}`]);
-  if (subcommand === undefined) return fail(FAILURE_KINDS.CONFIG, ['缺少子命令 policy', '（用 --help 看用法）']);
-  if (subcommand === 'recipient') {
-    return fail(FAILURE_KINDS.CONFIG, [
-      '子命令 recipient 尚未交付：public.recipients 同样是生产零写入，而本片只交付 policy。',
-      '后果：external_inference 这条用途目前仍打不开（没有已核验接收方）。已在 docs/reference/consent-policy-import.md 登记为已知依赖。',
-    ]);
-  }
-  if (subcommand !== 'policy') return fail(FAILURE_KINDS.CONFIG, [`未知子命令 ${subcommand}（只支持 policy / recipient）`]);
+  if (subcommand === undefined) return fail(FAILURE_KINDS.CONFIG, ['缺少子命令 policy / recipient', '（用 --help 看用法）']);
+  if (subcommand !== 'policy' && subcommand !== 'recipient') return fail(FAILURE_KINDS.CONFIG, [`未知子命令 ${subcommand}（只支持 policy / recipient）`]);
 
   if (typeof file !== 'string' || file.length === 0) {
-    return fail(FAILURE_KINDS.CONFIG, ['缺少 --file <仓外政策清单>', '（用 --help 看用法）']);
+    return fail(FAILURE_KINDS.CONFIG, ['缺少 --file <仓外清单>', '（用 --help 看用法）']);
+  }
+  if (subcommand === 'recipient') {
+    // recipients 没有复核人列：`--reviewed-by` 在这里不是「可选」，而是没有意义 ⇒ 直接拒绝，避免误以为已签字。
+    if (reviewedBy !== null) {
+      return fail(FAILURE_KINDS.CONFIG, ['--reviewed-by 只用于 policy --enable：public.recipients 没有复核人列']);
+    }
+    return await runRecipient({ file, enable: enable === true, apply: apply === true });
   }
   if (enable === true && (reviewedBy === null || reviewedBy.length === 0)) {
     return fail(FAILURE_KINDS.CONFIG, ['--enable 必须同时给 --reviewed-by <admin uuid>：启用的行必须有复核主体（0009 的 CHECK）']);
@@ -294,7 +436,7 @@ async function main() {
       if (missing.length > 0) {
         return await rollbackAndFail(FAILURE_KINDS.INVALID_POLICY, [
           `recipient_bindings 指向不存在的 public.recipients.id：${missing.join(', ')}`,
-          '（public.recipients 目前是生产零写入，本工具不写它 ⇒ 先解决接收方登记，再来绑 external_inference）',
+          '（先跑 `recipient --file <清单> --apply --enable` 登记接收方，再来绑 external_inference）',
         ]);
       }
     }

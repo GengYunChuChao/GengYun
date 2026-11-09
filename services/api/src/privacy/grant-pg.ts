@@ -46,15 +46,15 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
   // Current authority is locked even on replay: retired/expired/unverified resources never re-enable consent.
   const policy = (await client.query(`SELECT * FROM public.consent_policies WHERE purpose=$1 AND enabled
     AND reviewed_at<=clock_timestamp() AND valid_from<=clock_timestamp() AND valid_until>clock_timestamp() FOR SHARE`, [input.purpose])).rows[0];
-  if (!policy) throw new ApiError('CONSENT_REQUIRED', '没有可用的已核验用途政策');
+  if (!policy) throw new ApiError('CONSENT_REQUIRED', '没有可用的已核验用途政策', { details: [NO_POLICY_DETAIL] });
   const synthetic = policy.source_kind === 'synthetic';
   if ((synthetic && !allowSynthetic) || (!synthetic && policy.source_kind !== 'verified')
       || !evidence(policy.source_ref, synthetic) || !evidence(policy.review_evidence_ref, synthetic)
-      || !/^[0-9a-f]{64}$/.test(policy.content_sha256)) throw new ApiError('CONSENT_REQUIRED', '用途政策来源尚未核验');
+      || !/^[0-9a-f]{64}$/.test(policy.content_sha256)) throw new ApiError('CONSENT_REQUIRED', '用途政策来源尚未核验', { details: [NO_POLICY_DETAIL] });
   if (policy.policy_version !== input.policy_version) throw new ApiError('REVISION_CONFLICT', '用途政策版本已变化');
   const assertPolicyFresh = async () => {
     const fresh = await client.query('SELECT id FROM public.consent_policies WHERE id=$1 AND valid_until>clock_timestamp()', [policy.id]);
-    if (fresh.rows.length !== 1) throw new ApiError('CONSENT_REQUIRED', '用途政策已到期');
+    if (fresh.rows.length !== 1) throw new ApiError('CONSENT_REQUIRED', '用途政策已到期', { details: [NO_POLICY_DETAIL] });
   };
   const bindings = policy.recipient_bindings as Record<string, unknown>;
   if ((input.purpose === 'external_inference' || (input.purpose === 'media_processing' && ((bindings && typeof bindings === 'object') ? Object.keys(bindings).length : 0) > 0)) && input.recipient_ids.length === 0) throw new ApiError('CONSENT_REQUIRED', input.purpose === 'external_inference' ? '对外推理需要已核验接收方' : '该用途政策已登记已核验接收方，授予时必须至少选择一个');
@@ -110,3 +110,12 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
   await assertPolicyFresh();
   return record;
 }
+
+/**
+ * 机器可读的拒绝原因（只补 `details`，公开码 `CONSENT_REQUIRED` 与文案逐字不变）：
+ * 授予路径真的查了政策表，所以「库中没有可用政策」在这里说得出来；
+ * 闸（`packages/privacy/guard.mjs`）按设计不读政策表、只读 `privacy_epochs ⨝ consent_records`，
+ * 它那一侧只能给出 `not_granted`（见 `consent-pg.ts` 的非 ApiError 出口）。
+ * 定义追加在文件尾部：不移动既有行号，避免证据页锚点漂移。
+ */
+const NO_POLICY_DETAIL = { field: 'purpose', code: 'no_policy' } as const;
