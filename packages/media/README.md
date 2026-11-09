@@ -23,7 +23,7 @@
 | `constants.mjs` | 冻结枚举 + 每用途限额 + 状态机 + `error_status_map`（与 contracts 逐项一致） |
 | `errors.mjs` | `MediaError` + `toErrorEnvelope`（与 services/api 的 ErrorEnvelope 同形） |
 | `detect.mjs` | **魔数探测**：jpeg/png/webp/mpeg/wav/aac（不信扩展名/声明 MIME） |
-| `exif.mjs` | 图片元数据**结构性段清除**（JPEG App1 Exif/XMP+App13、PNG eXIf/tEXt/iTXt/zTXt、WebP EXIF/XMP）；**严格容器结构校验**：拒绝无图像数据、截断与「结束标记之后的尾部字节」；PNG 须可解压且**逐行滤波类型字节合法**（E3）；WebP 须**真实解码 VP8L**（E2） |
+| `exif.mjs` | 图片元数据**结构性段清除**（JPEG App1 Exif/XMP+App13、PNG eXIf/tEXt/iTXt/zTXt、WebP EXIF/XMP）；**严格容器结构校验**：拒绝无图像数据、截断与「结束标记之后的尾部字节」（PNG IEND 之后、WebP RIFF 声明之外；**JPEG EOI 之后自 R90 起改为丢弃尾随字节而非整张拒绝**，输出只保留 `0..EOI`）；PNG 须可解压且**逐行滤波类型字节合法**（E3）；WebP 须**真实解码 VP8L**（E2） |
 | `webp.mjs` | **VP8L 无损位流真实解码器**（纯 ESM、零依赖）：位流头 → 变换/子图流 → 颜色缓存 → 前缀码（meta-Huffman）→ LZ77 回引 → W×H 像素；任何非法/越界构造 fail-closed |
 | `audio.mjs` | 音频容器/帧时长解析（WAV/ADTS/MPEG/M4A）；M4A 逐块核对 `stsc`、`stsz`、`stco`/`co64` 与音频描述及 `mdat` 范围；不解码 AAC 等音频编码负载 |
 | `validate.mjs` | 声明与真实字节校验（用途/类型/字节/**真实时长**/hash/伪扩展名/每帖 3 张） |
