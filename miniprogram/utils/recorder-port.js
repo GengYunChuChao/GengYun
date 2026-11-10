@@ -327,7 +327,7 @@ function createRecorderPort() {
   function productOf(res) {
     const tempFilePath = res && typeof res.tempFilePath === 'string' ? res.tempFilePath : ''
     const durationMs = res && Number.isFinite(res.duration) ? Math.round(res.duration) : NaN
-    const format = res && typeof res.format === 'string' ? res.format : ''
+    const format = formatOfRecording(res && res.tempFilePath, res && res.format)
     const mime = mimeForFormat(format)
     if (tempFilePath === '') return failure(CODES.FAILED, '录音未返回文件')
     if (!Number.isFinite(durationMs) || durationMs < 1) return failure(CODES.FAILED, '录音未返回有效时长')
@@ -538,4 +538,22 @@ module.exports = {
   openSetting: openSetting,
   support: support,
   createRecorderPort: createRecorderPort
+}
+/**
+ * 解析平台回传的容器名（`onStop` 的 `format`）。
+ *
+ * 为什么不直接信 `res.format`：微信开发者工具**不回传 `format`**（真机回传），
+ * 于是三要素校验会把一个可用的 WAV 判成「编码不在契约允许范围」——页面上表现为
+ * 「录音未能完成（平台未返回可用产物）」，人无论怎么说话都必然失败。
+ * 这里只在平台**没给**容器名时，用平台自己给的文件名后缀补全；后缀不在
+ * `mp3/wav/aac` 三者之内一律原样返回空串，仍走「编码不在契约允许范围」的如实失败，
+ * 绝不把未知容器猜成 WAV。
+ */
+function formatOfRecording(filePath, given) {
+  if (typeof given === 'string' && given !== '') return given.toLowerCase()
+  if (typeof filePath !== 'string' || filePath === '') return ''
+  const matched = /\.([A-Za-z0-9]+)(?:[?#].*)?$/.exec(filePath)
+  if (matched === null) return ''
+  const suffix = matched[1].toLowerCase()
+  return suffix === 'mp3' || suffix === 'wav' || suffix === 'aac' ? suffix : ''
 }
