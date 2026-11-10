@@ -555,7 +555,7 @@ try {
   writeFileSync(join(out, 'project.config.json'), JSON.stringify(config, null, 2) + '\n');
   // 生成物里的 apiBaseUrl 就是**客户端拼接基址**（客户端以 `runtime.apiBaseUrl + '/auth/…'` 等自行拼接）：
   // 指向真实本地 API 时须含业务前缀（如 http://127.0.0.1:3100/api/v1），诊断替身用 origin 形态即可。
-  writeFileSync(join(out, 'miniprogram/config/runtime.js'), 'module.exports = ' + JSON.stringify({ mode: runtime.mode, apiBaseUrl: runtime.apiBaseUrl }) + '\n');
+  writeFileSync(join(out, 'miniprogram/config/runtime.js'), 'module.exports = ' + JSON.stringify({ mode: runtime.mode, apiBaseUrl: runtime.apiBaseUrl, devTools: false }) + '\n');
   // 复制清单漏项不能等到开发者工具里才以 MODULE_NOT_FOUND 暴露：成功提示之前先扫一遍相对 require。
   const { assertRequireClosure } = await import('./lib/require-closure.mjs');
   const closure = assertRequireClosure({ copyRoot: out, entries: files });

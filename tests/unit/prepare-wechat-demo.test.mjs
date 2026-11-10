@@ -73,10 +73,11 @@ test('--no-urlcheck 只改副本：urlCheck=false，源 project.config.json 与�
   for (const [file, bytes] of Object.entries(before)) {
     assert.deepEqual(readFileSync(join(project, file)), bytes, '本脚本改动了源文件：' + file);
   }
-  // 副本 runtime 仍是 local 模式 + 完整业务前缀（`--no-urlcheck` 不碰 runtime）。
+  // 副本 runtime 仍是 local 模式 + 完整业务前缀（`--no-urlcheck` 不碰 runtime）；
+  // devTools:false 是演示口径：首页那组开发自检按钮在副本里收起（见 utils/debug.js）。
   assert.equal(
     readFileSync(join(product(project), 'miniprogram/config/runtime.js'), 'utf8'),
-    'module.exports = {"mode":"local","apiBaseUrl":"' + LOCAL_BASE + '"}\n',
+    'module.exports = {"mode":"local","apiBaseUrl":"' + LOCAL_BASE + '","devTools":false}\n',
   );
   // 产物只许落在临时目录：本用例不得在仓库里留下 .local。
   assert.equal(relative(tmpdir(), product(project)).startsWith('..'), false, '产物落到了临时目录之外');
@@ -122,7 +123,7 @@ test('回归：不加旗标时行为与改前一致（urlCheck=true、runtime �
   assert.equal(readJson(join(product(project), 'project.config.json')).setting.urlCheck, true, '默认必须保持域名校验开启');
   assert.equal(
     readFileSync(join(product(project), 'miniprogram/config/runtime.js'), 'utf8'),
-    'module.exports = {"mode":"local","apiBaseUrl":"' + LOCAL_BASE + '"}\n',
+    'module.exports = {"mode":"local","apiBaseUrl":"' + LOCAL_BASE + '","devTools":false}\n',
   );
   const again = run(project, ['local', '--config', config]);
   assert.notEqual(again.status, 0, '默认仍拒绝复用已存在的目录');

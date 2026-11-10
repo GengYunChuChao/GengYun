@@ -28,4 +28,10 @@ function diagnose(wxApi, report) {
     fail: function () { report('本地连接失败。请核对服务、地址、同网权限及个人域名设置后重试。', false) }
   })
 }
-module.exports = { localEnabled: localEnabled, diagnose: diagnose }
+// 演示副本（prepare-wechat 写 devTools:false）里收起首页那组「工程脚手架」按钮：
+// 观众看到的是一台干净的手机；仓库内联调（runtime 不带该键）行为不变。
+function devToolsEnabled(wxApi) {
+  if (!localEnabled(wxApi)) return false
+  return runtime.devTools === false ? false : true
+}
+module.exports = { localEnabled: localEnabled, diagnose: diagnose, devToolsEnabled: devToolsEnabled }
