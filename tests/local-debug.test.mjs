@@ -112,7 +112,7 @@ test('isolated packaging excludes private files and rejects release overrides/st
   assert.equal(existsSync(join(local, 'project.private.config.json')), false);
   assert.equal(existsSync(join(local, 'miniprogram/private.local.json')), false);
   const generatedRuntime = readFileSync(join(local, 'miniprogram/config/runtime.js'), 'utf8');
-  assert.deepEqual(JSON.parse(generatedRuntime.split('= ')[1]), { mode: 'local', apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }, '生成物必须逐字保留带业务前缀的客户端拼接基址');
+  assert.deepEqual(JSON.parse(generatedRuntime.split('= ')[1]), { mode: 'local', apiBaseUrl: 'http://127.0.0.1:4318/api/v1', devTools: false }, '生成物必须逐字保留带业务前缀的客户端拼接基址');
   assert.notEqual(run(['local', '--config', apiConfig]).status, 0);
   assert.equal(run(['release']).status, 0);
   const release = join(project, '.local/wechat-release');
@@ -262,7 +262,7 @@ test('local --appid overrides only the generated copy and rejects illegal ids wi
   assert.equal(generated.appid, TEST_APP_ID, '生成副本必须改用传入的 AppID');
   assert.equal(generated.miniprogramRoot, 'miniprogram/');
   assert.equal(generated.setting.urlCheck, true, '覆盖 appid 不得顺带放松域名校验');
-  assert.deepEqual(JSON.parse(readFileSync(join(ok.dir, '.local/wechat-local/miniprogram/config/runtime.js'), 'utf8').split('= ')[1]), { mode: 'local', apiBaseUrl });
+  assert.deepEqual(JSON.parse(readFileSync(join(ok.dir, '.local/wechat-local/miniprogram/config/runtime.js'), 'utf8').split('= ')[1]), { mode: 'local', apiBaseUrl, devTools: false });
   sharedPaths.forEach((path, index) => {
     assert.equal(readFileSync(join(ok.dir, path)).equals(sharedBefore[index]), true, `共享文件被改写：${path}`);
   });

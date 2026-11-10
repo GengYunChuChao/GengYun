@@ -42,7 +42,7 @@ Page({
       }
     })
   },
-  onLoad: function () { fontScale.applyFontScale(this); this.setData({ local: debug.localEnabled(wx) }) },
+  onLoad: function () { fontScale.applyFontScale(this); this.setData({ local: debug.devToolsEnabled(wx) }) },
   onHide: function () {
     this._active = false
     this._action = (this._action || 0) + 1
