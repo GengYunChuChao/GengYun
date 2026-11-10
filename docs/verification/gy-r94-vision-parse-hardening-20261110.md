@@ -87,7 +87,7 @@ maxTokens: 1024, // GY-R94：512 与「思考」共用预算，实测 100 次里
 端口本来就有（`services/api/src/recognitions/live-ports.ts:122` 的 `onObservation`），这次做两件事：
 
 1. **把失败读数补进观测**：`LiveRecognitionObservation` 现在 `extends LiveRecognitionContentDiagnostics`（`live-ports.ts:95`），三项字段声明在文件末尾（`live-ports.ts:249`，`finishReason` `:251`、`completionTokens` `:253`、`contentLength` `:255`），**可选**且**只到字符数**——注释里写死"本接口不允许携带 `message.content`"（`:243`）。
-2. **把端口接上**：`services/api/src/app.ts:1125` 的 `createRecognitionProvider({ … })` 补 `onObservation: createRecognitionObservationSink(app.log)`；落点 `services/api/src/recognitions/observation-log.ts`（`recognitionObservationEvent` `:21`、`createRecognitionObservationSink` `:49`），一条结构化事件带 `state` / `errorCode` / `providerErrorCode` / `httpStatus` / `candidateCount` / `finishReason` / `completionTokens` / `contentLength` / `elapsedMs` / `sendAttempts`，`BUSINESS_RESPONSE` 记 info、其余记 warn。
+2. **把端口接上**：`services/api/src/app.ts:1125` 的 `createRecognitionProvider({ … })` 补 `onObservation: createRecognitionObservationSink(app.log)`；落点 `services/api/src/recognitions/observation-log.ts`（`recognitionObservationEvent`、`createRecognitionObservationSink` 两个导出），一条结构化事件带 `state` / `errorCode` / `providerErrorCode` / `httpStatus` / `candidateCount` / `finishReason` / `completionTokens` / `contentLength` / `elapsedMs` / `sendAttempts`，`BUSINESS_RESPONSE` 记 info、其余记 warn。
 
 失败分支（`openai-vision-adapter.ts:314` 起）把三项读数摊进 `:318` 的观测对象，**不改** `:315` 的判定与 `:337` 的空候选返回。
 
