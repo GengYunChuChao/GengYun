@@ -19,7 +19,10 @@
 --     credential_hash 是不可用的占位串（登不进来）。它**不是**真人审核，
 --     **不是**第三方审核，也不代表任何机构背书；
 --   * 幂等：全部写入都是 `ON CONFLICT ... DO UPDATE` / `DO NOTHING`；整份可重复
---     执行，重复执行不新增行、不改 `knowledge_versions.created_at`。
+--     执行，重复执行不新增行、不改 `knowledge_versions.created_at`；
+--   * 第 6 节另加**一张**「语音播报演示短卡」：真实 TTS 把 `title + '\n' + body`
+--     整段送去合成，提供者侧上限 100 码点，而上面 8 张卡的正文都远超这个数。
+--     该卡正文压到 20 字级，**不改动**上面 8 条资料卡的内容。
 --
 -- 谁在什么时候跑它
 --   只有 `node tools/demo-stack.mjs up --mode real --seed-demo` 这一条路会执行
@@ -168,15 +171,67 @@ ON CONFLICT (knowledge_id, revision) DO UPDATE
         region_codes = EXCLUDED.region_codes,
         visibility = EXCLUDED.visibility;
 
+-- ---------------------------------------------------------------------------
+-- 6. 语音播报演示短卡（真实 TTS 的 ≤100 码点可核对目标）
+--
+--    为什么单独一张：`POST /api/v1/speech/synthesis` 的已核对文本是
+--    `title + '\n' + body` 整段，真实提供者的上限是 100 码点；上面 8 张卡的
+--    正文都远超这个数，拿去合成必然失败。这张卡只演示「资料卡 → 语音播报」
+--    链路，正文压到 20 字级，**不改动**那 8 条。
+--
+--    knowledge_id 固定 ...c009：它就是请求体里 checked_content_ref.id。
+--    species 参考行按 canonical_name 关联而不写死 id 字面量 —— 参考行缺失时
+--    本语句会静默插 0 行，由下面的自检兜住（自检同时校验码点上限）。
+-- ---------------------------------------------------------------------------
+INSERT INTO public.knowledge_versions (
+    id, knowledge_id, revision, title, body, type, source_version_id,
+    crop_ids, species_ids, region_codes, visibility
+)
+SELECT 'd0000000-0000-4000-8000-00000000c009'::uuid,
+       'd0000000-0000-4000-8000-00000000c009'::uuid,
+       1,
+       '稗草（短播报）',
+       '【演示资料·非生产数据】稗草短播报演示句，用于演示语音播报链路，不含识别结论、防治建议与用药指引。',
+       'species',
+       'd0000000-0000-4000-8000-00000000b002'::uuid,
+       '[]'::jsonb,
+       jsonb_build_array(s.id),
+       '[]'::jsonb,
+       'published'
+FROM public.species s
+WHERE s.canonical_name = '稗'
+ON CONFLICT (knowledge_id, revision) DO UPDATE
+    SET title = EXCLUDED.title,
+        body = EXCLUDED.body,
+        type = EXCLUDED.type,
+        source_version_id = EXCLUDED.source_version_id,
+        species_ids = EXCLUDED.species_ids,
+        region_codes = EXCLUDED.region_codes,
+        visibility = EXCLUDED.visibility;
+
 -- 自检：species 参考行缺失时，上面的 INSERT ... SELECT 会静默插入 0 行，
 -- 首页仍然空 —— 那种「看起来灌了、其实没灌」最难排查。宁可在这里失败。
 DO $$
 DECLARE
     cards integer;
+    short_cards integer;
+    short_len integer;
 BEGIN
     SELECT count(*) INTO cards FROM catalog_read.home_species;
     IF cards = 0 THEN
         RAISE EXCEPTION '演示资料种子没有产生任何首页卡片：请先导入 db/seeds/seed_reference.sql（public.species 参考行缺失）';
+    END IF;
+    -- 语音播报演示短卡：必须真的出现在读视图里，且「title + 换行 + body」≤ 100 码点
+    -- （真实 TTS 提供者的硬上限；char_length 在 UTF-8 下按码点计，与 JS 的 Array.from 同口径）。
+    SELECT count(*), min(char_length(k.title || E'\n' || k.body))
+      INTO short_cards, short_len
+      FROM catalog_read.current_knowledge k
+     WHERE k.id = 'd0000000-0000-4000-8000-00000000c009'::uuid;
+    IF short_cards = 0 THEN
+        RAISE EXCEPTION '语音播报演示短卡不在 catalog_read.current_knowledge 里：请确认 public.species 有 canonical_name = 稗 的参考行，且本文件的来源版本已审核通过';
+    END IF;
+    IF short_len > 100 THEN
+        RAISE EXCEPTION '语音播报演示短卡的 title + body 超过 100 码点（当前 %），真实 TTS 会拒收', short_len;
     END IF;
 END
 $$;

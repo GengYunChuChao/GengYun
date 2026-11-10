@@ -673,28 +673,31 @@ test('演示政策：不带 --demo 一条语句都不生成（行为与旧版一
   assert.deepEqual(buildDemoConsentStatements(), []);
 });
 
-test('演示政策：--demo 生成 6 条语句，顺序是 复核账号 → 接收方 → 停用旧演示版本 → 两条政策 → 启用', () => {
+test('演示政策：--demo 生成 7 条语句，顺序是 复核账号 → 两个接收方 → 停用旧演示版本 → 两条政策 → 启用', () => {
   const statements = buildDemoConsentStatements({ demo: true });
-  assert.equal(statements.length, 6);
+  assert.equal(statements.length, 7);
   assert.match(statements[0], /^INSERT INTO public\.admin_accounts/u);
   assert.match(statements[1], /^INSERT INTO public\.recipients/u);
-  assert.match(statements[2], /^UPDATE public\.consent_policies/u);
-  assert.match(statements[2], /demo-stack-local-%/u, '只停自家旧版本');
-  assert.match(statements[3], /^INSERT INTO public\.consent_policies/u);
-  assert.match(statements[3], /'media_processing'/u);
+  assert.match(statements[1], /'weed'/u);
+  assert.match(statements[2], /^INSERT INTO public\.recipients/u);
+  assert.match(statements[2], /'tts'/u, '合成域按 capability=tts 找唯一接收方（privacy/ledger-pg.ts 的 resolveRecipient）');
+  assert.match(statements[3], /^UPDATE public\.consent_policies/u);
+  assert.match(statements[3], /demo-stack-local-%/u, '只停自家旧版本');
   assert.match(statements[4], /^INSERT INTO public\.consent_policies/u);
-  assert.match(statements[4], /'external_inference'/u);
-  assert.match(statements[5], /^UPDATE public\.consent_policies/u);
+  assert.match(statements[4], /'media_processing'/u);
+  assert.match(statements[5], /^INSERT INTO public\.consent_policies/u);
+  assert.match(statements[5], /'external_inference'/u);
+  assert.match(statements[6], /^UPDATE public\.consent_policies/u);
 
   const sql = buildDemoConsentSql({ demo: true });
   assert.equal(typeof sql, 'string');
   assert.equal(sql.split('INSERT INTO public.consent_policies').length - 1, 2, '两条政策各一条 INSERT');
-  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, 1);
+  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, 2, '识别与合成各一个接收方');
   assert.equal(sql.split('INSERT INTO public.admin_accounts').length - 1, 1);
 });
 
 test('演示政策：两条 purpose 同版本且都绑同一接收方（外发预留要求每个必需用途都列出接收方）', () => {
-  const [admin, recipient, retireOld, media, external, enable] = buildDemoConsentStatements({ demo: true });
+  const [admin, recipient, ttsRecipient, retireOld, media, external, enable] = buildDemoConsentStatements({ demo: true });
   assert.match(admin, /demo-stack-operator/u);
   assert.ok(!(admin.includes('password') || admin.includes('scrypt$')), '演示复核账号不许写可用口令');
   assert.match(admin, /ON CONFLICT \(login_name\) DO NOTHING/u);
@@ -706,6 +709,13 @@ test('演示政策：两条 purpose 同版本且都绑同一接收方（外发�
   assert.match(recipient, /ON CONFLICT \(id\) DO UPDATE/u);
   assert.match(recipient, /IS DISTINCT FROM/u, '幂等：逐列比较，内容没变就不写');
 
+  assert.match(ttsRecipient, /'demo-stack-tts-tencent'/u);
+  assert.match(ttsRecipient, /'tts'/u, '合成外发只认 capability=tts 的接收方');
+  assert.match(ttsRecipient, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
+  assert.match(ttsRecipient, /tts\.tencentcloudapi\.com/u, '接收方必须指向合成供应商端点域名');
+  assert.match(ttsRecipient, /ON CONFLICT \(id\) DO UPDATE/u);
+  assert.match(ttsRecipient, /IS DISTINCT FROM/u);
+
   assert.match(retireOld, /enabled = false/u);
   assert.match(retireOld, /policy_version LIKE 'demo-stack-local-%'/u);
   assert.match(retireOld, new RegExp(`policy_version <> '${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
@@ -714,6 +724,7 @@ test('演示政策：两条 purpose 同版本且都绑同一接收方（外发�
     assert.match(statement, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
     assert.match(statement, /'verified'/u);
     assert.ok(statement.includes(DEMO_RECIPIENT_ID), '两条政策都绑定演示接收方');
+    assert.ok(statement.includes('demo-stack-tts-tencent'), '两条政策都绑定合成接收方（外发预留按用途列接收方）');
   }
   assert.match(media, /'media_processing'/u);
   assert.match(external, /'external_inference'/u);

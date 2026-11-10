@@ -588,8 +588,14 @@ export function parseDemoCatalogCounts(text) {
  * 授权记录里都列出同一个接收方，识别动线因此 403「用途 media_processing 未绑定接收方」。
  * 政策行一旦复核就不可改（`consent_policy_immutable`），所以形状变化只能发新版本；
  * `--demo` 会把自家旧版本（`LIKE 'demo-stack-local-%'`）停用后再启用新版本。
+ *
+ * 为什么是 `-3`：`-2` 只绑了一条 `capability='weed'` 的接收方，而真实语音合成外发在
+ * `services/api/src/app.ts:1171` 传的是 `capability: 'tts'`；`resolveRecipient`
+ * （`services/api/src/privacy/ledger-pg.ts:633-659`）按 `r.capability = $3` 过滤后 0 行，
+ * `rows.length !== 1` ⇒ 合成受理直接 403 `CONSENT_REQUIRED`（真实 TTS 永远走不到供应商）。
+ * 所以 `-3` 把**同一版本**绑两条演示接收方：`weed`（识别）+ `tts`（语音合成）。
  */
-export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-2';
+export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-3';
 
 /**
  * 演示接收方 id；`--demo` 的**两条**政策都绑定这一条。
@@ -599,6 +605,15 @@ export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-2';
  * （`services/api/src/routes/recognitions.ts` + `privacy/ledger-pg.ts:548-555`）。
  */
 export const DEMO_RECIPIENT_ID = 'demo-stack-weed-vision';
+
+/**
+ * 演示语音合成接收方 id；`--demo` 的**同一版本**政策也绑这一条（`capability='tts'`）。
+ *
+ * 没有它，真实 TTS 的受理闸门永远 403：`app.ts:1171` 用 `capability: 'tts'` 调
+ * `resolveRecipient`，而 `recipients` 里只登记了 `weed` 能力 ⇒ `rows.length !== 1`。
+ * 刻意不导出：它只在绑定表与接收方 INSERT 里出现，测试按字面量断言（少一个公开符号）。
+ */
+const DEMO_TTS_RECIPIENT_ID = 'demo-stack-tts-tencent';
 
 /** 演示接收方配置版本；必须与政策 `recipient_bindings[].config_version` 逐字相等。 */
 export const DEMO_RECIPIENT_CONFIG_VERSION = 'demo-stack-config-1';
@@ -616,6 +631,9 @@ export const DEMO_CONSENT_PURPOSES = Object.freeze(['media_processing', 'externa
 /** 识别供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.weedRecognition` 同源。 */
 const WEED_ENDPOINT_HOST = new URL(AI_ENDPOINTS.weedRecognition.endpoint).host;
 
+/** 语音合成供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.tts` 同源。 */
+const TTS_ENDPOINT_HOST = new URL(AI_ENDPOINTS.tts.endpoint).host;
+
 /**
  * 演示接收方展示名。这两张隐私表**没有 note/reason 列**，演示标记逐字落在
  * `display_name` / `source_ref` / `review_evidence_ref` 里，用
@@ -626,6 +644,9 @@ const WEED_ENDPOINT_HOST = new URL(AI_ENDPOINTS.weedRecognition.endpoint).host;
 // ⇒ 写进库的名字只用 ASCII；中文提示只走 stdout（见 DEMO_CONSENT_NOTICE）。
 export const DEMO_RECIPIENT_DISPLAY_NAME = `Demo local weed recognition provider ${WEED_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
 
+/** 演示语音合成接收方的展示名（同样只用 ASCII；域名取自 TTS 端点）。 */
+const DEMO_TTS_RECIPIENT_DISPLAY_NAME = `Demo local speech synthesis provider ${TTS_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
+
 const DEMO_POLICY_BODY = `本机演示政策，仅用于本地演示栈联调，不是生产核验。${DEMO_FLAG_REASON}`;
 const DEMO_POLICY_SHA256 = createHash('sha256').update(DEMO_POLICY_BODY, 'utf8').digest('hex');
 
@@ -634,10 +655,25 @@ const sqlLiteral = (value) => `'${String(value).replace(/'/gu, "''")}'`;
 const demoEvidenceRef = (purpose, kind) =>
   `https://demo-stack.local/${DEMO_FLAG_REASON}/${purpose}/${kind}`;
 
-/** 演示政策的 `recipient_bindings`（jsonb 字面量）：字段与演示接收方行逐字段相等。 */
+/**
+ * 演示政策的 `recipient_bindings`（jsonb 字面量）：字段与演示接收方行逐字段相等。
+ *
+ * 两个 purpose 共用这一份绑定表，所以**每个**必需用途的授权记录都会同时列出
+ * `weed` 与 `tts` 两条接收方；外发预留再按 `r.capability` 各取一条
+ * （`privacy/ledger-pg.ts:633-659` 要求「唯一可用接收方」）。
+ */
 const DEMO_RECIPIENT_BINDINGS = JSON.stringify({
   [DEMO_RECIPIENT_ID]: {
     capability: 'weed',
+    config_version: DEMO_RECIPIENT_CONFIG_VERSION,
+    policy_version: DEMO_CONSENT_POLICY_VERSION,
+    retention_online_days: 0,
+    retention_backup_days: 0,
+    no_training_evidence_ref: demoEvidenceRef('external_inference', 'no-training'),
+    deletion_evidence_ref: demoEvidenceRef('external_inference', 'deletion'),
+  },
+  [DEMO_TTS_RECIPIENT_ID]: {
+    capability: 'tts',
     config_version: DEMO_RECIPIENT_CONFIG_VERSION,
     policy_version: DEMO_CONSENT_POLICY_VERSION,
     retention_online_days: 0,
@@ -684,19 +720,15 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
       `  ${reviewer}, clock_timestamp(), true)`,
     ].join('\n');
 
-  return [
-    [
-      'INSERT INTO public.admin_accounts (login_name, credential_hash)',
-      `VALUES (${sqlLiteral(DEMO_REVIEWER_LOGIN)}, ${sqlLiteral(`${DEMO_FLAG_REASON}: placeholder, not a login credential`)})`,
-      'ON CONFLICT (login_name) DO NOTHING',
-      'RETURNING login_name;',
-    ].join('\n'),
+  // 两条演示接收方各写一条 INSERT（`weed` 识别 + `tts` 语音合成）。
+  // 能力串只认 `recipients_capability_check` 的闭集；导出的常量仍只有 weed 那条，测试按字面量断言 tts 那条。
+  const recipientStatement = (id, displayName, capability) =>
     [
       'INSERT INTO public.recipients',
       '  (id, display_name, capability, policy_version, retention_online_days, retention_backup_days,',
       '   no_training_verified, deletion_verified, enabled, config_version)',
       'VALUES (',
-      `  ${sqlLiteral(DEMO_RECIPIENT_ID)}, ${sqlLiteral(DEMO_RECIPIENT_DISPLAY_NAME)}, 'weed',`,
+      `  ${sqlLiteral(id)}, ${sqlLiteral(displayName)}, ${sqlLiteral(capability)},`,
       `  ${sqlLiteral(DEMO_CONSENT_POLICY_VERSION)}, 0, 0, true, true, true,`,
       `  ${sqlLiteral(DEMO_RECIPIENT_CONFIG_VERSION)})`,
       'ON CONFLICT (id) DO UPDATE',
@@ -720,7 +752,17 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
       '        EXCLUDED.no_training_verified, EXCLUDED.deletion_verified,',
       '        EXCLUDED.enabled, EXCLUDED.config_version)',
       'RETURNING id;',
+    ].join('\n');
+
+  return [
+    [
+      'INSERT INTO public.admin_accounts (login_name, credential_hash)',
+      `VALUES (${sqlLiteral(DEMO_REVIEWER_LOGIN)}, ${sqlLiteral(`${DEMO_FLAG_REASON}: placeholder, not a login credential`)})`,
+      'ON CONFLICT (login_name) DO NOTHING',
+      'RETURNING login_name;',
     ].join('\n'),
+    recipientStatement(DEMO_RECIPIENT_ID, DEMO_RECIPIENT_DISPLAY_NAME, 'weed'),
+    recipientStatement(DEMO_TTS_RECIPIENT_ID, DEMO_TTS_RECIPIENT_DISPLAY_NAME, 'tts'),
     [
       'UPDATE public.consent_policies',
       '   SET enabled = false, updated_at = clock_timestamp()',
