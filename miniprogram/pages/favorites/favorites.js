@@ -201,14 +201,14 @@ Page({
     })
   },
 
-  /** 把"已收藏"标记回填到可收藏目标列表（按 type+id 比对，不做本地去重决定）。 */
+  /** 回填「已收藏」标记，并把晚到 targets 的资料名补写进已渲染的收藏项（只改 title 字段）。
+   *  不重建列表/分页：未变的条目原样返回（同一对象），兜底标题在这里被改写而不是永远停在兜底。 */
   reconcileTargets: function () {
     const owned = {}
     this.data.items.forEach(function (item) { owned[item.type + ':' + item.targetId] = true })
     this.setData({
-      targets: this.data.targets.map(function (entry) {
-        return Object.assign({}, entry, { favorited: owned[entry.key] === true })
-      })
+      items: retitleItems(this),
+      targets: this.data.targets.map(function (entry) { return Object.assign({}, entry, { favorited: owned[entry.key] === true }) })
     })
   },
 
@@ -304,4 +304,15 @@ function appendTargets(existing, page) {
 // 服务端封套不提供可收藏资料的总数，所以这个数字在任何位置都不得被呈现为总数。
 function targetNoteText(count, nextCursor) {
   return '来自已上架资料：已加载 ' + count + ' 条可收藏' + (nextCursor ? '（还有更多）' : '（已全部加载）')
+}
+
+// 标题回填：`onShow` 里 loadFavorites 与 loadTargets 并行，收藏响应先到时 `titleFor` 只能落
+// 「类型 · 短id」兜底（服务端 `GET /favorites` 只回 target_ref，没有 title）。targets 晚到后
+// 必须把已渲染的 title 重算一遍，否则重进页面会一直停在兜底、等多久都不自愈。
+// 只替换 title 真的变了的条目：未变项原样返回（同一对象），所以不重建列表，也不动分页/游标。
+function retitleItems(page) {
+  return page.data.items.map(function (item) {
+    const title = page.titleFor(item.type, item.targetId)
+    return title === item.title ? item : Object.assign({}, item, { title: title })
+  })
 }
