@@ -33,7 +33,8 @@ const RECEIPT_KEY = 'gengyun.deletion.receipt';
 const RECEIPT_ID = '3f1a9d0e-5b2c-4c7f-9c1d-7a8b9c0d1e2f';
 const REQUEST_ID = '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d';
 const TOKEN = 'rcpt-opaque-token-A';
-const EXPIRES_AT = '2026-11-10T02:00:00.000Z';
+// 到期时间必须相对「现在」算：写成固定日期会在那天之后让全部回执用例一起变红（2026-11-10 就是被这条绊倒的）。
+const EXPIRES_AT = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
 const SESSION = 'synthetic-session-a';
 const SESSION_B = 'synthetic-session-b';
 
