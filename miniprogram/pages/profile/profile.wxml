@@ -79,7 +79,7 @@
           <view class="info-row">
             <view class="info-row__copy">
               <text class="info-row__title">所在地区</text>
-              <text class="info-row__desc">{{regionName}}</text>
+              <text class="info-row__desc">{{regionName}}{{editing && (countyIndex >= 0 ? counties[countyIndex].code : (cityIndex >= 0 ? cities[cityIndex].code : '')) !== (profile ? profile.region_code : '') ? '（未保存）' : ''}}</text>
             </view>
           </view>
           <view class="info-row">

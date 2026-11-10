@@ -50,7 +50,7 @@ Page({
     // unread 读不到档案／out-of-coverage 档案响应核不出（通用 INVALID_RESPONSE；不按 330000 代查）。
     profileState: 'idle', profileNote: '', fallbackNote: '',
     q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '', advanced: false,
-    crops: [{ name: '全部作物', id: '' }].concat(cropDoc.crops), species: [{ name: '全部杂草', id: '' }].concat(speciesDoc.species),
+    crops: [{ name: '全部作物', id: '' }].concat(cropDoc.crops), species: [{ name: '全部杂草', id: '' }].concat(speciesDoc.species.map(s => Object.assign({}, s, { name: s.group_name || s.canonical_name }))),
     regions: [{ name: '全部地区', code: '' }].concat(regionDoc.regions),
     regionNote: REGION_TIER_NOTE,
     directoryNote: '筛选目录为随包目录：' + cropDoc.catalog_version + ' / ' + speciesDoc.catalog_version + ' / ' + regionDoc.catalog_version },
