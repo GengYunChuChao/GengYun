@@ -604,3 +604,129 @@ module.exports = {
   messageFor: messageFor,
   validId: uuid
 }
+
+/* ---------------------------------------------------------------- 可播报资料 */
+
+/**
+ * **「可播报资料」**：本地演示形态下把**真实、可合成**的短资料列出来。
+ *
+ * 与 `SUBSTITUTE_SPEAK_SAMPLES`（替身样本）是**两类东西**：页面上分组、命名都不混用 sample。
+ *
+ * 为什么需要它（实测，不是猜测）：替身样本的 `targetRef.id` 是夹具名（`sample-i13-passed`），
+ * 不是 uuid；而本地演示栈是 `execution_mode=real`，服务端已核对内容端口按 uuid 读库
+ * （`services/api/src/ai/checked-content-live-adapter.ts` 的 `readCheckedContent`：非 uuid 直接
+ * 返回 null），因此点「合成」必然 `TARGET_NOT_FOUND` —— 真人一步也走不到真实语音。
+ *
+ * 数据源刻意**只用既有公开读面**（`GET /api/v1/knowledge`，既有 operation）：不新增端点、
+ * 不改服务端。返回条目正好带 `SynthesisTarget` 要的三键（uuid 的 `id`、`type`、服务端给的
+ * `revision`），正文也正好是服务端核对同一行时拼的 `title.trim() + '\n' + body`
+ * （`knowledgeTextFromRow`）——不是页面自己编的第二份正文。
+ *
+ * 上限与供应商同值：`services/api/src/tts/provider.ts:253` 的 `maxTextCharacters: 100`（按码点）。
+ * 超上限的条目不列出、**不截断**（服务端 `requireLiveTtsText` 同样 fail-closed 不截断）：
+ * 列出来只会让人点到一个必然失败的按钮。
+ */
+const BROADCAST_TEXT_MAX_CODE_POINTS = 100
+const BROADCAST_LIST_LIMIT = 50
+const BROADCAST_GROUP = 'knowledge'
+const BROADCAST_LABEL_PREFIX = '可播报资料'
+const BROADCAST_ID_PREFIX = 'knowledge:'
+
+function broadcastCodePointLength(value) {
+  return [...String(value)].length
+}
+
+/** 服务端核对同一行时用的正文（`title.trim() + '\n' + body`）；页面不得另行改写。 */
+function broadcastTextOf(item) {
+  return String(item.title).trim() + '\n' + String(item.body)
+}
+
+/** 形状核对：只认能被 `SynthesisTarget` 三键接住的条目；不对就跳过（不猜、不补）。 */
+function isBroadcastableItem(item) {
+  return object(item) &&
+    uuid(item.id) &&
+    one(item.type, SYNTHESIS_TARGET_TYPES) &&
+    integer(item.revision, 1) &&
+    typeof item.title === 'string' && item.title.length > 0 &&
+    typeof item.body === 'string' && item.body.length > 0
+}
+
+/** 读面条目 → 页面条目（字段名与替身样本一致，因此复用同一条核对/合成链路）。 */
+function broadcastTargetOf(item) {
+  const body = broadcastTextOf(item)
+  return {
+    id: BROADCAST_ID_PREFIX + item.id,
+    group: BROADCAST_GROUP,
+    label: BROADCAST_LABEL_PREFIX + ' · ' + item.title + '（' + broadcastCodePointLength(body) + ' 码点）',
+    checkState: 'passed',
+    checkedText: body,
+    targetRef: { type: item.type, id: item.id, revision: item.revision }
+  }
+}
+
+/**
+ * 读「可播报资料」（`GET /knowledge?limit=50`；既有只读读面，`guards.requireUser`）。
+ *
+ * 失败**不吞**：`request` 把 401/403 交给 `auth.failureFor`（保留 `SCOPE_DENIED` / `CONSENT_REQUIRED` /
+ * `ACCOUNT_INACTIVE` 各自的原因）、其它非 200 保留服务端 `error.code` 与 HTTP 状态，由页面
+ * `broadcastFailureNote` 原样透出；响应形状不合契约则 `INVALID_RESPONSE`（不伪造列表）。
+ */
+async function listBroadcastTargets() {
+  const response = await request('GET', '/knowledge?limit=' + BROADCAST_LIST_LIMIT, {})
+  if (!object(response.data) || !Array.isArray(response.data.items)) throw failure('INVALID_RESPONSE')
+  const items = response.data.items
+  const targets = []
+  let tooLong = 0
+  for (const item of items) {
+    if (!isBroadcastableItem(item)) continue
+    if (broadcastCodePointLength(broadcastTextOf(item)) > BROADCAST_TEXT_MAX_CODE_POINTS) { tooLong += 1; continue }
+    targets.push(broadcastTargetOf(item))
+  }
+  return { mode: response.mode, targets: targets, read: items.length, tooLong: tooLong }
+}
+
+/** 列表口径的**如实**说明（来源、条数、上限；没有短资料时直说没有）。 */
+function broadcastNoteFor(result) {
+  const targets = object(result) && Array.isArray(result.targets) ? result.targets : []
+  const read = object(result) && integer(result.read, 0) ? result.read : targets.length
+  const tooLong = object(result) && integer(result.tooLong, 0) ? result.tooLong : 0
+  if (targets.length === 0) {
+    return '可播报资料（真实资料，不是替身样本）：读面返回 ' + String(read) + ' 条，其中 '
+      + String(tooLong) + ' 条超过 ' + String(BROADCAST_TEXT_MAX_CODE_POINTS)
+      + ' 码点上限（服务端不截断，故不列出）；当前没有可播报的短资料。'
+  }
+  return '可播报资料（真实资料，不是替身样本）：取自本机演示后端的公开读面 GET /api/v1/knowledge，'
+    + '服务端已审核发布、且正文 ≤ ' + String(BROADCAST_TEXT_MAX_CODE_POINTS) + ' 码点的共 '
+    + String(targets.length) + ' 条'
+    + (tooLong > 0 ? '；另有 ' + String(tooLong) + ' 条超上限未列出（服务端 fail-closed 不截断）' : '')
+    + '。选中后点「合成」走本页既有的核对与合成链路。'
+}
+
+const BROADCAST_READ_MESSAGES = {
+  SESSION_REQUIRED: '登录状态已失效：请重新登录后再打开可播报资料。',
+  SESSION_CHANGED: '会话已变化：请重新进入本页。',
+  SCOPE_DENIED: '当前会话无权读取资料（403 SCOPE_DENIED）',
+  CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）',
+  ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）',
+  RATE_LIMITED: '请求过于频繁（429 RATE_LIMITED）',
+  NOT_FOUND: '资料读面不存在或不可见（404）',
+  UNAVAILABLE: '资料读面暂不可用（服务端非 200）',
+  NETWORK_UNCERTAIN: '网络未能确认结果',
+  INVALID_RESPONSE: '服务端响应无法核对',
+  CLIENT_CANCELLED: '已离开本页，在途请求已作废'
+}
+
+/** 读取失败 → 页面可展示的一行（保留服务端 `error.code` 与 HTTP 状态，不吞、不改写）。 */
+function broadcastFailureNote(error) {
+  const code = error && error.code
+  const sentence = BROADCAST_READ_MESSAGES[code] || ('资料读面返回未收录的错误（' + String(code) + '）')
+  const status = error && integer(error.status, 100) ? '，HTTP ' + String(error.status) : ''
+  return '可播报资料读取失败：' + sentence + '（' + String(code) + status + '）。'
+}
+
+// 文件尾追加（不插行）：新增读面的入口挂在既有导出上。
+module.exports.BROADCAST_TEXT_MAX_CODE_POINTS = BROADCAST_TEXT_MAX_CODE_POINTS
+module.exports.BROADCAST_GROUP = BROADCAST_GROUP
+module.exports.listBroadcastTargets = listBroadcastTargets
+module.exports.broadcastNoteFor = broadcastNoteFor
+module.exports.broadcastFailureNote = broadcastFailureNote
