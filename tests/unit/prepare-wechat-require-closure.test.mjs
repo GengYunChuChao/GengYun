@@ -93,22 +93,20 @@ test('正向：生成副本相对 require 闭合，time-format.js 确实在副�
   assert.deepEqual(scan.dangling, [], '副本里不得有悬空的相对 require：' + JSON.stringify(scan.dangling));
 });
 
-test('负控制：临时副本删掉 time-format 清单行后，生成当场失败并点名悬空 require', () => {
+test('负控制：源码树缺 time-format.js 时，生成当场失败并点名缺的文件', () => {
   const project = scratchProject();
-  const script = join(project, 'tools/prepare-wechat.mjs');
-  const source = readFileSync(script, 'utf8');
-  // 只改临时工作副本；仓库里的 prepare-wechat.mjs 一个字都不动。
-  const stripped = source.replace(/^[ \t]*'utils\/time-format\.js',[ \t]*\r?\n/m, '');
-  assert.notEqual(stripped, source, '临时副本里没找到 time-format 清单行，负控制无法成立');
-  writeFileSync(script, stripped);
+  // 整树复制之后清单只做「这些必须在产物里」的断言、不再充当复制计划，
+  // 所以负控制必须打真正的缺口：把源文件拿掉，让产物缺文件。
+  // 只改临时工作副本；仓库里的 miniprogram/ 一个字都不动。
+  const victim = join(project, 'miniprogram/utils/time-format.js');
+  assert.equal(existsSync(victim), true, '临时副本里没有 time-format.js，负控制无法成立');
+  rmSync(victim, { force: true });
 
   const result = run(project, ['local', '--config', localConfig(project), '--no-urlcheck']);
-  assert.notEqual(result.status, 0, '漏登记 time-format 时必须失败，而不是生成一个运行期才炸的副本');
+  assert.notEqual(result.status, 0, '源码树缺 time-format.js 时必须失败，而不是生成一个运行期才炸的副本');
   const output = result.stdout + result.stderr;
-  assert.match(output, /悬空的相对 require/, '报错必须点明悬空的相对 require');
-  assert.match(output, /\.\.\/\.\.\/utils\/time-format/, '报错必须点名页面侧的具体 specifier');
-  assert.match(result.stderr, /^副本里存在悬空的相对 require：\d+ 处（复制清单没覆盖，运行时 MODULE_NOT_FOUND）$/m,
-    '报错第一行必须是固定的中文结论');
+  assert.match(output, /打包清单里的文件没有进副本/, '报错必须点明「清单里的文件没有进副本」');
+  assert.match(output, /utils\/time-format\.js/, '报错必须点名缺的那个文件');
 });
 
 test('不误报：非相对 specifier（wx、包名）不产生 dangling', () => {
