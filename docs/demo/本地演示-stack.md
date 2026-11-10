@@ -148,14 +148,14 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 2. 再用**一次** `psql -c`（单条 simple query ⇒ 整组原子）幂等写入**本机演示政策**：
    - `public.admin_accounts` 一条不可登录的演示复核账号（`login_name='demo-stack-operator'`，
      `credential_hash` 是字面量占位、永不参与登录）；
-   - `public.recipients` **两条**演示接收方（`policy_version='demo-stack-local-3'`、`config_version='demo-stack-config-1'`、
+   - `public.recipients` **三条**演示接收方（`policy_version='demo-stack-local-4'`、`config_version='demo-stack-config-1'`、
      两个 `*_verified=true`、留存 0/0、`enabled=true`）：`demo-stack-weed-vision`（`capability='weed'`，域名 `tokenhub.tencentmaas.com`）
      服务识别动线；`demo-stack-tts-tencent`（`capability='tts'`，域名 `tts.tencentcloudapi.com`）服务语音合成；
-   - `public.consent_policies` 两条 `verified` 政策：`media_processing` 与 `external_inference` **都绑定**上面那两条接收方，
-     版本同为 `demo-stack-local-3`，都启用。两条都绑不是多余：外发预留（`services/api/src/privacy/ledger-pg.ts` 的 `resolveRecipient`）
-     先按 `capability` 过滤接收方、再要求恰好一条，不是一条就 403 `CONSENT_REQUIRED`：识别动线要这两个用途
-     （只绑 `external_inference` 会在 `POST /recognitions` 403「用途 media_processing 未绑定接收方」），
-     合成受理 `POST /speech/synthesis` 传 `capability='tts'` —— 只登记 weed 接收方时一过滤就是 0 行，真实 TTS 走不到供应商。
+     `demo-stack-asr-tencent`（`capability='asr'`，域名 `asr.tencentcloudapi.com`）服务语音转写；
+   - `public.consent_policies` 三条 `verified` 政策：`recording` / `media_processing` / `external_inference` **都绑定**上面那三条接收方，
+     版本同为 `demo-stack-local-4`，都启用。都绑不是多余：外发预留（`services/api/src/privacy/ledger-pg.ts` 的 `resolveRecipient`）
+     先按 `capability` 过滤接收方、再要求恰好一条，不是一条就 403 `CONSENT_REQUIRED`：识别要 `media_processing` + `external_inference`，
+     合成传 `capability='tts'`、转写传 `'asr'`；而语音提问按 `packages/privacy/constants.mjs` 还要 `recording` —— 少一条政策用户自授就 403 `no_policy`。
    - 版本号变化时先停用自家旧版本（`policy_version LIKE 'demo-stack-local-%' AND <> 当前版本`）；
      政策行一旦复核就不可改（`consent_policy_immutable`），换形状只能发新版本。
    - 标记逐字落在既有可见列（这两张表**没有** `note` 列）：政策的 `source_ref` / `review_evidence_ref`
@@ -180,8 +180,8 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 | `ai_enabled` | 识别、OCR、转写、合成、文字问答的**任务受理面**可用 | 这些受理面返回 409（任务不会被受理） |
 
 > 只开 `ai_enabled` 还不够：`POST /media/uploads` 与 `POST /recognitions` 还要过用途授权闸
-> （`media_processing` + `external_inference`）。没有可用的已核验政策时它们会 403 `CONSENT_REQUIRED`
-> —— 这正是第 2 步要补的。
+> （`weed_recognition` / `label_ocr` 要 `media_processing` + `external_inference`，`voice_question` 还要
+> `recording`）。没有可用的已核验政策时它们会 403 `CONSENT_REQUIRED` —— 这正是第 2 步要补的。
 
 幂等策略：每条 `UPDATE` 都带「当前还不是演示档」的条件；已经是 `enabled = true` 且 `reason` 一致的行不会再次 `revision + 1`。
 政策用 `ON CONFLICT (purpose, policy_version) DO NOTHING` + 一条 `enabled IS DISTINCT FROM true` 的更新；
@@ -196,7 +196,7 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 - 不改种子里已有的业务资料，不建**可登录**的演示账号（那条复核账号没有可用口令），不补首页的 `verified` 来源；
 - 不碰生产环境、不改 `.env` 或凭据，也不把开关值写回任何模板；
 - 不是「安全建议」。这是**本机演示配置**：生产环境该开哪个、什么时候开、政策由谁核验，要按实际审核与合规要求决定，
-  不能照抄这里的三个 `true` 与两条演示政策。
+  不能照抄这里的三个 `true` 与三条演示政策。
 
 不带 `--demo` 时只打印「演示开关：未开（默认）」，不执行任何 `UPDATE`，`public.feature_flags` 与两张隐私表都保持迁移后的原值；
 如果这时检测到 `consent_policies` 里没有生效的已核验政策，`up` 结束会打一条警告：
@@ -483,3 +483,18 @@ node tools/demo-stack.mjs reset --yes
 | 识别历史 | **6** 条，全部「识别完成」 |
 
 逐段怎么讲、每屏该出现什么、失败时说什么，见同目录的 [演示脚本](./演示脚本.md)。
+
+---
+
+## 12 语音提问（`voice_question`）：本机演示档现在能跑通
+
+`--demo` 之后演示档会同时发布 `recording` / `media_processing` / `external_inference` 三条政策，
+以及 `demo-stack-asr-tencent`（`capability='asr'`，域名 `asr.tencentcloudapi.com`）接收方，所以
+`POST /media/uploads`（`purpose=voice_question`）不再以 403 `CONSENT_REQUIRED` 拒绝：三个用途各自在
+`POST /me/consents` 真授一次（每条都会写 `consent_records` 与 `privacy_epochs`，`current_epoch` 由 0 递增），
+转写受理（`POST /speech/transcriptions`）才会被放行。
+
+**这只是本机演示档，不是生产口径。** `recording` 那条政策是演示档替本机使用者预置的**本机演示政策**
+（`source_kind='verified'` 只表示这一行被演示复核账号复核过，**不是**真人逐条同意了自己的录音）。
+真实环境仍必须由真人逐条授权录音（`POST /me/consents` 由用户自己发起）、政策由真人复核签字；
+生产不得照抄这里的政策正文、接收方与三个 `*_verified=true`。

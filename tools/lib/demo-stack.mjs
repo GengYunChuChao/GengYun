@@ -579,7 +579,7 @@ export function parseDemoCatalogCounts(text) {
 // ---------------------------------------------------------------- 演示隐私政策（--demo）
 
 /**
- * `--demo` 写入的演示政策版本。两个 purpose 共用同一串：`GET /me/privacy-policy`
+ * `--demo` 写入的演示政策版本。三条 purpose 共用同一串：`GET /me/privacy-policy`
  * 只把 `public.recipients.policy_version` 等于「当前生效政策版本」的行挂到读面上
  * （`services/api/src/privacy/privacy-policy.ts`），版本串对不上读面就看不到接收方。
  *
@@ -594,15 +594,27 @@ export function parseDemoCatalogCounts(text) {
  * （`services/api/src/privacy/ledger-pg.ts:633-659`）按 `r.capability = $3` 过滤后 0 行，
  * `rows.length !== 1` ⇒ 合成受理直接 403 `CONSENT_REQUIRED`（真实 TTS 永远走不到供应商）。
  * 所以 `-3` 把**同一版本**绑两条演示接收方：`weed`（识别）+ `tts`（语音合成）。
+ *
+ * 为什么是 `-4`：`voice_question` 要**三个**用途
+ * （`packages/privacy/constants.mjs` 的 `MEDIA_PURPOSE_REQUIRED_CONSENTS`：
+ * `recording` + `media_processing` + `external_inference`），而 `-3` 只发布了后两个——
+ * `recording` 没有政策，用户自授当场 403 `code:'no_policy'`（`grant-pg.ts:47-49` 查不到
+ * 已启用政策行），上传闸门因此连受理都到不了。另外语音转写外发在
+ * `services/api/src/app.ts` 用 `capability: 'asr'` 调 `resolveRecipient`，`-3` 的
+ * `recipients` 里没有 `asr` 能力 ⇒ 即使三个用途都授予，转写受理仍 403。
+ * 所以 `-4` 在**同一版本**里：三条政策（`recording` / `media_processing` /
+ * `external_inference`）+ 三条演示接收方（`weed` / `tts` / `asr`），三用途共用同一份
+ * 绑定表——外发预留要求**每个**必需用途的授权记录都列出同一个接收方
+ * （`services/api/src/privacy/ledger-pg.ts:548-560`），语音动线要的那一条是 `asr`。
  */
-export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-3';
+export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-4';
 
 /**
- * 演示接收方 id；`--demo` 的**两条**政策都绑定这一条。
+ * 演示接收方 id；`--demo` 的**同一版本三条**政策都绑定这一条（`capability='weed'`）。
  *
  * 只绑 `external_inference` 不够：外发预留要求每个必需用途的授权记录都列出同一接收方，
  * 而识别动线同时要 `media_processing` + `external_inference` 两个用途
- * （`services/api/src/routes/recognitions.ts` + `privacy/ledger-pg.ts:548-555`）。
+ * （`services/api/src/routes/recognitions.ts` + `privacy/ledger-pg.ts:548-560`）。
  */
 export const DEMO_RECIPIENT_ID = 'demo-stack-weed-vision';
 
@@ -615,6 +627,16 @@ export const DEMO_RECIPIENT_ID = 'demo-stack-weed-vision';
  */
 const DEMO_TTS_RECIPIENT_ID = 'demo-stack-tts-tencent';
 
+/**
+ * 演示语音转写接收方 id；`--demo` 的**同一版本**政策也绑这一条（`capability='asr'`）。
+ *
+ * 没有它，真实 ASR 的受理闸门永远 403：`app.ts` 的 `speechEgress` 用
+ * `capability: 'asr'` 调 `resolveRecipient`，而 `recipients` 里只登记了 `weed` / `tts`
+ * 能力 ⇒ `rows.length !== 1` ⇒ 403 `CONSENT_REQUIRED`，语音永远走不到供应商。
+ * 刻意不导出：它只在绑定表与接收方 INSERT 里出现，测试按字面量断言（少一个公开符号）。
+ */
+const DEMO_ASR_RECIPIENT_ID = 'demo-stack-asr-tencent';
+
 /** 演示接收方配置版本；必须与政策 `recipient_bindings[].config_version` 逐字相等。 */
 export const DEMO_RECIPIENT_CONFIG_VERSION = 'demo-stack-config-1';
 
@@ -625,14 +647,28 @@ export const DEMO_RECIPIENT_CONFIG_VERSION = 'demo-stack-config-1';
  */
 export const DEMO_REVIEWER_LOGIN = 'demo-stack-operator';
 
-/** 演示政策的 purpose；顺序固定（日志与测试按这个顺序读）。 */
-export const DEMO_CONSENT_PURPOSES = Object.freeze(['media_processing', 'external_inference']);
+/**
+ * 演示政策的 purpose；顺序固定（日志与测试按这个顺序读），与
+ * `packages/privacy/constants.mjs` 的 `CONSENT_PURPOSE_CLOSED_SET` 同序：
+ * `recording` → `media_processing` → `external_inference`。
+ *
+ * 三条一个都不能少：`voice_question` 的必需集合就是这三条
+ * （`MEDIA_PURPOSE_REQUIRED_CONSENTS`），少任何一条上传闸门都 403。
+ */
+export const DEMO_CONSENT_PURPOSES = Object.freeze([
+  'recording',
+  'media_processing',
+  'external_inference',
+]);
 
 /** 识别供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.weedRecognition` 同源。 */
 const WEED_ENDPOINT_HOST = new URL(AI_ENDPOINTS.weedRecognition.endpoint).host;
 
 /** 语音合成供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.tts` 同源。 */
 const TTS_ENDPOINT_HOST = new URL(AI_ENDPOINTS.tts.endpoint).host;
+
+/** 语音转写供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.asr` 同源。 */
+const ASR_ENDPOINT_HOST = new URL(AI_ENDPOINTS.asr.endpoint).host;
 
 /**
  * 演示接收方展示名。这两张隐私表**没有 note/reason 列**，演示标记逐字落在
@@ -647,7 +683,24 @@ export const DEMO_RECIPIENT_DISPLAY_NAME = `Demo local weed recognition provider
 /** 演示语音合成接收方的展示名（同样只用 ASCII；域名取自 TTS 端点）。 */
 const DEMO_TTS_RECIPIENT_DISPLAY_NAME = `Demo local speech synthesis provider ${TTS_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
 
-const DEMO_POLICY_BODY = `本机演示政策，仅用于本地演示栈联调，不是生产核验。${DEMO_FLAG_REASON}`;
+/** 演示语音转写接收方的展示名（同样只用 ASCII；域名取自 ASR 端点）。 */
+const DEMO_ASR_RECIPIENT_DISPLAY_NAME = `Demo local speech recognition provider ${ASR_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
+
+/**
+ * 演示政策的正文；只作为 `content_sha256` 的原像（这两张表**没有** body 列，正文不写库）。
+ *
+ * 长度与措辞按 `tools/lib/consent-policy-import.mjs:79` 的 `MIN_BODY_CHARS = 200`
+ * （按 Unicode 码点计）写足：占位/截断的正文在真实导入器那里会被判「疑似占位或截断」，
+ * 演示政策照同一条下界写，才不会被误当成一份能拿去生产的政策。正文里必须逐字保留
+ * 「本机演示政策」与「不是生产核验」，并在开头说明它只覆盖本机演示栈。
+ */
+export const DEMO_POLICY_BODY =
+  '本机演示政策（demo-stack local demo profile，非生产）：只覆盖本机演示栈，不是生产核验，也不代表任何第三方审核、机构背书或真实用户同意。'
+  + '本政策只用于本地演示栈联调，覆盖三个用途：recording（录音采集）、media_processing（媒体处理）、external_inference（外部推理）；'
+  + '绑定的接收方全部是本机演示登记的供应商端点（weed 识别 / tts 语音合成 / asr 语音转写），在线与备份留存均为 0 天，不用于模型训练，'
+  + '删除与不训练证据见各接收方绑定里的 evidence_ref。政策随演示状态目录存在，down 或 reset 之后即不再生效；'
+  + '要改形状只能发新版本（政策行一旦复核就不可改）。⛔ 不要照抄这段去做生产环境的合规判断。';
+
 const DEMO_POLICY_SHA256 = createHash('sha256').update(DEMO_POLICY_BODY, 'utf8').digest('hex');
 
 const sqlLiteral = (value) => `'${String(value).replace(/'/gu, "''")}'`;
@@ -658,9 +711,15 @@ const demoEvidenceRef = (purpose, kind) =>
 /**
  * 演示政策的 `recipient_bindings`（jsonb 字面量）：字段与演示接收方行逐字段相等。
  *
- * 两个 purpose 共用这一份绑定表，所以**每个**必需用途的授权记录都会同时列出
- * `weed` 与 `tts` 两条接收方；外发预留再按 `r.capability` 各取一条
+ * **三个** purpose 共用这一份绑定表，所以每个必需用途的授权记录都会同时列出
+ * `weed` / `tts` / `asr` 三条接收方；外发预留再按 `r.capability` 各取一条
  * （`privacy/ledger-pg.ts:633-659` 要求「唯一可用接收方」）。
+ *
+ * 为什么 `recording` 也列出全部三条：外发预留对**每个**必需用途都要求「授权记录里
+ * 有同一个 recipientId」（`privacy/ledger-pg.ts:548-560`），语音提问同时要
+ * `recording` + `media_processing` + `external_inference`，三条里少列一条 `asr`
+ * 都会在转写受理处 403「用途 X 未绑定接收方」。一份绑定表 + 三个用途是这里唯一
+ * 不会互相打脸的写法（与 `-3` 把 `tts` 列进 `media_processing` 同一条理由）。
  */
 const DEMO_RECIPIENT_BINDING_SPEC = Object.freeze({
   [DEMO_RECIPIENT_ID]: {
@@ -674,6 +733,15 @@ const DEMO_RECIPIENT_BINDING_SPEC = Object.freeze({
   },
   [DEMO_TTS_RECIPIENT_ID]: {
     capability: 'tts',
+    config_version: DEMO_RECIPIENT_CONFIG_VERSION,
+    policy_version: DEMO_CONSENT_POLICY_VERSION,
+    retention_online_days: 0,
+    retention_backup_days: 0,
+    no_training_evidence_ref: demoEvidenceRef('external_inference', 'no-training'),
+    deletion_evidence_ref: demoEvidenceRef('external_inference', 'deletion'),
+  },
+  [DEMO_ASR_RECIPIENT_ID]: {
+    capability: 'asr',
     config_version: DEMO_RECIPIENT_CONFIG_VERSION,
     policy_version: DEMO_CONSENT_POLICY_VERSION,
     retention_online_days: 0,
@@ -696,7 +764,7 @@ export const DEMO_RECIPIENT_IDS = Object.freeze(Object.keys(DEMO_RECIPIENT_BINDI
 /**
  * `--demo` 的隐私政策 SQL（纯函数：不执行、不读库、不读环境变量）。
  *
- * 顺序：复核账号 → 演示接收方 → 两条政策 → 兜底启用。四步都塞进调用方的**一个**
+ * 顺序：复核账号 → 三条演示接收方 → 三条政策 → 兜底启用。四步都塞进调用方的**一个**
  * `psql -c`，simple query 就是一个事务：任一步失败整组回滚，不会留下半套政策。
  *
  * 幂等：`ON CONFLICT DO NOTHING` + 只在内容确有差异时 `DO UPDATE`；重复 `up --demo`
@@ -730,8 +798,8 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
       `  ${reviewer}, clock_timestamp(), true)`,
     ].join('\n');
 
-  // 两条演示接收方各写一条 INSERT（`weed` 识别 + `tts` 语音合成）。
-  // 能力串只认 `recipients_capability_check` 的闭集；导出的常量仍只有 weed 那条，测试按字面量断言 tts 那条。
+  // 三条演示接收方各写一条 INSERT（`weed` 识别 + `tts` 语音合成 + `asr` 语音转写）。
+  // 能力串只认 `recipients_capability_check` 的闭集；导出的常量仍只有 weed 那条，测试按字面量断言 tts / asr 那两条。
   const recipientStatement = (id, displayName, capability) =>
     [
       'INSERT INTO public.recipients',
@@ -773,6 +841,7 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
     ].join('\n'),
     recipientStatement(DEMO_RECIPIENT_ID, DEMO_RECIPIENT_DISPLAY_NAME, 'weed'),
     recipientStatement(DEMO_TTS_RECIPIENT_ID, DEMO_TTS_RECIPIENT_DISPLAY_NAME, 'tts'),
+    recipientStatement(DEMO_ASR_RECIPIENT_ID, DEMO_ASR_RECIPIENT_DISPLAY_NAME, 'asr'),
     [
       'UPDATE public.consent_policies',
       '   SET enabled = false, updated_at = clock_timestamp()',
@@ -782,11 +851,10 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
       '   AND enabled',
       'RETURNING purpose, policy_version;',
     ].join('\n'),
-    ...[
-      ['media_processing', DEMO_RECIPIENT_BINDINGS],
-      ['external_inference', DEMO_RECIPIENT_BINDINGS],
-    ].map(([purpose, bindings]) =>
-      [policyColumns, policyValues(purpose, bindings), 'ON CONFLICT (purpose, policy_version) DO NOTHING', 'RETURNING purpose;'].join('\n'),
+    // 三条政策逐条按 `DEMO_CONSENT_PURPOSES` 的顺序生成（recording → media_processing →
+    // external_inference），不再手写两行——以后必需集合再变，只改常量就够。
+    ...DEMO_CONSENT_PURPOSES.map((purpose) =>
+      [policyColumns, policyValues(purpose, DEMO_RECIPIENT_BINDINGS), 'ON CONFLICT (purpose, policy_version) DO NOTHING', 'RETURNING purpose;'].join('\n'),
     ),
     [
       'UPDATE public.consent_policies',
@@ -807,7 +875,7 @@ export function buildDemoConsentSql(options = {}) {
 
 /** 演示档写入后给人看的一句总结（⛔ 不要把这段当成生产核验结论）。 */
 export const DEMO_CONSENT_NOTICE =
-  '这是本机演示政策，不是生产核验：只覆盖本机演示栈，external_inference 绑定的是本机演示接收方';
+  '这是本机演示政策，不是生产核验：只覆盖本机演示栈，recording / media_processing / external_inference 三个用途绑定的都是本机演示接收方（weed / tts / asr）';
 
 /**
  * `up --demo` 自检的第一行：政策版本 + 政策清单 + 接收方清单（纯渲染，不手写枚举）。
