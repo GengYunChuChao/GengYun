@@ -136,7 +136,7 @@ test('decodeCredentialText：UTF-8 与 GBK（注释历史遗留）都能读，�
 
 // ────────────────────────────────────────────────────────── 键映射
 
-test('collectEnv：13 个 env 键按固定顺序产出，固定值不来自凭据', () => {
+test('collectEnv：16 个 env 键按固定顺序产出，固定值不来自凭据', () => {
   const { values, generated, missing, optionalMissing } = collectEnv(parseJsonc(FULL_FIXTURE));
   assert.deepEqual(missing, [], '齐全的凭据不该报缺键');
   const envNames = values.map((row) => row.env);
@@ -164,6 +164,9 @@ test('collectEnv：13 个 env 键按固定顺序产出，固定值不来自凭�
     'RECOGNITION_PROVIDER_KEY',
     'RECOGNITION_PROVIDER_PROFILE',
     'RECOGNITION_PROVIDER_MODEL',
+    'CHAT_LLM_ENDPOINT',
+    'CHAT_LLM_MODEL',
+    'CHAT_LLM_API_KEY',
     'MEDIA_OBJECT_REF_KEY',
   ]);
   const byEnv = new Map(values.map((row) => [row.env, row.value]));
@@ -173,6 +176,11 @@ test('collectEnv：13 个 env 键按固定顺序产出，固定值不来自凭�
   assert.equal(byEnv.get('RECOGNITION_PROVIDER_PROFILE'), 'openai-vision-v1');
   assert.equal(byEnv.get('RECOGNITION_PROVIDER_MODEL'), 'deepseek-flash');
   assert.equal(byEnv.get('RECOGNITION_PROVIDER_KEY'), `ds-${MARK}`);
+  // 问答三键：端点/模型名与 `tools/ai-config.mjs` 的 `CHAT_LLM_DEFAULT_ENV` 同源，key 与识别共用
+  // 私密文件里的 `deepseekApiKey`。少任何一个，`asChatProvider()` 返回 `null` ⇒ 问答退回确定性摘要。
+  assert.equal(byEnv.get('CHAT_LLM_ENDPOINT'), 'https://api.deepseek.com/chat/completions');
+  assert.equal(byEnv.get('CHAT_LLM_MODEL'), 'deepseek-flash');
+  assert.equal(byEnv.get('CHAT_LLM_API_KEY'), `ds-${MARK}`);
   assert.equal(generated.length, 1);
   assert.equal(generated[0].env, 'MEDIA_OBJECT_REF_KEY');
   assert.equal(generated[0].reused, false);
@@ -305,7 +313,7 @@ test('CLI --help：exit 0，用法里点名三个选项与两条打印纪律', (
   assert.match(result.stdout, /任何值都不打印/u);
 });
 
-test('CLI 正常一次：exit 0，写 13 个键，stdout 只说键数/路径/生成项，不含任何值', () => {
+test('CLI 正常一次：exit 0，写 16 个键，stdout 只说键数/路径/生成项，不含任何值', () => {
   withTempDir((dir) => {
     const from = writeFixture(dir, 'credentials.local.json', FULL_FIXTURE);
     const out = join(dir, 'demo-real.env');
@@ -314,7 +322,7 @@ test('CLI 正常一次：exit 0，写 13 个键，stdout 只说键数/路径/生
 
     const printed = `${result.stdout}${result.stderr}`;
     assert.doesNotMatch(printed, new RegExp(MARK, 'u'), `屏幕输出里出现了明文标记：\n${printed}`);
-    assert.match(result.stdout, /已写出 13 个键/u);
+    assert.match(result.stdout, /已写出 16 个键/u);
     assert.match(result.stdout, /MEDIA_OBJECT_REF_KEY/u, '必须点名哪个键是生成的');
     assert.ok(result.stdout.includes(out) || result.stdout.includes(out.replace(/\//gu, '\\')), '必须打印输出路径');
 
@@ -346,13 +354,13 @@ test('CLI 缺腾讯云凭据：仍 exit 0 写出可用 env，stdout 与文件里
   });
 });
 
-test('CLI 给了腾讯云共享对：写出 15 个键，TENCENTCLOUD_* 进 env 文件', () => {
+test('CLI 给了腾讯云共享对：写出 18 个键，TENCENTCLOUD_* 进 env 文件', () => {
   withTempDir((dir) => {
     const from = writeFixture(dir, 'credentials.local.json', TENCENT_FIXTURE);
     const out = join(dir, 'demo-real.env');
     const result = runTool(['--from', from, '--out', out]);
     assert.equal(result.status, 0, `应 exit 0，实际 ${result.status}\n${result.stderr}`);
-    assert.match(result.stdout, /已写出 15 个键/u);
+    assert.match(result.stdout, /已写出 18 个键/u);
     assert.match(result.stdout, /ASR 未配专用子账号对/u, '共享对齐了：只剩 ASR 回退这一条提示');
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(MARK, 'u'), '值不许上屏');
 
