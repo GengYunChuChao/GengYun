@@ -62,8 +62,8 @@ test('演示种子：幂等写法（每条写入都有 ON CONFLICT）', () => {
   const code = executableLines(seed).join('\n');
   const insertCount = (code.match(/INSERT\s+INTO\s+public\./giu) ?? []).length;
   const conflictCount = (code.match(/ON\s+CONFLICT/giu) ?? []).length;
-  assert.equal(insertCount, 6, '预期 6 条 INSERT（含 knowledge_dataset_config 两行配置）');
-  assert.equal(conflictCount, 6, '每条 INSERT 都必须带 ON CONFLICT，否则复跑会撞唯一键');
+  assert.equal(insertCount, 7, '预期 7 条 INSERT（含 knowledge_dataset_config 两行配置与 §6 的语音播报短卡）');
+  assert.equal(conflictCount, 7, '每条 INSERT 都必须带 ON CONFLICT，否则复跑会撞唯一键');
   assert.match(code, /ON CONFLICT \(source_id, version\) DO UPDATE/u);
   assert.match(code, /ON CONFLICT \(knowledge_id, revision\) DO UPDATE/u);
 });
