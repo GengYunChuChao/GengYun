@@ -33,8 +33,8 @@
  *   - `createGrant` **明确拒绝**（`PROVIDER_UNAVAILABLE`，`retryable: false`），绝不伪造 epoch；
  *   - 其余授权方法按「写入路径被拒 ⇒ 行集恒为空」如实返回空/0，因此撤销与清理**不会**
  *     在 `delete`/`complete` 的失败路径上炸掉调用链。
- * 生产默认装配的公开内容来源是 `createClosedContentSource()`（社区取图一律 404），所以这条缺口
- * **不放行**任何越权读取；它只意味着「社区取图在真库模式下仍未接线」，记在报告 TODO 里。
+ * 公开内容来源由装配层决定（`services/api/src/app.ts:1816`）：`real` + 持久化社区端口时是 `createRealContentSource()`
+ * （读时按社区域端口重算）；端口缺失（`stub` 或 `real` 无池）才回退 `createClosedContentSource()`（404）。两种都 fail-closed。
  *
  * ## 错误折叠
  * `57014`（语句超时）/`55P03`（锁不可得）⇒ `PROVIDER_TIMEOUT`；其余 ⇒ `PROVIDER_UNAVAILABLE`
