@@ -40,3 +40,11 @@
 # 配置与清单
 *.json   text eol=lf
 *.yml    text eol=lf
+
+# 补齐小程序 / 前端 / 数据库 / 页面文本扩展名：本机 `core.autocrlf=true` 时这些文件在工作区会变成 CRLF，而 `tools/demo-align.mjs` 等做逐字比对 ⇒ 本机假红；索引里本来就是 LF，补声明不产生内容 diff。
+*.wxss   text eol=lf
+*.wxml   text eol=lf
+*.js     text eol=lf
+*.css    text eol=lf
+*.sql    text eol=lf
+*.html   text eol=lf
