@@ -64,7 +64,7 @@
  *   node tools/verify-doc-anchors.mjs --emit-orphan-baseline  # 打印裸锚点孤儿册 JSON（不写盘）
  *   node tools/verify-doc-anchors.mjs --write-orphan-baseline --accept=<新增条数> --why="<理由>"
  *                                                          # 写 tools/doc-anchors-orphan-baseline.json（CI 里拒绝执行；理由落进 accept 账本）
- *                                                          # ⛔ 只在 Linux（CI 同环境）重算：Windows 的 outsideRed 面少 5 条，本机重算会删掉它们、CI 随即报「基线外新增 5 条」；见 docs/verification/gy-r103-anchor-gate-platform-drift-20261110.md
+ *                                                          # ⛔ 重算前先清掉仓库内的 `.local` 等本地副本：副本会让裸文件名引用变 ambiguous、outsideRed 少 5 条，照本机结果重算会删掉那 5 条，CI 随即报「基线外新增 5 条」（索引已跳过点目录，但别在脏树上重算）；见 docs/verification/gy-r103-anchor-gate-platform-drift-20261110.md
  *   node tools/verify-doc-anchors.mjs --write-anchor-count-baseline --accept=<净增减> --why="<理由>"
  *                                                          # 写 tools/doc-anchors-anchor-count-baseline.json
  *   node tools/verify-doc-anchors.mjs --root <目录>        # 指向夹具树（单测用）
@@ -607,7 +607,7 @@ export function attributeBareAnchors({ text, references, resolveIdentity = null 
 }
 
 // —— 路径解析 ————————————————————————————————————————————————————————
-/** 同名文件索引：`service.ts` → 仓库里所有同名文件的相对路径（用于「裸文件名」引用）。 */
+/** 同名文件索引：`service.ts` → 仓库里所有同名文件的相对路径（用于「裸文件名」引用）。点目录（尤其 `prepare-wechat` 生成的 `.local/wechat-local` 副本）不是源码，收进索引会让裸文件名引用变 `ambiguous`、锚点静默不判定；与 `walkMarkdown` 的既有约定一致（点目录一律不收、`.github` 例外，见 `:2515` 附近注释）。 */
 export function buildFileNameIndex(root) {
   const index = new Map();
   const stack = [root];
@@ -621,7 +621,7 @@ export function buildFileNameIndex(root) {
     }
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        if (!SKIP_DIRECTORIES.has(entry.name)) stack.push(join(current, entry.name));
+        if (!SKIP_DIRECTORIES.has(entry.name) && (!entry.name.startsWith('.') || entry.name === '.github')) stack.push(join(current, entry.name));
         continue;
       }
       if (!entry.isFile()) continue;
