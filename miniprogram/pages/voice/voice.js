@@ -127,7 +127,7 @@ Page({
         transcriptSamples: localEnabled ? speechTranscript.SUBSTITUTE_RECORD_SAMPLES : [],
         transcriptSampleNote: localEnabled ? speechTranscript.SUBSTITUTE_RECORD_NOTE : ''
       })
-      if (loggedIn !== true) that.closePrivate()
+      if (loggedIn !== true) that.closePrivate(); else loadBroadcastablesInto(that, localEnabled)
     })
   },
 
@@ -155,8 +155,8 @@ Page({
     fontScale: fontScale.DEFAULT_FONT_SCALE,
     guest: true,
     localEnabled: false,
-    samples: [],
-    substituteNote: '',
+    samples: [], broadcastables: [],
+    substituteNote: '', broadcastNote: '',
     selectedSampleId: '',
     // ① 安全检查
     checkState: '',
@@ -402,9 +402,9 @@ Page({
   // ---------------------------------------------------------------- ① 安全检查
 
   onSelectSample: function (event) {
-    if (this.data.guest || this.data.samples.length === 0) return
+    if (this.data.guest || (this.data.samples.length === 0 && this.data.broadcastables.length === 0)) return
     const sampleId = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.id : null
-    const sample = this.data.samples.filter(function (item) { return item.id === sampleId })[0]
+    const sample = this.data.samples.concat(this.data.broadcastables).filter(function (item) { return item.id === sampleId })[0]
     if (!sample) return
     this.stopPoll()
     voiceApi.cancelAll()
@@ -425,7 +425,7 @@ Page({
       checkState: sample.checkState,
       checkPassed: gate.ok === true,
       checkMessage: gate.ok === true
-        ? '安全检查已通过（check_state=passed）：已核对正文与播报计划逐字一致，关键令牌（数字/单位/制剂条件/否定词）齐全。'
+        ? (sample.group === voiceApi.BROADCAST_GROUP ? '已核对正文取自服务端已审核发布的资料（type=' + sample.targetRef.type + '，revision=' + sample.targetRef.revision + '）：逐字复核与播报计划一致，关键令牌齐全。' : '安全检查已通过（check_state=passed）：已核对正文与播报计划逐字一致，关键令牌（数字/单位/制剂条件/否定词）齐全。')
         : speechText.gateMessage(gate) + '（' + String(gate.code) + '）',
       checkedText: sample.checkedText,
       segmentCount: segments.length,
@@ -454,7 +454,7 @@ Page({
       return
     }
     const selectedId = this.data.selectedSampleId
-    const sample = this.data.samples.filter(function (item) { return item.id === selectedId })[0]
+    const sample = this.data.samples.concat(this.data.broadcastables).filter(function (item) { return item.id === selectedId })[0]
     if (!sample) return
     // 目标引用一律**取契约值**（服务端回传的 revision 优先），页面**不得**内联拼 `revision: 1`。
     const ref = voiceApi.checkedContentRefForSample(sample)
@@ -1647,4 +1647,47 @@ function readFileInfo(filePath) {
  */
 function withNoRetryNote(note) {
   return note + '本条录音不会重试复用（页面已清掉它的临时文件路径）：请重新录制。'
+}
+
+/**
+ * 把「可播报资料」读进页面（**只在本地演示形态**调用：`runtime.mode==='local'` 且后端
+ * `execution_mode==='real'`）。
+ *
+ * 为什么另起一组：`samples` 是替身样本（`targetRef.id` 不是 uuid，真实栈里点「合成」必然
+ * `TARGET_NOT_FOUND`）；这一组是服务端已审核发布的真实短资料，`targetRef` 三键都来自读面
+ * （`GET /api/v1/knowledge`），因此能接上本页**既有的**核对与合成链路（同一个
+ * `onSelectSample` / `onBroadcast`，页面没有第二套合成实现）。
+ *
+ * 失败**如实显示**（不吞）：读面 401/403 与其它非 200 的具体码、HTTP 状态由
+ * `voiceApi.broadcastFailureNote` 原样写进 `broadcastNote`；`SESSION_CHANGED` / `CLIENT_CANCELLED`
+ * 是离页/换会话导致的正常作废，不当作错误刷屏（此时页面已不再展示私有内容）。
+ *
+ * 这个函数定义在文件末尾，是为了不动本文件上面任何一行的行号：
+ * `docs/verification/gy-i11-voice-input-20261021.md` 按行号锚住本文件多处，行内插入会把它们顶走。
+ * 函数声明会提升，放在末尾不影响 `onShow` 里调用。
+ */
+function loadBroadcastablesInto(page, localEnabled) {
+  if (!page || typeof page.setData !== 'function') return
+  if (localEnabled !== true) {
+    page.setData({ broadcastables: [], broadcastNote: '' })
+    return
+  }
+  voiceApi.listBroadcastTargets().then(function (result) {
+    // 页面已卸载（`onUnload` 置 `_gone`）⇒ 不再 setData，也不假装读到了什么。
+    if (page._gone === true) return
+    if (result.mode !== 'real') {
+      // 非真实执行模式（stub/preset_demo）：这一组不出现，保持原本「只有替身样本」的形态。
+      page.setData({ broadcastables: [], broadcastNote: '' })
+      return
+    }
+    page.setData({ broadcastables: result.targets, broadcastNote: voiceApi.broadcastNoteFor(result) })
+  }).catch(function (error) {
+    if (page._gone === true) return
+    const code = error && error.code
+    if (code === 'SESSION_CHANGED' || code === 'CLIENT_CANCELLED') {
+      page.setData({ broadcastables: [], broadcastNote: '' })
+      return
+    }
+    page.setData({ broadcastables: [], broadcastNote: voiceApi.broadcastFailureNote(error) })
+  })
 }

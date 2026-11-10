@@ -554,7 +554,7 @@ function observableRecorderManager(options = {}) {
 
 /** 在受控环境里加载真实页面/工具模块（依赖通过 vm 注入，模块本身是仓库里的真代码）。 */
 function loadPageHarness(options = {}) {
-  const requests = [];
+  const requests = []; const broadcastReads = [];
   const toasts = [];
   const sets = [];
   const recorder = options.recorder || observableRecorderManager(options.recorderOptions || {});
@@ -626,7 +626,7 @@ function loadPageHarness(options = {}) {
   let recordPermissionDenied = Boolean(options.recorderOptions && options.recorderOptions.deny);
 
   const fakeWx = {
-    request: (o) => { requests.push(o); },
+    request: (o) => { if (String(o && o.url).indexOf('/knowledge') !== -1) { broadcastReads.push(o); if (o.success) o.success({ statusCode: 200, data: { data: { items: [] }, meta: { request_id: '00000000-0000-4000-8000-000000000000', contract_version: '1.0.0', execution_mode: 'real' } } }); return } requests.push(o); },
     getAccountInfoSync: () => ({ miniProgram: { envVersion: 'develop' } }),
     showToast: (o) => { toasts.push(o); },
     getStorageSync: () => '',
@@ -803,7 +803,7 @@ function loadPageHarness(options = {}) {
       route: 'pages/voice/voice'
     });
     return {
-      page, requests, toasts, sets, auth, runtime, wx: fakeWx,
+      page, requests, broadcastReads, toasts, sets, auth, runtime, wx: fakeWx,
       recorder, recorderOptions: options.recorderOptions || {}, wxCalls, audioContexts, downloads,
       uploads: () => uploadCount,
       deferredOf: () => deferred,
@@ -2315,4 +2315,70 @@ test('GY-R74/S2·页面不得直接调 wx.openSetting：跳转只能经 recorder
     const body = js.slice(start, end === -1 ? js.length : end);
     assert.equal(/openSetting/.test(body), false, name + ' 里不得调用 openSetting（只允许 tap 触发）');
   }
+});
+
+// ============================================================ 6m. 「可播报资料」（真实短资料，local+real）
+//
+// 背景：替身样本的 `targetRef.id`（`sample-i13-passed` / `sample-i13-blocked`）不是 uuid，real 模式下
+// 服务端核对端口对非 uuid 的 id 直接短路 ⇒ 必然 `TARGET_NOT_FOUND`。语音页因此在 local+real 时额外读
+// 一次**既有**公开读面 `GET /knowledge?limit=50`，把「已审核发布且正文 ≤ 100 码点」的资料作为
+// 「可播报资料」（`group: 'knowledge'`）列出；两者共用同一个 `onSelectSample` 与合成链路。
+//
+// 本节只证明**页面侧**的三件事（服务端行为与真音频由真机走查与本域其它用例负责）：
+//   ① 进页只读一次列表，且**不**夹带合成请求；
+//   ② 选中这类目标后核对走通，文案说清来源是**已审核发布**的资料；
+//   ③ 合成请求里的 `checked_content_ref` 是这条资料**原样的** type/id/revision（不猜、不改写、不从 label 里抠）。
+
+/** 一条「可播报资料」夹具：形状与 `miniprogram/utils/voice-api.js` 的 `broadcastTargetOf()` 同源。 */
+function broadcastTargetFixture() {
+  return {
+    id: 'knowledge:d0000000-0000-4000-8000-00000000c009',
+    group: 'knowledge',
+    label: '可播报资料 · 稗草（短播报）（57 码点）',
+    checkState: 'passed',
+    checkedText: '稗草（短播报）\n演示句：不含识别结论、防治建议与用药指引。',
+    targetRef: { type: 'species', id: 'd0000000-0000-4000-8000-00000000c009', revision: 1 }
+  };
+}
+
+test('宿主页·可播报资料：进页只读一次 /knowledge，不夹带合成请求；读到 0 条就如实为空', async () => {
+  const h = bootPage();
+  await flushMicrotasks();
+  assert.equal(h.broadcastReads.length, 1, '进页只读一次可播报资料列表');
+  const read = h.broadcastReads[0];
+  assert.equal(read.method, 'GET');
+  assert.equal(String(read.url).endsWith('/knowledge?limit=50'), true, '只读既有公开读面，不额外加过滤条件');
+  assert.equal(h.requests.length, 0, '读列表不得夹带合成请求');
+  assert.deepEqual(h.page.data.broadcastables, [], '夹具返回 0 条 ⇒ 列表为空（页面不发明目标）');
+  h.page.onUnload();
+});
+
+test('宿主页·可播报资料：选中真实短资料 ⇒ 核对通过，且合成引用原样透传（不再 TARGET_NOT_FOUND）', async () => {
+  const h = bootPage({
+    innerAudio: true,
+    downloadFile: (input) => { input.success({ statusCode: 200, tempFilePath: 'wxfile://tmp/synthetic-r74-audio.wav' }) }
+  });
+  await flushMicrotasks();
+  const target = broadcastTargetFixture();
+  h.page.setData({ broadcastables: [target] });
+  h.page.onSelectSample({ currentTarget: { dataset: { id: target.id } } });
+  assert.equal(h.page.data.checkPassed, true);
+  assert.equal(h.page.data.selectedSampleId, target.id, '两个分组共用同一个选中态字段');
+  assert.equal(h.page.data.checkMessage.includes('已审核发布'), true, '核对文案必须说清来源是已审核发布的资料');
+  assert.ok(h.page.data.segmentCount >= 1);
+
+  const pending = h.page.onBroadcast();
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.requests[0].data)), {
+    checked_content_ref: { type: 'species', id: 'd0000000-0000-4000-8000-00000000c009', revision: 1 },
+    locale: 'zh-CN'
+  });
+  const job = jobFixture({ target: target.targetRef, suffix: 'f' });
+  acceptJob(h.requests[0], job, 'real');
+  await pending;
+  await flushMicrotasks();
+  assert.equal(h.page.data.job.state, 'succeeded');
+  assert.equal(h.page.data.mode, 'real');
+  assert.equal(h.page._plan[0].src, 'http://127.0.0.1:3000/speech/synthesis/' + job.result.value.id + '/audio', '可播地址用回执里的合成记录 id，不是任务 id');
+  h.page.onUnload();
 });
