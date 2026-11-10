@@ -63,8 +63,8 @@
  *   node tools/verify-doc-anchors.mjs --write-baseline     # 写 tools/doc-anchors-baseline.json
  *   node tools/verify-doc-anchors.mjs --emit-orphan-baseline  # 打印裸锚点孤儿册 JSON（不写盘）
  *   node tools/verify-doc-anchors.mjs --write-orphan-baseline --accept=<新增条数> --why="<理由>"
- *                                                          # 写 tools/doc-anchors-orphan-baseline.json
- *                                                          # （CI 里拒绝执行；理由落进 accept 账本）
+ *                                                          # 写 tools/doc-anchors-orphan-baseline.json（CI 里拒绝执行；理由落进 accept 账本）
+ *                                                          # ⛔ 只在 Linux（CI 同环境）重算：Windows 的 outsideRed 面少 5 条，本机重算会删掉它们、CI 随即报「基线外新增 5 条」；见 docs/verification/gy-r103-anchor-gate-platform-drift-20261110.md
  *   node tools/verify-doc-anchors.mjs --write-anchor-count-baseline --accept=<净增减> --why="<理由>"
  *                                                          # 写 tools/doc-anchors-anchor-count-baseline.json
  *   node tools/verify-doc-anchors.mjs --root <目录>        # 指向夹具树（单测用）
