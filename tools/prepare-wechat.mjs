@@ -1,9 +1,14 @@
-import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { resolve, join, dirname, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readLocalConfig, configArgument } from './local-debug-config.mjs';
 import { REGION_CENTROID_SOURCE, regionCentroidManifestEntries, assertRegionCentroidPackaging } from './lib/region-centroid-packaging.mjs';
 
+/**
+ * 仓库根：由脚本自身的位置推出（`tools/` → `..`），⛔ 不用 `process.cwd()`。
+ * 单测正是靠这一点把整棵临时工程（tools/ ＋ miniprogram/ ＋ project.config.json）复制进 tmpdir 再跑，
+ * 于是产物天然落在临时目录里——所以 `--out` 不需要、也不提供隐藏的环境变量开关。
+ */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const APP_ID_PATTERN = /^wx[0-9a-f]{16}$/;
 // 测试号申请入口（微信公众平台 → 开发 → 开发管理 → 开发设置 → 开发者工具 → 测试号）。
@@ -29,12 +34,12 @@ const DEVTOOLS_CLI_CANDIDATES = Object.freeze([
 ]);
 
 /** 用法行：参数非法时的报错带它，新旗标必须在这里可见。 */
-const USAGE = 'Usage: node tools/prepare-wechat.mjs local --config <file> [--appid <wx…>] [--no-urlcheck] [--force] | release [--force]';
+const USAGE = 'Usage: node tools/prepare-wechat.mjs local --config <file> [--appid <wx…>] [--no-urlcheck] [--force] [--out <dir>] [--dry-run] | release [--force] [--out <dir>] [--dry-run]';
 /** `--help` 正文：本机演示流程的全部前提写在这里，不靠读源码猜。 */
 const HELP = [
   USAGE,
   '',
-  'local：生成 .local/wechat-local 诊断副本（客户端接本地 API，是否联网由副本 runtime.js 决定）。',
+  'local：生成 <根目录>/wechat-local 诊断副本（客户端接本地 API，是否联网由副本 runtime.js 决定）。',
   '  --config <file>   被忽略的本地配置（模板：config/debug.local.json.example）。',
   '                    apiBaseUrl 必须以业务前缀 /api/v1 结尾（如 http://127.0.0.1:3000/api/v1）；',
   '                    漏写不会自动补全，脚本直接失败并给出应写的值。',
@@ -42,10 +47,14 @@ const HELP = [
   '  --no-urlcheck     只把副本 project.config.json 的 setting.urlCheck 写成 false：',
   '                    开发者工具不再拦「不在以下 request 合法域名列表」，省掉手动勾选。',
   '                    ⚠ 仅供本机演示/测试号使用；正式提交前不要开，也不要写回共享工程。',
-  '  --force           目标目录已存在时先删除再生成（只删 <repo>/.local/ 下这一个生成目录）。',
-  'release：生成 .local/wechat-release 副本（runtime 关闭网络、urlCheck 保持 true），不是可提交的正式包。',
+  '  --force           目标目录已存在时先删除再生成（只删目标根目录下这一个生成目录）。',
+  '  --out <dir>       生成根目录，默认 <repo>/.local；目录名仍固定为 wechat-<mode>。',
+  '                    必须在仓库树之外（相对路径按当前工作目录解析）：副本留在仓库里，',
+  '                    文档锚点闸门会把重复的 miniprogram 当目标，判成多义/失效（假红）。',
+  '  --dry-run         只校验参数与输出位置并打印结论，不建目录、不复制、不删除任何文件。',
+  'release：生成 <根目录>/wechat-release 副本（runtime 关闭网络、urlCheck 保持 true），不是可提交的正式包。',
   '',
-  '默认行为与旧版一致：不加旗标时 urlCheck 仍为 true、目标已存在仍拒绝覆盖。',
+  '默认行为与旧版一致：不加旗标时输出仍是 <repo>/.local/wechat-<mode>、urlCheck 仍为 true、目标已存在仍拒绝覆盖。',
 ].join('\n');
 
 function compareReferences(left, right) {
@@ -178,6 +187,55 @@ function takeDemoFlags(args) {
   return { noUrlCheck, force, rest };
 }
 
+/**
+ * 摘出 `--out <dir>`（生成根目录）与 `--dry-run`（只校验不落盘）。
+ * `--out` 只换根目录，目录名仍固定 `wechat-<mode>`：演示脚本与文档按这个名字找副本，改名等于换契约。
+ * 取值写法（`--out=dir`）直接拒绝，与 `--appid` 保持同一口径：一种旗标只认一种写法。
+ */
+function takeOutRoot(args) {
+  const rest = [];
+  let outRoot = null;
+  let dryRun = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--dry-run') { dryRun = true; continue; }
+    if (arg === '--out') {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('--')) throw new Error('--out 缺少取值：应写成 `--out <目录>`（相对路径按当前工作目录解析）；未生成任何目录。');
+      if (outRoot !== null) throw new Error('--out 只能出现一次；未生成任何目录。');
+      outRoot = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--out=')) throw new Error('--out 只支持空格分隔写法 `--out <目录>`，不支持等号形式；未生成任何目录。');
+    if (arg.startsWith('--dry-run=')) throw new Error('--dry-run 是开关，不接受取值（写成 `--dry-run` 即可）；未生成任何目录。');
+    rest.push(arg);
+  }
+  return { outRoot, dryRun, rest };
+}
+
+/** `child` 是否落在 `parent` 之内（含相等）：两边都先 resolve，避免大小写／尾斜杠差异。 */
+function isInside(parent, child) {
+  const inside = relative(resolve(parent), resolve(child));
+  return inside === '' || (inside !== '..' && !inside.startsWith('..' + sep) && !isAbsolute(inside));
+}
+
+/** `--out` 落在仓库树内：退出码 2（参数错误），与「解析失败／缺键」的语义区分开。 */
+class OutOfRepoError extends Error {
+  constructor(message) {
+    super(message);
+    this.exitCode = 2;
+  }
+}
+
+/** `--dry-run` 的提前收尾：不是失败，只是「校验完就停」；抛出来是为了不改 200 行复制逻辑的缩进。 */
+class DryRunStop extends Error {
+  constructor(message) {
+    super(message);
+    this.exitCode = 0;
+  }
+}
+
 /** 开发者工具 CLI：本机能找到就用真实路径，找不到退回文档里写的默认安装位置（不影响任何校验）。 */
 function devtoolsCli() {
   for (const candidate of DEVTOOLS_CLI_CANDIDATES) {
@@ -187,17 +245,78 @@ function devtoolsCli() {
 }
 
 /**
- * `--force` 删除前的最后一道闸：目标必须是 `<repo>/.local` 的**直接子目录**且就是本次要生成的目录名。
- * 路径全部由 join(LOCAL_ROOT, 'wechat-' + mode) 拼出来，这条断言在正常路径上恒真——
- * 它守的是「将来有人改了 out 的拼法，别让一次 --force 把仓库其他部分删掉」。
+ * 生成根目录：默认 `<repo>/.local`；给了 `--out` 就用它，**但必须在仓库树之外**。
+ *
+ * 为什么是硬拒绝而不是提醒：`--scan docs` 会把仓库里每个 `*.js` 都当锚点候选，
+ * 副本里上百个与仓库同名的 `miniprogram/**` 文件会把「只此一处」的锚点判成多义／失效
+ * （本机实测：副本留在 `.local/` 时 `verify-doc-anchors --strict` 从 PASS 变 exit 1）。
+ * 手工 `Move-Item` 能绕开，但那是每次都要记得的手工步骤——本函数把它变成一次参数错误。
  */
-function assertRemovableOutput(out, expectedName) {
-  const inside = relative(LOCAL_ROOT, out);
-  const contained = inside !== '' && inside !== '..' && !inside.startsWith('..' + sep)
-    && !isAbsolute(inside) && resolve(LOCAL_ROOT, inside) === resolve(out);
-  if (!contained || inside !== expectedName) {
-    throw new Error('拒绝删除：目标目录不在 <repo>/.local 之下（' + out + '）；未删除任何文件。');
+function resolveImportRoot({ outRoot, mode }) {
+  const expectedName = 'wechat-' + mode;
+  if (outRoot === null) return join(LOCAL_ROOT, expectedName);
+  const base = resolve(process.cwd(), outRoot);
+  if (isInside(root, base)) {
+    throw new OutOfRepoError('--out 不能落在仓库树内：' + base + '\n'
+      + '  副本留在仓库树内会让文档锚点闸门把重复的 miniprogram 当目标（假红）：副本里的 *.js 与仓库同名文件并存，\n'
+      + '  `node tools/verify-doc-anchors.mjs --strict --scan docs` 会把单义锚点判成多义／失效。\n'
+      + '  换成仓库外的位置再跑（例如 ' + join(dirname(root), 'demo-project') + '）；未生成任何目录。');
   }
+  return join(base, expectedName);
+}
+
+/** 目标已存在时的统一提示：`--dry-run` 与真跑共用一条文案，避免两处口径漂移（测试也按这条断言）。 */
+function existingOutputMessage(out) {
+  return 'Output already exists: ' + out + '. Keep it for inspection, pass --force to regenerate it (only that generated directory is removed), or remove it yourself before preparing again.';
+}
+
+/**
+ * `--force` 删除前的最后一道闸：目标必须是 `container`（默认 `<repo>/.local`，给 `--out` 时是该根）
+ * 的**直接子目录**且就是本次要生成的目录名。
+ * 路径由 join(根, 'wechat-' + mode) 拼出来，这条断言在正常路径上恒真——
+ * 它守的是「将来有人改了 out 的拼法，别让一次 --force 把根目录之外的东西删掉」。
+ */
+function assertRemovableOutput(out, expectedName, container = LOCAL_ROOT) {
+  const inside = relative(container, out);
+  const contained = inside !== '' && inside !== '..' && !inside.startsWith('..' + sep)
+    && !isAbsolute(inside) && resolve(container, inside) === resolve(out);
+  if (!contained || inside !== expectedName) {
+    throw new Error('拒绝删除：目标目录不是 ' + container + ' 的直接子目录（' + out + '）；未删除任何文件。');
+  }
+}
+
+/** 整树复制时跳过的目录／文件：生成物、依赖、以及本机私有配置都不该进副本。 */
+const COPY_EXCLUDED_DIRS = new Set(['.local', 'node_modules']);
+const COPY_EXCLUDED_FILE = /\.local\.json$/u;
+
+/**
+ * 把 `miniprogram/` **整棵树**复制进副本，返回已复制的相对路径集合。
+ *
+ * ⛔ 这里不读 `files` 清单：逐项清单每加一个新的 `utils/*.js` 就漏一次（2026-11 实测漏了
+ * `utils/time-format.js` 与 `utils/session.js`，科普/社区/消息/收藏/识别历史五条动线在副本里
+ * 全部 `MODULE_NOT_FOUND`，又被 `knowledge-api.js` 吞成「资料服务暂不可用」）。清单现在只做
+ * 「这些必须在产物里」的断言，完整性由整树复制保证。
+ */
+function copyMiniprogramTree(sourceRoot, targetRoot) {
+  const copied = new Set();
+  const walk = (relativeDir) => {
+    for (const entry of readdirSync(join(sourceRoot, relativeDir), { withFileTypes: true })) {
+      const relativePath = relativeDir === '' ? entry.name : join(relativeDir, entry.name);
+      if (entry.isDirectory()) {
+        if (COPY_EXCLUDED_DIRS.has(entry.name)) continue;
+        walk(relativePath);
+        continue;
+      }
+      // 符号链接等内容一律不跟随：副本要能一口咬定「产物里每个文件都来自仓库里同名文件」。
+      if (!entry.isFile() || COPY_EXCLUDED_FILE.test(entry.name)) continue;
+      const target = join(targetRoot, relativePath);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(join(sourceRoot, relativePath), target);
+      copied.add(relativePath.split(sep).join('/'));
+    }
+  };
+  walk('');
+  return copied;
 }
 
 /**
@@ -213,7 +332,9 @@ function printNextSteps({ out, apiBaseUrl, noUrlCheck }) {
   console.log('  3) 勾选项：' + (noUrlCheck
     ? '副本已写入 setting.urlCheck=false，「详情 → 本地设置 → 不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」应当已是勾选状态，不用再手动勾。'
     : '若仍报「不在以下 request 合法域名列表」，在「详情 → 本地设置」勾「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」，或重新生成时加 --no-urlcheck 免手改。'));
-  console.log('  副本在 ' + displayPath(root, LOCAL_ROOT) + '/ 下，已被 .gitignore 忽略；共享工程与 release 副本一个字节都没改。');
+  console.log(isInside(root, out)
+    ? '  副本在 ' + displayPath(root, LOCAL_ROOT) + '/ 下，已被 .gitignore 忽略；共享工程与 release 副本一个字节都没改。'
+    : '  副本在 ' + out + '（`--out` 指定的仓库外目录：不在 git 里，也不会被文档锚点闸门扫到）；共享工程与 release 副本一个字节都没改。');
 }
 
 try {
@@ -229,7 +350,22 @@ try {
   const { noUrlCheck, force, rest: flagArgs } = takeDemoFlags(argv);
   // release 副本必须是「共享工程原样 + 断网」：放松域名校验只服务本机演示，出现在 release 里就是配置错。
   if (mode === 'release' && noUrlCheck) throw new Error('release 不接受 --no-urlcheck：release 副本必须保持 setting.urlCheck=true（域名校验开启）。本机演示请用 `local --config <file> --no-urlcheck`。');
-  const { appId: appIdOverride, rest: args } = mode === 'local' ? takeAppId(flagArgs) : { appId: null, rest: flagArgs };
+  // 输出位置也先摘掉：`--config` 的校验器只认「恰好两个参数」，旗标留在 args 里会把它变成用法错误。
+  const { outRoot, dryRun, rest: demoArgs } = takeOutRoot(flagArgs);
+  const { appId: appIdOverride, rest: args } = mode === 'local' ? takeAppId(demoArgs) : { appId: null, rest: demoArgs };
+  // 输出位置在碰源工程之前就定下来：`--out` 落在仓库内属于参数错误，跟源工程是否可用无关。
+  const out = resolveImportRoot({ outRoot, mode });
+  const expectedName = 'wechat-' + mode;
+  // `--dry-run`：只回答「会生成到哪、目标是否已存在」，不读源工程、不建目录、不复制、不删除。
+  if (dryRun) {
+    const lines = ['dry-run：校验通过，没有创建、复制或删除任何文件。', mode.toUpperCase() + ' import root: ' + out];
+    if (existsSync(out)) {
+      if (!force) throw new Error(existingOutputMessage(out));
+      assertRemovableOutput(out, expectedName, dirname(out));
+      lines.push('  目标已存在（加 --force 会先删掉这一个目录再重建）：' + out);
+    }
+    throw new DryRunStop(lines.join('\n'));
+  }
   const runtime = mode === 'local' ? readLocalConfig(configArgument(args)) : { mode: 'disabled', apiBaseUrl: '' };
   if (mode === 'release' && args.length) throw new Error('Release does not accept a local configuration.');
   // 基址必须自带业务前缀：客户端拿它直接拼 `/auth/wechat`，漏写不会报错，只会在运行时 404。
@@ -243,13 +379,12 @@ try {
   if (sharedRuntime !== "// Shared source always has networking disabled. Local preparation writes only an ignored copy.\nmodule.exports = { mode: 'disabled', apiBaseUrl: '' }\n") throw new Error('Shared runtime changed. Refuse to package a possible local/stub configuration.');
   // 组件目录从 usingComponents 派生（在任何目录被创建之前完成校验）：新增组件无需再改本脚本。
   const components = componentDirectories(join(root, 'miniprogram'));
-  const out = join(LOCAL_ROOT, 'wechat-' + mode);
   // 默认仍拒绝复用：personal overrides 与陈旧生成物不能悄悄留下。`--force` 才重建，且只删这一个生成目录。
   if (existsSync(out)) {
-    if (!force) throw new Error('Output already exists: ' + out + '. Keep it for inspection, pass --force to regenerate it (only that generated directory is removed), or remove it yourself before preparing again.');
-    assertRemovableOutput(out, 'wechat-' + mode);
+    if (!force) throw new Error(existingOutputMessage(out));
+    assertRemovableOutput(out, expectedName, dirname(out));
     rmSync(out, { recursive: true, force: true });
-    console.log('已删除旧副本（--force）：' + displayPath(root, out));
+    console.log('已删除旧副本（--force）：' + (isInside(root, out) ? displayPath(root, out) : out));
   }
   mkdirSync(out, { recursive: true });
   const app = JSON.parse(readFileSync(join(root, 'miniprogram/app.json'), 'utf8'));
@@ -405,17 +540,10 @@ try {
     const pageWxss = join(root, 'miniprogram', page + '.wxss');
     if (existsSync(pageWxss)) files.push(page + '.wxss');
   }
-  for (const file of files) {
-    const target = join(out, 'miniprogram', file);
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(join(root, 'miniprogram', file), target);
-  }
-  // 组件整目录复制：usingComponents 派生出的目录连同 .wxss 与将来新增的附属文件一起进副本。
-  for (const component of components) {
-    const target = join(out, 'miniprogram', component.path);
-    mkdirSync(dirname(target), { recursive: true });
-    cpSync(component.source, target, { recursive: true });
-  }
+  // 整树复制：清单只说「这些必须在产物里」，不再充当复制计划（清单漏一项＝副本静默缺文件）。
+  const copied = copyMiniprogramTree(join(root, 'miniprogram'), join(out, 'miniprogram'));
+  const missing = files.filter(file => !copied.has(file));
+  if (missing.length) throw new Error('打包清单里的文件没有进副本：' + missing.join('、') + '。请检查 miniprogram/ 是否缺文件；已生成的部分在 ' + out + '。');
   assertComponentsCopied(components, join(out, 'miniprogram'));
   // 只有**生成副本**的 appid 允许覆盖；共享工程两份 project.config.json 全程只读
   // （tests/local-debug.test.mjs 按字节比对原文，覆盖值不可能回流到仓库）。
@@ -445,4 +573,13 @@ try {
   console.log('测试号申请入口（没有「小程序项目成员」资格也能扫码登录）：' + TEST_ACCOUNT_URL + ' ；该页需在浏览器登录微信公众平台后由前端渲染。');
   if (appIdOverride !== null) console.log('注意：测试号 openid 与正式号不同，服务端身份摘要把 appId 与 openid 一起做 HMAC，故测试号账号/数据与正式环境不互通，不能作为正式验收证据。');
   if (mode === 'local') printNextSteps({ out, apiBaseUrl: runtime.apiBaseUrl, noUrlCheck });
-} catch (error) { console.error(error.message); process.exitCode = 1; }
+} catch (error) {
+  // `--dry-run` 走这里是为了不改 200 行复制逻辑的缩进：它不是失败，正常收尾、退出码 0。
+  if (error instanceof DryRunStop) {
+    console.log(error.message);
+  } else {
+    console.error(error.message);
+    // `--out` 落在仓库内 → 2（参数错误）；其余失败仍是 1，旧调用方看不出差别。
+    process.exitCode = error.exitCode ?? 1;
+  }
+}

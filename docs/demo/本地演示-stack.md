@@ -396,16 +396,18 @@ curl.exe -s -w "`n%{http_code}`n" http://127.0.0.1:38110/api/v1/public/home
    - `apiBaseUrl` **必须带 `/api/v1`**：小程序是直接拿它拼 `/auth/session` 等路径的（客户端不做前缀补全），漏了会一路 404。
    - 必须是 `http://` + 私有地址（`127.0.0.1`）+ 端口与 `port` 一致；带用户名密码、query、`#` 都会被拒。
 
-2. 生成隔离工程：
+2. 生成隔离工程（放仓库外，否则文档锚点闸门会假红）：
 
    ```powershell
-   node tools/prepare-wechat.mjs local --config config/debug.local.json
+   node tools/prepare-wechat.mjs local --config config/debug.local.json --out "E:\GengYunCommander\.pg17\demo-project"
    ```
 
-   期望最后打印 `LOCAL import root: <仓库>\.local\wechat-local`。三条真实行为，别踩：
-   - 输出目录**已存在就报错**（`Output already exists: …`）：要重来先删掉那个确切目录，它不会覆盖。
+   期望最后打印 `LOCAL import root: E:\GengYunCommander\.pg17\demo-project\wechat-local`（`--out` 是**根目录**，副本名仍固定 `wechat-local`）；不加 `--out` 时默认仍是 `<仓库>\.local\wechat-local`。五条真实行为，别踩：
+   - `--out` 落在仓库树内直接拒绝（退出码 2）：副本里的 `miniprogram/**` 与仓库同名文件并存，会让 `verify-doc-anchors --strict --scan docs` 把单义锚点判成多义（假红）。被拒时一个目录都不建。
+   - 输出目录**已存在就报错**（`Output already exists: …`）：要重来先删掉那个确切目录，或加 `--force`（只删 `--out` 根下这一个），它不会静默覆盖。
    - 共享工程必须 `compileType=miniprogram`、`miniprogramRoot=miniprogram/`、`setting.urlCheck=true`，且共享 `miniprogram/config/runtime.js` 仍是 disabled 原文；否则工具拒绝生成（这是防呆，不是 bug）。
    - 生成副本里的 AppID 默认沿用共享工程；协作者要用自己的测试号时加 `--appid wx…`（`wx` + 16 位小写十六进制）。
+   - 复制是**整树复制**（跳过 `.local`、`node_modules`、`*.local.json`）：`miniprogram/` 里新增的文件（如 `utils/*.js`）不会再漏进副本，清单只做「必须在产物里」的断言。
 
 3. 导入与放行：开发者工具 → 导入项目 → 选上面那个 `LOCAL import root` 目录；在这个**隔离副本**里勾「详情 → 本地设置 → 不校验合法域名…」（只在这个副本里勾，别改共享工程）。
 
