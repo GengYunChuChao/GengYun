@@ -148,14 +148,14 @@ node tools/demo-stack.mjs up --mode real --port 38110 --pg-port 55510 --env-file
 2. 再用**一次** `psql -c`（单条 simple query ⇒ 整组原子）幂等写入**本机演示政策**：
    - `public.admin_accounts` 一条不可登录的演示复核账号（`login_name='demo-stack-operator'`，
      `credential_hash` 是字面量占位、永不参与登录）；
-   - `public.recipients` 一条演示接收方 `demo-stack-weed-vision`（`capability='weed'`，
-     `policy_version='demo-stack-local-2'`，`config_version='demo-stack-config-1'`，两个 `*_verified=true`，
-     留存 0/0，`enabled=true`），指向识别供应商端点域名 `tokenhub.tencentmaas.com`；
-   - `public.consent_policies` 两条 `verified` 政策：`media_processing` 与 `external_inference`
-     **都绑定**上面那条接收方，版本同为 `demo-stack-local-2`，都启用。
-     两条都绑不是多余：外发预留（`services/api/src/privacy/ledger-pg.ts`）要求**每一个**必需用途的
-     授权记录里都列出同一个接收方，而识别动线同时要这两个用途；只绑 `external_inference`
-     会在 `POST /recognitions` 以 403「用途 media_processing 未绑定接收方」拒绝。
+   - `public.recipients` **两条**演示接收方（`policy_version='demo-stack-local-3'`、`config_version='demo-stack-config-1'`、
+     两个 `*_verified=true`、留存 0/0、`enabled=true`）：`demo-stack-weed-vision`（`capability='weed'`，域名 `tokenhub.tencentmaas.com`）
+     服务识别动线；`demo-stack-tts-tencent`（`capability='tts'`，域名 `tts.tencentcloudapi.com`）服务语音合成；
+   - `public.consent_policies` 两条 `verified` 政策：`media_processing` 与 `external_inference` **都绑定**上面那两条接收方，
+     版本同为 `demo-stack-local-3`，都启用。两条都绑不是多余：外发预留（`services/api/src/privacy/ledger-pg.ts` 的 `resolveRecipient`）
+     先按 `capability` 过滤接收方、再要求恰好一条，不是一条就 403 `CONSENT_REQUIRED`：识别动线要这两个用途
+     （只绑 `external_inference` 会在 `POST /recognitions` 403「用途 media_processing 未绑定接收方」），
+     合成受理 `POST /speech/synthesis` 传 `capability='tts'` —— 只登记 weed 接收方时一过滤就是 0 行，真实 TTS 走不到供应商。
    - 版本号变化时先停用自家旧版本（`policy_version LIKE 'demo-stack-local-%' AND <> 当前版本`）；
      政策行一旦复核就不可改（`consent_policy_immutable`），换形状只能发新版本。
    - 标记逐字落在既有可见列（这两张表**没有** `note` 列）：政策的 `source_ref` / `review_evidence_ref`
