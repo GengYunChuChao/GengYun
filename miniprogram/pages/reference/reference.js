@@ -217,7 +217,7 @@ Page({
       label: '数据来源：随包离线副本（bundled-offline）——以下条件服务端当前无法如实判定，已改读随包副本（筛选条件未被丢弃）：' + rejected.join('；') + '。'
     }
     return { source: knowledgeApi.HERBICIDE_SOURCES.SERVER,
-      label: '数据来源：服务端接口 /herbicides（真实读数，等待返回）。' }
+      label: '数据来源：服务端接口 /herbicides（真实读数）。' }
   },
 
   runQuery: function (cursor) {
