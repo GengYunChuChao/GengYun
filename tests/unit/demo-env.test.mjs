@@ -29,6 +29,7 @@ import {
   isInside,
   parseJsonc,
   stripJsonc,
+  tencentCredentialNotes,
 } from '../../tools/demo-env.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -59,6 +60,12 @@ const FULL_FIXTURE = [
   '}',
   '',
 ].join('\n');
+
+/** 同一份夹具 + 腾讯云共享对（`tencentSecretId` / `tencentSecretKey` 是本机真实凭据文件的写法）。 */
+const TENCENT_FIXTURE = FULL_FIXTURE.replace(
+  `  "deletionLedgerKey": "ledg-${MARK}",`,
+  `  "deletionLedgerKey": "ledg-${MARK}",\n  "tencentSecretId": "AKID-${MARK}",\n  "tencentSecretKey": "key-${MARK}",`,
+);
 
 function withTempDir(run) {
   const dir = mkdtempSync(join(tmpdir(), 'gy-demo-env-'));
@@ -130,10 +137,20 @@ test('decodeCredentialText：UTF-8 与 GBK（注释历史遗留）都能读，�
 // ────────────────────────────────────────────────────────── 键映射
 
 test('collectEnv：13 个 env 键按固定顺序产出，固定值不来自凭据', () => {
-  const { values, generated, missing } = collectEnv(parseJsonc(FULL_FIXTURE));
+  const { values, generated, missing, optionalMissing } = collectEnv(parseJsonc(FULL_FIXTURE));
   assert.deepEqual(missing, [], '齐全的凭据不该报缺键');
   const envNames = values.map((row) => row.env);
-  assert.deepEqual(envNames, ENV_SPECS.map((spec) => spec.env), '输出顺序必须与 ENV_SPECS 一致（文件可 diff）');
+  assert.deepEqual(
+    envNames,
+    ENV_SPECS.filter((spec) => !spec.optional).map((spec) => spec.env),
+    '输出顺序必须与 ENV_SPECS（必填项）一致（文件可 diff）',
+  );
+  assert.deepEqual(optionalMissing.map((row) => row.env), [
+    'TENCENTCLOUD_SECRET_ID',
+    'TENCENTCLOUD_SECRET_KEY',
+    'TENCENTCLOUD_ASR_SECRET_ID',
+    'TENCENTCLOUD_ASR_SECRET_KEY',
+  ]);
   assert.deepEqual(envNames, [
     'WECHAT_APP_ID',
     'WECHAT_APP_SECRET',
@@ -159,6 +176,60 @@ test('collectEnv：13 个 env 键按固定顺序产出，固定值不来自凭�
   assert.equal(generated.length, 1);
   assert.equal(generated[0].env, 'MEDIA_OBJECT_REF_KEY');
   assert.equal(generated[0].reused, false);
+});
+
+test('collectEnv：腾讯云凭据是**可选**键——缺了不进 missing，给了就原样带上', () => {
+  const bare = collectEnv(parseJsonc(FULL_FIXTURE));
+  assert.deepEqual(bare.missing, [], '缺 TENCENTCLOUD_* 不该拦生成：识别与文字问答照常可跑');
+  assert.deepEqual(bare.optionalMissing.map((row) => row.env), [
+    'TENCENTCLOUD_SECRET_ID',
+    'TENCENTCLOUD_SECRET_KEY',
+    'TENCENTCLOUD_ASR_SECRET_ID',
+    'TENCENTCLOUD_ASR_SECRET_KEY',
+  ]);
+  assert.deepEqual(
+    bare.values.filter((row) => row.section === 'tencent'),
+    [],
+    '没有凭据就不许伪造值写进 env 文件',
+  );
+  assert.ok(!JSON.stringify(bare.optionalMissing).includes(MARK), '缺键清单里不许出现任何值');
+
+  const shared = collectEnv({
+    ...parseJsonc(FULL_FIXTURE),
+    tencentSecretId: `AKID-${MARK}`,
+    tencentSecretKey: `key-${MARK}`,
+  });
+  assert.deepEqual(shared.optionalMissing.map((row) => row.env), [
+    'TENCENTCLOUD_ASR_SECRET_ID',
+    'TENCENTCLOUD_ASR_SECRET_KEY',
+  ]);
+  const byEnv = new Map(shared.values.map((row) => [row.env, row.value]));
+  assert.equal(byEnv.get('TENCENTCLOUD_SECRET_ID'), `AKID-${MARK}`, '凭据里的 tencentSecretId ⇒ env 的 TENCENTCLOUD_SECRET_ID');
+  assert.equal(byEnv.get('TENCENTCLOUD_SECRET_KEY'), `key-${MARK}`);
+});
+
+test('tencentCredentialNotes：逐条点名「缺哪个键 ⇒ 哪条动线 503」，只列键名', () => {
+  const bare = tencentCredentialNotes(collectEnv(parseJsonc(FULL_FIXTURE)).values);
+  assert.equal(bare.length, 2, '共享对与专用对都缺：TTS 一条、ASR 一条');
+  assert.match(bare[0], /TENCENTCLOUD_SECRET_ID/u);
+  assert.match(bare[0], /tencentSecretId/u, '要给出凭据文件里的写法，人才知道往哪加');
+  assert.match(bare[0], /TTS 语音合成会 503 PROVIDER_UNAVAILABLE/u);
+  assert.match(bare[1], /ASR/u);
+  assert.match(bare[1], /503 PROVIDER_UNAVAILABLE/u);
+  assert.ok(!bare.join('\n').includes(MARK), '提示里不许出现任何值');
+
+  const sharedOnly = tencentCredentialNotes(
+    collectEnv({ ...parseJsonc(FULL_FIXTURE), tencentSecretId: 'AKID', tencentSecretKey: 'k' }).values,
+  );
+  assert.equal(sharedOnly.length, 1, '共享对齐了：TTS 不再提示');
+  assert.match(sharedOnly[0], /ASR 未配专用子账号对/u);
+  assert.match(sharedOnly[0], /回退共享对/u);
+
+  const asrOnly = tencentCredentialNotes(
+    collectEnv({ ...parseJsonc(FULL_FIXTURE), tencentAsrSecretId: 'ASRID', tencentAsrSecretKey: 'ASRKEY' }).values,
+  );
+  assert.equal(asrOnly.length, 1, '只有专用对：ASR 可用，只提 TTS');
+  assert.match(asrOnly[0], /TTS 语音合成会 503/u);
 });
 
 test('collectEnv：扁平写法（本机真实凭据的形状）与嵌套写法等价', () => {
@@ -252,6 +323,43 @@ test('CLI 正常一次：exit 0，写 13 个键，stdout 只说键数/路径/生
     assert.match(body, /^WECHAT_APP_ID=/mu);
     assert.match(body, /^MEDIA_OBJECT_REF_KEY=[0-9a-f]{64}$/mu);
     assert.match(body, /本机演示用/u, 'MEDIA_OBJECT_REF_KEY 的注释要写明是本机演示用');
+  });
+});
+
+test('CLI 缺腾讯云凭据：仍 exit 0 写出可用 env，stdout 与文件里都点名 tts/asr 会 503', () => {
+  withTempDir((dir) => {
+    const from = writeFixture(dir, 'credentials.local.json', FULL_FIXTURE);
+    const out = join(dir, 'demo-real.env');
+    const result = runTool(['--from', from, '--out', out]);
+    assert.equal(result.status, 0, `缺可选键不该拦生成，实际 ${result.status}\n${result.stderr}`);
+
+    const printed = `${result.stdout}${result.stderr}`;
+    assert.match(printed, /TENCENTCLOUD_SECRET_ID/u, '要点名缺哪个键');
+    assert.match(printed, /TTS 语音合成会 503 PROVIDER_UNAVAILABLE/u, '要说清哪条动线不可用');
+    assert.match(printed, /ASR[^\n]*503 PROVIDER_UNAVAILABLE/u);
+    assert.match(printed, /识别与文字问答不受影响/u, '要说明缺了不影响主链路');
+    assert.doesNotMatch(printed, new RegExp(MARK, 'u'), `提示里出现了明文标记：\n${printed}`);
+
+    const body = readFileSync(out, 'utf8');
+    assert.match(body, /# 可选的腾讯云凭据缺项/u, 'env 文件里也要写清缺了什么，人才不会以为是工具漏读');
+    assert.doesNotMatch(body, /^TENCENTCLOUD_[A-Z_]+=./mu, '缺的键绝不伪造值写进文件');
+  });
+});
+
+test('CLI 给了腾讯云共享对：写出 15 个键，TENCENTCLOUD_* 进 env 文件', () => {
+  withTempDir((dir) => {
+    const from = writeFixture(dir, 'credentials.local.json', TENCENT_FIXTURE);
+    const out = join(dir, 'demo-real.env');
+    const result = runTool(['--from', from, '--out', out]);
+    assert.equal(result.status, 0, `应 exit 0，实际 ${result.status}\n${result.stderr}`);
+    assert.match(result.stdout, /已写出 15 个键/u);
+    assert.match(result.stdout, /ASR 未配专用子账号对/u, '共享对齐了：只剩 ASR 回退这一条提示');
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(MARK, 'u'), '值不许上屏');
+
+    const body = readFileSync(out, 'utf8');
+    assert.match(body, new RegExp(`^TENCENTCLOUD_SECRET_ID=AKID-${MARK}$`, 'mu'));
+    assert.match(body, new RegExp(`^TENCENTCLOUD_SECRET_KEY=key-${MARK}$`, 'mu'));
+    assert.match(body, /—— 腾讯云 TC3 凭据/u, '要有自己的分节标题，读文件的人认得出这是可选段');
   });
 });
 
