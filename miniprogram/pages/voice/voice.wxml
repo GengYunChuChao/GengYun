@@ -39,19 +39,19 @@
       <view class="section-head__meta">{{checkState || '未选择内容'}}</view>
     </view>
     <view class="panel">
-      <view class="hint" wx:if="{{samples.length === 0}}">
+      <view class="hint" wx:if="{{broadcastables.length > 0}}">
+        {{broadcastNote}}
+      </view>
+      <view class="hint" wx:if="{{broadcastables.length > 0}}">选中一条后，核对通过（check_state=passed）才允许点下方「合成」。</view>
+      <view class="row-actions" wx:if="{{broadcastables.length > 0}}">
+        <button wx:for="{{broadcastables}}" wx:key="id" class="btn {{selectedSampleId === item.id ? 'btn--primary' : 'btn--secondary'}} row-actions__item" aria-role="button" aria-label="{{item.label}}" data-id="{{item.id}}" bindtap="onSelectSample">{{item.label}}</button>
+      </view>
+      <view class="hint" wx:if="{{samples.length === 0 && broadcastables.length === 0}}">
         本地替身样本仅在本地替身工程可见（当前不可见）。本页不发明内容来源：没有可核对的正文时不会合成，也不会播报。
       </view>
+      <view class="hint" wx:if="{{samples.length > 0}}">以下为本地替身样本（非真实音频、非真实资料，仅供控件走查；不计「已听取」）。</view>
       <view class="row-actions" wx:if="{{samples.length > 0}}">
-        <button
-          wx:for="{{samples}}"
-          wx:key="id"
-          class="btn {{selectedSampleId === item.id ? 'btn--primary' : 'btn--secondary'}} row-actions__item"
-          aria-role="button"
-          aria-label="{{item.label}}"
-          data-id="{{item.id}}"
-          bindtap="onSelectSample"
-        >{{item.label}}</button>
+        <button wx:for="{{samples}}" wx:key="id" class="btn {{selectedSampleId === item.id ? 'btn--primary' : 'btn--secondary'}} row-actions__item" aria-role="button" aria-label="{{item.label}}" data-id="{{item.id}}" bindtap="onSelectSample">{{item.label}}</button>
       </view>
 
       <view class="hint" wx:if="{{checkState}}">check_state：{{checkState}}</view>
