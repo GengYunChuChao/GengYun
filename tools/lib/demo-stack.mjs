@@ -662,7 +662,7 @@ const demoEvidenceRef = (purpose, kind) =>
  * `weed` 与 `tts` 两条接收方；外发预留再按 `r.capability` 各取一条
  * （`privacy/ledger-pg.ts:633-659` 要求「唯一可用接收方」）。
  */
-const DEMO_RECIPIENT_BINDINGS = JSON.stringify({
+const DEMO_RECIPIENT_BINDING_SPEC = Object.freeze({
   [DEMO_RECIPIENT_ID]: {
     capability: 'weed',
     config_version: DEMO_RECIPIENT_CONFIG_VERSION,
@@ -682,6 +682,16 @@ const DEMO_RECIPIENT_BINDINGS = JSON.stringify({
     deletion_evidence_ref: demoEvidenceRef('external_inference', 'deletion'),
   },
 });
+
+export const DEMO_RECIPIENT_BINDINGS = JSON.stringify(DEMO_RECIPIENT_BINDING_SPEC);
+
+/**
+ * 演示接收方的 id 清单（顺序 = 绑定表的键序）。
+ *
+ * `--demo` 的自检文案从这里渲染（原来手写「接收方 demo-stack-weed-vision」，加了 TTS/ASR 接收方
+ * 之后就只报一条，看着像另一条没写进去）。加接收方时只改上面那张绑定表，显示层不用动。
+ */
+export const DEMO_RECIPIENT_IDS = Object.freeze(Object.keys(DEMO_RECIPIENT_BINDING_SPEC));
 
 /**
  * `--demo` 的隐私政策 SQL（纯函数：不执行、不读库、不读环境变量）。
@@ -798,6 +808,28 @@ export function buildDemoConsentSql(options = {}) {
 /** 演示档写入后给人看的一句总结（⛔ 不要把这段当成生产核验结论）。 */
 export const DEMO_CONSENT_NOTICE =
   '这是本机演示政策，不是生产核验：只覆盖本机演示栈，external_inference 绑定的是本机演示接收方';
+
+/**
+ * `up --demo` 自检的第一行：政策版本 + 政策清单 + 接收方清单（纯渲染，不手写枚举）。
+ *
+ * 为什么不把这句钉死在 CLI 里：`#1198` 之前它手写成「两条政策 + 接收方 demo-stack-weed-vision」，
+ * 演示档变成 3 条政策（`recording`）与 3 个接收方（`demo-stack-asr-tencent`）之后，每次 `up --demo`
+ * 都在打印一句半真半假的话。清单与接收方都从 `DEMO_CONSENT_PURPOSES` / `DEMO_RECIPIENT_IDS` 渲染，
+ * 加第四条政策时这里一行不用改。
+ *
+ * 形参只为单测能喂一组「假想的第四条政策」证明它真的在渲染，而不是又在手写数字。
+ */
+export function demoConsentHeadline(purposes = DEMO_CONSENT_PURPOSES, recipients = DEMO_RECIPIENT_IDS) {
+  return `  演示隐私政策：${DEMO_CONSENT_POLICY_VERSION}（${purposes.join(' / ')}）+ 接收方 ${recipients.join(' / ')}`;
+}
+
+/**
+ * `up --demo` 幂等分支的结论行：条数同样从常量渲染（原来手写「两条政策」，`#1198` 之后是 3 条）。
+ * 与 `demoConsentHeadline` 共用一组形参，单测可以喂「第四条政策」证明这条也在渲染。
+ */
+export function demoConsentIdleLine(purposes = DEMO_CONSENT_PURPOSES, recipients = DEMO_RECIPIENT_IDS) {
+  return `  已是演示档：${purposes.length} 条政策与 ${recipients.length} 个接收方均已存在且内容一致，未重复写入（幂等）`;
+}
 
 /**
  * 未开 `--demo` 时探测「识别动线会不会 403」的只读查询：数一数有没有

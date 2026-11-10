@@ -38,7 +38,7 @@ import {
   DEMO_CONSENT_NOTICE,
   DEMO_CONSENT_PURPOSES,
   DEMO_CONSENT_POLICY_VERSION,
-  DEMO_RECIPIENT_ID,
+  DEMO_RECIPIENT_IDS, demoConsentHeadline, demoConsentIdleLine,
   desiredApprovals,
   parseConsentReadiness,
   describeEnvSources,
@@ -471,7 +471,7 @@ function applyDemoCatalog({ options, pgBin }) {
 }
 
 /**
- * 演示档：迁移完成后把三个契约开关置为开启，并写入两条演示隐私政策 + 一条演示接收方。
+ * 演示档：迁移完成后把三个契约开关置为开启，并写入演示隐私政策与演示接收方（清单见 `DEMO_CONSENT_PURPOSES` / `DEMO_RECIPIENT_IDS`）。
  *
  * 只走 psql 的**一个** `-c`（每步一组）：同一 simple query 就是同一事务，失败整组回滚；
  * SQL 自带幂等条件，重复 `up --demo` 不会再次累加 revision，也不会重写 `updated_at`。
@@ -510,21 +510,21 @@ function applyDemoProfile({ options, pgBin }) {
     return EXIT.DEMO;
   }
 
-  const touched = consentOutput
+  const consentLines = consentOutput
     .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => DEMO_CONSENT_PURPOSES.includes(line));
-  const recipientTouched = consentOutput
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .includes(DEMO_RECIPIENT_ID);
-  say(`  演示隐私政策：${DEMO_CONSENT_POLICY_VERSION}（${DEMO_CONSENT_PURPOSES.join(' / ')}）+ 接收方 ${DEMO_RECIPIENT_ID}`);
-  if (touched.length === 0 && !recipientTouched) {
-    say('  已是演示档：两条政策与接收方均已存在且内容一致，未重复写入（幂等）');
+    .map((line) => line.trim());
+  // 政策与接收方的清单全部从 `tools/lib/demo-stack.mjs` 的常量渲染（`DEMO_CONSENT_PURPOSES` /
+  // `DEMO_RECIPIENT_IDS`），不再手写条数与单条接收方：`#1198` 加了 `recording` 与 ASR 接收方之后，
+  // 原来那两句就成了半句假话；以后加第四条政策，这里一行都不用改。
+  const touched = DEMO_CONSENT_PURPOSES.filter((purpose) => consentLines.some((line) => line.includes(purpose)));
+  const touchedRecipients = DEMO_RECIPIENT_IDS.filter((id) => consentLines.some((line) => line.includes(id)));
+  say(demoConsentHeadline());
+  if (touched.length === 0 && touchedRecipients.length === 0) {
+    say(demoConsentIdleLine());
   } else {
     const parts = [];
     if (touched.length > 0) parts.push(`政策 ${touched.join(' / ')}`);
-    if (recipientTouched) parts.push(`接收方 ${DEMO_RECIPIENT_ID}`);
+    if (touchedRecipients.length > 0) parts.push(`接收方 ${touchedRecipients.join(' / ')}`);
     say(`  本次写入/启用：${parts.join('；')}`);
   }
   say(`  ！${DEMO_CONSENT_NOTICE}`);

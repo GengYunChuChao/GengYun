@@ -4,9 +4,11 @@
  * ⛔ 本文件**不**起 PostgreSQL、**不**起 API、**不**发 HTTP、**不**读环境变量、**不**写文件：
  * 端口、env、日志、pid 记录全部由用例注入。真起服务的部分只走手动 smoke
  * （见 `docs/demo/本地演示-stack.md`），不进 CI。
+ * 唯一一次读盘是末尾那条用例读 `tools/demo-stack.mjs` 源码——只为钉住「自检文案确实调渲染函数」。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   APPROVAL_FLAGS,
@@ -14,9 +16,12 @@ import {
   DEFAULT_PORTS,
   DEMO_CONSENT_NOTICE,
   DEMO_CONSENT_POLICY_VERSION,
+  DEMO_CONSENT_PURPOSES,
   DEMO_FLAG_KEYS,
   DEMO_FLAG_REASON,
+  DEMO_RECIPIENT_BINDINGS,
   DEMO_RECIPIENT_ID,
+  DEMO_RECIPIENT_IDS,
   DEMO_SCHEMA,
   ENV_FILE_TEMPLATE,
   EXTERNAL_KEYS,
@@ -37,6 +42,8 @@ import {
   buildPsqlFileArgs,
   classifyFailure,
   commandHasInstance,
+  demoConsentHeadline,
+  demoConsentIdleLine,
   describeEnvSources,
   desiredApprovals,
   detectApprovals,
@@ -784,4 +791,39 @@ test('政策就绪解析：数字读得出，读不出就是 null（不猜 0）'
   assert.equal(parseConsentReadiness('ERROR: relation "consent_policies" does not exist'), null);
   assert.equal(parseConsentReadiness(null), null);
   assert.equal(parseConsentReadiness('enabled_verified_policies=many'), null);
+});
+
+test('--demo 自检文案：政策数与接收方数从常量渲染，加第四条政策也不会陈旧', () => {
+  // ⛔ 这里不断言「2 条」或「3 条」这种数字：条数跟着常量走。main 上现在是 2 条政策 / 2 个接收方，
+  // `#1198` 合进来变 3 / 3（多 `recording` 与 `demo-stack-asr-tencent`），这条用例两种状态都成立。
+  const idle = demoConsentIdleLine();
+  assert.match(idle, new RegExp(`${DEMO_CONSENT_PURPOSES.length} 条政策`, 'u'), '条数必须等于 DEMO_CONSENT_PURPOSES 的长度');
+  assert.match(idle, new RegExp(`${DEMO_RECIPIENT_IDS.length} 个接收方`, 'u'), '接收方数必须等于 DEMO_RECIPIENT_IDS 的长度');
+
+  const headline = demoConsentHeadline();
+  for (const purpose of DEMO_CONSENT_PURPOSES) {
+    assert.ok(headline.includes(purpose), `自检第一行必须逐个列出政策用途：缺 ${purpose}`);
+  }
+  for (const id of DEMO_RECIPIENT_IDS) {
+    assert.ok(headline.includes(id), `自检第一行必须逐个列出接收方：缺 ${id}`);
+  }
+  assert.equal(/两条政策|三条政策/u.test(`${idle}${headline}`), false, '不许再出现手写的「两条/三条政策」');
+
+  // 喂一组「假想的第四条政策 + 三个接收方」：渲染结果要跟着变，证明它不是又在手写数字。
+  const future = demoConsentIdleLine(
+    ['media_processing', 'external_inference', 'recording', 'model_training'],
+    ['demo-stack-weed-vision', 'demo-stack-tts-tencent', 'demo-stack-asr-tencent'],
+  );
+  assert.match(future, /4 条政策与 3 个接收方/u);
+  assert.ok(demoConsentHeadline(['a', 'b', 'c', 'd']).includes('d'), '第一行同样要跟着形参走');
+
+  assert.deepEqual([...DEMO_RECIPIENT_IDS], Object.keys(JSON.parse(DEMO_RECIPIENT_BINDINGS)), '接收方清单必须与绑定表同源');
+  assert.ok(DEMO_RECIPIENT_IDS.includes(DEMO_RECIPIENT_ID), 'weed 接收方在清单里');
+  assert.ok(DEMO_RECIPIENT_IDS.includes('demo-stack-tts-tencent'), 'TTS 接收方在清单里');
+
+  // CLI 必须真的调用这两个渲染函数：只测 lib 的话，CLI 里那两句手写文案还能照样陈旧。
+  const cli = readFileSync(new URL('../../tools/demo-stack.mjs', import.meta.url), 'utf8');
+  assert.ok(cli.includes('say(demoConsentHeadline())'), 'CLI 自检第一行必须调用渲染函数');
+  assert.ok(cli.includes('say(demoConsentIdleLine())'), 'CLI 幂等结论行必须调用渲染函数');
+  assert.equal(/say\([^)\n]*两条政策/u.test(cli), false, 'CLI 里不许再出现手写条数的自检文案');
 });
