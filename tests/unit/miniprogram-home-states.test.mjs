@@ -176,6 +176,23 @@ test('E2 失败与成功文案逐字来自 utils/debug.js，用户不需要猜',
   assert.match(read('miniprogram/pages/home/home.js'), /diagPassed: passed === true/)
 })
 
+test('演示副本收起「开发工具」区：devTools:false 才隐藏，缺省仍显示', () => {
+  const debug = read('miniprogram/utils/debug.js')
+  // 缺省显示（`!== false`），只有显式写 false 的副本才收起：仓库内本地联调行为不变。
+  assert.match(debug, /function devToolsEnabled\(wxApi\) \{[\s\S]*?runtime\.devTools === false/)
+  assert.match(debug, /module\.exports = \{ localEnabled: localEnabled, diagnose: diagnose, devToolsEnabled: devToolsEnabled \}/)
+  // 首页只看这个开关，不再直接看 localEnabled —— 否则演示副本会漏出工程脚手架。
+  const home = read('miniprogram/pages/home/home.js')
+  assert.match(home, /local: debug\.devToolsEnabled\(wx\)/)
+  assert.equal(home.includes('local: debug.localEnabled(wx)'), false, '首页不应再用 localEnabled 决定开发工具区')
+  // 副本由 prepare-wechat 生成，写在 runtime.js 里；源工程那份必须仍是 disabled。
+  assert.match(
+    read('tools/prepare-wechat.mjs'),
+    /JSON\.stringify\(\{ mode: runtime\.mode, apiBaseUrl: runtime\.apiBaseUrl, devTools: false \}\)/
+  )
+  assert.match(read('miniprogram/config/runtime.js'), /mode: 'disabled'/)
+})
+
 // —— 3. 空态与错误态是否可区分 ———————————————————————————————
 
 test('S1 统一状态组件里空态与错误态的图标与标题都不同（不会混成一句）', () => {
