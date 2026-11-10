@@ -685,28 +685,34 @@ test('演示政策：不带 --demo 一条语句都不生成（行为与旧版一
   assert.deepEqual(buildDemoConsentStatements(), []);
 });
 
-test('演示政策：--demo 生成 9 条语句，顺序是 复核账号 → 三个接收方 → 停用旧演示版本 → 三条政策 → 启用', () => {
+test('演示政策：--demo 生成 10 条语句，顺序是 复核账号 → 四个接收方 → 停用旧演示版本 → 三条政策 → 启用', () => {
   const statements = buildDemoConsentStatements({ demo: true });
-  assert.equal(statements.length, 9);
+  const recipientCount = DEMO_RECIPIENT_IDS.length;
+  assert.equal(recipientCount, 4, '四条演示接收方：识别 / 合成 / 转写 / 文字问答');
+  assert.equal(statements.length, 1 + recipientCount + 1 + DEMO_CONSENT_PURPOSES.length + 1);
   assert.match(statements[0], /^INSERT INTO public\.admin_accounts/u);
-  assert.match(statements[1], /^INSERT INTO public\.recipients/u);
-  assert.match(statements[1], /'weed'/u);
-  assert.match(statements[2], /^INSERT INTO public\.recipients/u);
-  assert.match(statements[2], /'tts'/u, '合成域按 capability=tts 找唯一接收方（privacy/ledger-pg.ts 的 resolveRecipient）');
-  assert.match(statements[3], /^INSERT INTO public\.recipients/u);
-  assert.match(statements[3], /'asr'/u, '转写域按 capability=asr 找唯一接收方（app.ts 的 speechEgress）');
-  assert.match(statements[4], /^UPDATE public\.consent_policies/u);
-  assert.match(statements[4], /demo-stack-local-%/u, '只停自家旧版本');
-  for (const [offset, purpose] of DEMO_CONSENT_PURPOSES.entries()) {
-    assert.match(statements[5 + offset], /^INSERT INTO public\.consent_policies/u);
-    assert.match(statements[5 + offset], new RegExp(`'${purpose}'`, 'u'), `第 ${5 + offset} 条应该是 ${purpose} 的政策`);
+  const recipients = statements.slice(1, 1 + recipientCount);
+  for (const [offset, statement] of recipients.entries()) {
+    assert.match(statement, /^INSERT INTO public\.recipients/u, `第 ${1 + offset} 条应该是接收方`);
   }
-  assert.match(statements[8], /^UPDATE public\.consent_policies/u);
+  assert.match(recipients[0], /'weed'/u);
+  assert.match(recipients[1], /'tts'/u, '合成域按 capability=tts 找唯一接收方（privacy/ledger-pg.ts 的 resolveRecipient）');
+  assert.match(recipients[2], /'asr'/u, '转写域按 capability=asr 找唯一接收方（app.ts 的 speechEgress）');
+  assert.match(recipients[3], /'llm'/u, '问答域按 capability=llm 找唯一接收方（privacy/task-egress.ts 的 createChatEgress）');
+  const retireIndex = 1 + recipientCount;
+  assert.match(statements[retireIndex], /^UPDATE public\.consent_policies/u);
+  assert.match(statements[retireIndex], /demo-stack-local-%/u, '只停自家旧版本');
+  for (const [offset, purpose] of DEMO_CONSENT_PURPOSES.entries()) {
+    const index = retireIndex + 1 + offset;
+    assert.match(statements[index], /^INSERT INTO public\.consent_policies/u);
+    assert.match(statements[index], new RegExp(`'${purpose}'`, 'u'), `第 ${index} 条应该是 ${purpose} 的政策`);
+  }
+  assert.match(statements.at(-1), /^UPDATE public\.consent_policies/u);
 
   const sql = buildDemoConsentSql({ demo: true });
   assert.equal(typeof sql, 'string');
   assert.equal(sql.split('INSERT INTO public.consent_policies').length - 1, 3, '三条政策各一条 INSERT');
-  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, 3, '识别 / 合成 / 转写各一个接收方');
+  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, recipientCount, '识别 / 合成 / 转写 / 问答各一个接收方');
   assert.equal(sql.split('INSERT INTO public.admin_accounts').length - 1, 1);
 });
 
@@ -729,16 +735,23 @@ test('演示政策：voice_question 的三个必需用途都能在演示档里�
 
   // 外发预留要求「每个必需用途的授权记录里都有同一个 recipientId」⇒ 三条政策都要绑 asr。
   for (const statement of policyInserts) {
-    for (const recipientId of [DEMO_RECIPIENT_ID, 'demo-stack-tts-tencent', 'demo-stack-asr-tencent']) {
-      assert.ok(statement.includes(`"${recipientId}"`), `政策没绑定 ${recipientId}：转写受理会 403「用途 X 未绑定接收方」`);
+    for (const recipientId of [DEMO_RECIPIENT_ID, 'demo-stack-tts-tencent', 'demo-stack-asr-tencent', 'demo-stack-llm-deepseek']) {
+      assert.ok(statement.includes(`"${recipientId}"`), `政策没绑定 ${recipientId}：转写/问答受理会 403「用途 X 未绑定接收方」`);
     }
     assert.match(statement, /"capability":"asr"/u);
+    assert.match(statement, /"capability":"llm"/u, '文字问答的外发预留按 capability=llm 取接收方');
   }
   // 接收方行：能力串必须真的登记成 asr，否则 resolveRecipient 按 capability 过滤后 0 行。
   const asrRecipient = statements.find((statement) => statement.includes(`'demo-stack-asr-tencent'`) && /^INSERT INTO public\.recipients/u.test(statement));
   assert.ok(asrRecipient, '缺少 demo-stack-asr-tencent 的接收方行');
   assert.match(asrRecipient, /'demo-stack-asr-tencent', 'Demo local speech recognition provider asr\.tencentcloudapi\.com \(demo-stack local demo profile \(non-production\)\)', 'asr',$/mu, '接收方三件套：id / 展示名（含域名与演示标记）/ capability');
   assert.match(asrRecipient, new RegExp(`^  '${DEMO_CONSENT_POLICY_VERSION}', 0, 0, true, true, true,$`, 'mu'), '策略版本要与政策同版本，两个 verified 与 0 天留存要写在行上');
+
+  // 问答接收方：`createChatEgress` 固定按 capability='llm' 取，能力串写错就还是 403。
+  const llmRecipient = statements.find((statement) => statement.includes(`'demo-stack-llm-deepseek'`) && /^INSERT INTO public\.recipients/u.test(statement));
+  assert.ok(llmRecipient, '缺少 demo-stack-llm-deepseek 的接收方行');
+  assert.match(llmRecipient, /'demo-stack-llm-deepseek', 'Demo local text QA provider api\.deepseek\.com \(demo-stack local demo profile \(non-production\)\)', 'llm',$/mu, '接收方三件套：id / 展示名（含域名与演示标记）/ capability');
+  assert.match(llmRecipient, new RegExp(`^  '${DEMO_CONSENT_POLICY_VERSION}', 0, 0, true, true, true,$`, 'mu'), '策略版本要与政策同版本，两个 verified 与 0 天留存要写在行上');
 });
 
 test('演示政策：正文 ≥200 码点，且逐字写明「本机演示政策／不是生产核验」', () => {
@@ -753,7 +766,7 @@ test('演示政策：正文 ≥200 码点，且逐字写明「本机演示政策
 });
 
 test('演示政策：三条 purpose 同版本且都绑同一批接收方（外发预留要求每个必需用途都列出接收方）', () => {
-  const [admin, recipient, ttsRecipient, asrRecipient, retireOld, recording, media, external, enable] = buildDemoConsentStatements({ demo: true });
+  const [admin, recipient, ttsRecipient, asrRecipient, llmRecipient, retireOld, recording, media, external, enable] = buildDemoConsentStatements({ demo: true });
   assert.match(admin, /demo-stack-operator/u);
   assert.ok(!(admin.includes('password') || admin.includes('scrypt$')), '演示复核账号不许写可用口令');
   assert.match(admin, /ON CONFLICT \(login_name\) DO NOTHING/u);
@@ -779,6 +792,13 @@ test('演示政策：三条 purpose 同版本且都绑同一批接收方（外�
   assert.match(asrRecipient, /ON CONFLICT \(id\) DO UPDATE/u);
   assert.match(asrRecipient, /IS DISTINCT FROM/u);
 
+  assert.match(llmRecipient, /'demo-stack-llm-deepseek'/u);
+  assert.match(llmRecipient, /'llm'/u, '文字问答外发只认 capability=llm 的接收方');
+  assert.match(llmRecipient, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
+  assert.match(llmRecipient, /api\.deepseek\.com/u, '接收方必须指向问答供应商端点域名');
+  assert.match(llmRecipient, /ON CONFLICT \(id\) DO UPDATE/u);
+  assert.match(llmRecipient, /IS DISTINCT FROM/u);
+
   assert.match(retireOld, /enabled = false/u);
   assert.match(retireOld, /policy_version LIKE 'demo-stack-local-%'/u);
   assert.match(retireOld, new RegExp(`policy_version <> '${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
@@ -789,6 +809,7 @@ test('演示政策：三条 purpose 同版本且都绑同一批接收方（外�
     assert.ok(statement.includes(DEMO_RECIPIENT_ID), '三条政策都绑定演示接收方');
     assert.ok(statement.includes('demo-stack-tts-tencent'), '三条政策都绑定合成接收方（外发预留按用途列接收方）');
     assert.ok(statement.includes('demo-stack-asr-tencent'), '三条政策都绑定转写接收方：语音提问的每个必需用途都要列出同一个接收方');
+    assert.ok(statement.includes('demo-stack-llm-deepseek'), '三条政策都绑定问答接收方：文字提问的外发预留也按用途列接收方');
   }
   assert.match(recording, /'recording'/u);
   assert.match(media, /'media_processing'/u);
