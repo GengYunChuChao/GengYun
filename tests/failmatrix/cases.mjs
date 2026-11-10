@@ -710,6 +710,10 @@ export const CASES = [
     if (/unavailable_reason|deleted_at|not_found/i.test(JSON.stringify(result.body))) problems.push('响应体里出现了可区分目标状态的字样（存在性泄露）');
     return problems;
   } },
+  // R108：媒体上传的尺寸/类型失败面（family C5）。为避免平移 C5 段之后的行号（多页注释锚点引用本文件），
+  // 这两条追加在数组末尾，415/413 由服务层按用途收窄判定，schema 只校全局 mime 枚举与全局 bytes 上限（services/api/src/routes/media.ts:42-51）。
+  { id: 'C5-11', family: 'C5', title: '已登录上传：用途与声明类型不符', actor: 'fresh', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, purpose: 'voice_question' }, headers: key('i22-c5-11'), expect: { status: 415, code: 'MEDIA_TYPE_UNSUPPORTED' }, note: '用途与声明类型不符由服务层判（packages/media/validate.mjs:47-62；允许集 packages/media/constants.mjs:45-50），schema 只校全局 mime 枚举 ⇒ 415 而不是 400' },
+  { id: 'C5-12', family: 'C5', title: '已登录上传：超过该用途上限', actor: 'fresh', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, bytes: 6 * 1024 * 1024 }, headers: key('i22-c5-12'), expect: { status: 413, code: 'MEDIA_TOO_LARGE' }, note: 'community_image 上限 5 MiB（packages/media/constants.mjs:61-66），超限由 packages/media/validate.mjs:54-62 抛 413 MEDIA_TOO_LARGE' },
 ];
 
 /**
