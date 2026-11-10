@@ -10,6 +10,9 @@
  *    文件里走：stdout 只出现「键名 / 键数 / 路径 / 哪些键是生成的」。
  * 3. **`MEDIA_OBJECT_REF_KEY` 凭据里通常没有**，得现场生成 32 字节随机 hex；忘了它就等于让媒体域
  *    整域 503。生成是确定性的活，不该由人记得。
+ * 4. **腾讯云凭据此前根本不在这份 spec 里**。TTS/ASR 走 TC3 签名，缺凭据只会等到调用时收到
+ *    503 `PROVIDER_UNAVAILABLE`；这里把它们补成**可选**键：凭据里有就带进 env 文件，没有就逐条
+ *    提示「缺哪个键 ⇒ 哪条动线不可用」，既不拦生成、也不伪造值。
  *
  * 三条硬边界（都有单测，见 `tests/unit/demo-env.test.mjs`）：
  * - **只读 `--from`**：凭据文件是唯一真相，本工具一个字节都不往回写（改坏它比少一个键严重得多）。
@@ -42,6 +45,20 @@ export const RECOGNITION_MODEL = 'deepseek-flash';
 /** 媒体对象引用钥匙的生成口径：32 字节随机 → 64 位十六进制（API 侧三种合法形态之一）。 */
 export const MEDIA_KEY_BYTES = 32;
 export const MEDIA_KEY_HEX = /^[0-9a-f]{64}$/u;
+
+/**
+ * 腾讯云 TC3 凭据的两族键（**可选**，见下方 `ENV_SPECS` 里 `optional: true` 的四条）：
+ * - 共享对 `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY`：TTS 与 OCR **只认**这一对
+ *   （`services/api/src/config.ts` 的 `AI_PROVIDER_PROFILES.tts` / `.ocr` 的 `secretIdEnv`/`apiKeyEnv`）；
+ * - ASR 专用对 `TENCENTCLOUD_ASR_SECRET_ID` / `TENCENTCLOUD_ASR_SECRET_KEY`：ASR **优先**用它，
+ *   缺了就回退共享对（同文件 `ASR_SHARED_CREDENTIAL_ENVS`；`asCredentials` 是 id/key 成对取，
+ *   只有一半不算有）。
+ */
+export const TENCENT_SHARED_CREDENTIAL_ENVS = Object.freeze(['TENCENTCLOUD_SECRET_ID', 'TENCENTCLOUD_SECRET_KEY']);
+export const TENCENT_ASR_CREDENTIAL_ENVS = Object.freeze([
+  'TENCENTCLOUD_ASR_SECRET_ID',
+  'TENCENTCLOUD_ASR_SECRET_KEY',
+]);
 
 /**
  * 源键 → env 名。`from` 里前面的写法优先：先试嵌套（任务口径 `objectStorage.Endpoint`），
@@ -83,6 +100,33 @@ export const ENV_SPECS = Object.freeze([
     generated: true,
     section: 'media',
   },
+  // —— 可选：腾讯云 TC3 凭据（`optional: true` 的键缺了不进 `missing`、不拦生成）——
+  // 源键取本机真实凭据文件的扁平写法 `tencentSecretId` / `tencentSecretKey`
+  // （见 docs/demo/快速开始.md）；env 名与 API 侧 `AI_PROVIDER_PROFILES` 的 `secretIdEnv`/`apiKeyEnv` 逐字一致。
+  {
+    env: 'TENCENTCLOUD_SECRET_ID',
+    from: ['tencentSecretId', 'tencentcloudSecretId', 'TENCENTCLOUD_SECRET_ID'],
+    optional: true,
+    section: 'tencent',
+  },
+  {
+    env: 'TENCENTCLOUD_SECRET_KEY',
+    from: ['tencentSecretKey', 'tencentcloudSecretKey', 'TENCENTCLOUD_SECRET_KEY'],
+    optional: true,
+    section: 'tencent',
+  },
+  {
+    env: 'TENCENTCLOUD_ASR_SECRET_ID',
+    from: ['tencentAsrSecretId', 'tencentcloudAsrSecretId', 'TENCENTCLOUD_ASR_SECRET_ID'],
+    optional: true,
+    section: 'tencent',
+  },
+  {
+    env: 'TENCENTCLOUD_ASR_SECRET_KEY',
+    from: ['tencentAsrSecretKey', 'tencentcloudAsrSecretKey', 'TENCENTCLOUD_ASR_SECRET_KEY'],
+    optional: true,
+    section: 'tencent',
+  },
 ]);
 
 /** 写进 env 文件的分节标题（只是注释，读文件的人靠它认得出这一坨是干什么的）。 */
@@ -92,6 +136,7 @@ const SECTION_TITLES = Object.freeze({
   signing: '—— 会话 / 注销账本签名钥匙（本机演示用；生产必须是另一套）——',
   recognition: '—— 识别（OpenAI 兼容剖面；端点与剖面是固定值）——',
   media: '—— 媒体对象引用加密钥匙（本机演示用，见下方注释）——',
+  tencent: '—— 腾讯云 TC3 凭据（可选：缺了不拦启动，只是 TTS 语音合成 / ASR 语音提问会 503）——',
 });
 
 /** 媒体钥匙的注释说明：只有「本机演示用」与「换了会怎样」两件事，不写值。 */
@@ -257,12 +302,15 @@ export function readExistingMediaKey(outPath) {
 /**
  * 组装 env 键值对（顺序 = `ENV_SPECS` 顺序，输出文件因此稳定、可 diff）。
  * `generated` 里逐条写明哪个键是生成的、是不是沿用旧文件的那把。
+ * `optionalMissing` 是**可选**键（腾讯云凭据）里没找到的那些：它们不进 `missing`，
+ * 所以缺了照样写出文件、退出码仍是 0——只在提示里点名缺哪个。
  */
 export function collectEnv(source, options = {}) {
   const previousMediaKey = options.previousMediaKey ?? null;
   const values = [];
   const generated = [];
   const missing = [];
+  const optionalMissing = [];
   for (const spec of ENV_SPECS) {
     if (typeof spec.fixed === 'string') {
       values.push({ env: spec.env, value: spec.fixed, section: spec.section });
@@ -283,9 +331,58 @@ export function collectEnv(source, options = {}) {
       generated.push({ env: spec.env, reused });
       continue;
     }
+    if (spec.optional) {
+      optionalMissing.push({ env: spec.env, from: spec.from ?? [] });
+      continue;
+    }
     missing.push({ env: spec.env, from: spec.from ?? [] });
   }
-  return { values, generated, missing };
+  return { values, generated, missing, optionalMissing };
+}
+
+/** 从 `values`（`collectEnv` 的形状）里取值；没有就是 `undefined`。 */
+function valueOfEnv(values, env) {
+  return values.find((row) => row.env === env)?.value;
+}
+
+/** 某个键在凭据文件里的写法（`from` 的第一项）；提示里带上它，才知道该往凭据里加什么。 */
+function describeSourceKey(env) {
+  const alias = ENV_SPECS.find((item) => item.env === env)?.from?.[0];
+  return alias && alias !== env ? `${env}（凭据里写 ${alias}）` : env;
+}
+
+/**
+ * 腾讯云可选凭据缺项的提示：一条一句话，点名「缺哪个键 ⇒ 哪条动线不可用」。
+ *
+ * 为什么提示而不报错：这两族键在 API 侧是**按域 fail-closed**——缺了照样起得来，只是那一域
+ * 按 503 `PROVIDER_UNAVAILABLE` 拒（`services/api/src/config.ts` 的 `AI_PROVIDER_PROFILES`：
+ * TTS 只认共享对；ASR 先认专用对、缺了回退共享对）。当成必填键报错，等于让「只要识别与文字
+ * 问答」的机器也起不来。⛔ 只列键名，不含任何值。
+ */
+export function tencentCredentialNotes(values) {
+  const present = (env) => {
+    const value = valueOfEnv(values, env);
+    return typeof value === 'string' && value.trim() !== '';
+  };
+  const missingShared = TENCENT_SHARED_CREDENTIAL_ENVS.filter((env) => !present(env));
+  const missingAsr = TENCENT_ASR_CREDENTIAL_ENVS.filter((env) => !present(env));
+  const notes = [];
+  if (missingShared.length > 0) {
+    notes.push(
+      `缺 ${missingShared.map(describeSourceKey).join(' / ')} ⇒ TTS 语音合成会 503 PROVIDER_UNAVAILABLE（识别与文字问答不受影响）`,
+    );
+  }
+  if (missingShared.length === TENCENT_SHARED_CREDENTIAL_ENVS.length && missingAsr.length > 0) {
+    notes.push(
+      `ASR 既没有专用子账号对（${missingAsr.join(' / ')}）也没有共享对可回退 ⇒ 语音提问会 503 PROVIDER_UNAVAILABLE（改用文字提问不受影响）`,
+    );
+  }
+  if (missingShared.length === 0 && missingAsr.length > 0) {
+    notes.push(
+      `ASR 未配专用子账号对（${missingAsr.join(' / ')}），按 API 侧口径回退共享对，语音提问仍可用`,
+    );
+  }
+  return notes;
 }
 
 /**
@@ -315,8 +412,8 @@ function quoteValue(value) {
   return /[\s#]/u.test(value) ? `"${value}"` : value;
 }
 
-/** 渲染 env 文件全文；`generated` 只影响注释文案，不影响值。 */
-export function renderEnvFile({ values, generated, sourcePath, encoding, stamp }) {
+/** 渲染 env 文件全文；`generated` 只影响注释文案，不影响值；`notes` 是可选键缺项的提示（写成注释）。 */
+export function renderEnvFile({ values, generated, sourcePath, encoding, stamp, notes = [] }) {
   const generatedByEnv = new Map(generated.map((row) => [row.env, row]));
   const lines = [
     '# 耕云本机演示栈 env 文件（由 node tools/demo-env.mjs 生成；⚠ 不要提交、不要贴到聊天里）',
@@ -337,6 +434,11 @@ export function renderEnvFile({ values, generated, sourcePath, encoding, stamp }
     if (meta && !meta.reused) lines.push('# 本次新生成（旧输出文件里没有可沿用的同一把钥匙）。');
     lines.push(`${row.env}=${quoteValue(row.value)}`);
   }
+  if (notes.length > 0) {
+    if (lines.at(-1) !== '') lines.push('');
+    lines.push('# 可选的腾讯云凭据缺项（不拦启动；补齐只是把对应动线从 503 变可用，缺哪条看下一行）：');
+    for (const note of notes) lines.push(`# ${note}`);
+  }
   lines.push('');
   return lines.join('\n');
 }
@@ -354,7 +456,10 @@ export function usageLines() {
   return [
     '用法：node tools/demo-env.mjs --from <credentials.local.json> --out <env 文件> [--force]',
     '',
-    '把仓库外的私密凭据（JSONC）翻成本机演示栈能吃的 env 文件（13 个键，其中 1 个由本工具生成）。',
+    '把仓库外的私密凭据（JSONC）翻成本机演示栈能吃的 env 文件（13 个必填键，其中 1 个由本工具生成）。',
+    '另有 4 个可选的腾讯云凭据键（TENCENTCLOUD_SECRET_ID / _KEY、TENCENTCLOUD_ASR_SECRET_ID / _KEY）：',
+    '缺了不拦启动、也不伪造值，只是 TTS 语音合成 / ASR 语音提问会 503 PROVIDER_UNAVAILABLE——',
+    '生成时会逐条提示缺哪个键、哪条动线不可用（识别与文字问答不受影响）。',
     '',
     '选项：',
     '  --from <绝对路径>   源凭据文件（JSONC：允许 // 与 /* */ 注释、尾逗号；UTF-8 或 GBK 都认）',
@@ -496,12 +601,14 @@ export function main(argv, io = {}) {
     return EXIT.CREDENTIALS;
   }
 
+  const notes = tencentCredentialNotes(values);
   const body = renderEnvFile({
     values,
     generated,
     sourcePath: fromPath,
     encoding: decoded.encoding,
     stamp: new Date().toISOString(),
+    notes,
   });
 
   mkdirSync(dirname(outPath), { recursive: true });
@@ -519,6 +626,7 @@ export function main(argv, io = {}) {
       ? '  生成：无（所有键都来自凭据文件）'
       : `  生成：${generated.map((row) => `${row.env}${row.reused ? '（沿用旧输出文件里的同一把）' : '（本次新生成）'}`).join('、')}`,
   );
+  for (const note of notes) log(`  ！${note}`);
   log('  下一步：npm run demo:up -- --demo --seed-demo --env-file <上面这个路径>');
   return EXIT.OK;
 }
