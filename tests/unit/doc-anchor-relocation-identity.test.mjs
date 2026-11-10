@@ -239,8 +239,8 @@ function parseHunks(diffText) {
 }
 
 /**
- * 文档侧解析：单遍扫描，hunk 体直接落到对应的 hunk 上。
- * 返回 `[{path, hunks:[{oldStart, oldCount, newStart, newCount, oldLines, newLines}]}]`。
+ * 文档侧解析：单遍扫描。`---`/`+++` 两侧都先 `unquoteGitPath()` 再剥 `a/`／`b/` 前缀（quotepath 会把非 ASCII 整串加引号）。
+ * 返回 `[{path, oldPath, hunks:[{oldStart, oldCount, newStart, newCount, oldLines, newLines}]}]`。
  */
 function parseDocDiffSinglePass(diffText) {
   const files = [];
@@ -248,15 +248,15 @@ function parseDocDiffSinglePass(diffText) {
   let hunk = null;
   for (const line of diffText.split('\n')) {
     if (line.startsWith('diff --git ')) {
-      file = { path: null, hunks: [] };
+      file = { path: null, oldPath: null, hunks: [] };
       hunk = null;
       files.push(file);
       continue;
     }
     if (file === null) continue;
-    if (line.startsWith('+++ ') && hunk === null) {
-      const raw = line.slice(4).trim();
-      file.path = raw === '/dev/null' ? null : raw.replace(/^b\//, '');
+    if ((line.startsWith('+++ ') || line.startsWith('--- ')) && hunk === null) {
+      const raw = line.slice(4).trim(), side = line[0] === '+' ? 'path' : 'oldPath';
+      file[side] = raw === '/dev/null' ? null : unquoteGitPath(raw).replace(/^[ab]\//, '');
       continue;
     }
     const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
@@ -723,7 +723,7 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
 
   const changedFiles = new Set(
     git(['diff', '--name-only', '--no-renames', base, head], { cwd: root })
-      .split('\n').map((line) => line.trim()).filter(Boolean),
+      .split('\n').map((line) => unquoteGitPath(line.trim())).filter(Boolean), // 同一套 quotepath 规则，见 unquoteGitPath
   );
   const docDiff = git(
     ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', `${base}..${head}`, '--', 'docs/'],
@@ -1241,7 +1241,7 @@ function scanSurfaceDecision(result) {
   if (stats.tokens === 0 && buckets.total === 0) {
     return {
       kind: 'skip',
-      message: '被改写的文档行里没有任何锚点（tokens=0），本次改动不含任何行号引用，本用例无判定面',
+      message: `被改写的文档行里没有任何锚点（tokens=0），本次改动不含任何行号引用，本用例无判定面（documents ${stats.docFiles}／docLines ${stats.docLines}／hunks 配对 ${stats.pairedHunks}／纯新增 ${stats.pureAddHunks}／纯删除 ${stats.pureDeleteHunks}）`,
     };
   }
   if (buckets.total === 0) {
@@ -2840,4 +2840,181 @@ test('CI 自愈：fetch 超时必须归 network（不是 no-base），且 SKIP �
   assert.match(mixedDeadEnd.message, /fetch 成功但取不到共同祖先/, '有 fetch 跑通 ⇒ 必须说「fetch 成功…」');
   assert.match(mixedDeadEnd.message, /1 招 fetch 报错/, '必须点名「有 1 招报错」，别只报一半');
   assert.doesNotMatch(mixedDeadEnd.message, /全部失败/, '有一招跑通了，不许说「全部失败」');
+});
+
+// ============================================================================
+// 钉子：`core.quotepath=true`（git 默认值）下的路径还原
+// ----------------------------------------------------------------------------
+// 为什么这段写在**文件末尾**而不是紧挨 `parseDocDiffSinglePass()`：`docs/verification/**` 把本文件的
+// :150／:1309／:1313／:1314／:1317 当锚点（gy-r90-collaboration-ops-20261109.md、gy-r69-drill-full-…、
+// gy-r83-i29-…、gy-r90-i1003-…），上面那些新增/修改一律做成**行数不变**，新增内容全部追加在锚点之后，
+// 锚点才不需要跟着漂。函数声明会提升，`unquoteGitPath()` 落在末尾也能被上方两处调用点用到。
+// ============================================================================
+
+/**
+ * 还原 git 的 C 风格路径（`core.quotepath=true`，也就是默认值）。
+ *
+ * 路径里一旦有非 ASCII 字节，`git diff` 就把**整串（含 `a/`、`b/` 前缀）**用双引号包起来，
+ * 非 ASCII／不可打印字节逐个写成 `\nnn` 八进制转义：
+ *   `+++ "b/docs/demo/\346\234\254\345\234\260\346\274\224\347\244\272-stack.md"`
+ * （那段是 `docs/demo/本地演示-stack.md` 的 UTF-8 字节）。原样拿这串当路径用会两头都错：
+ * 引号在 `b/` 前面 ⇒ 剥不掉 `b/` 前缀；转义串永远等于不上 `git ls-tree -z`／`--name-only`
+ * 给出的裸 UTF-8 路径 ⇒ 中文名文件既进不了 `changedFiles`，也读不到目标行。
+ *
+ * 还原规则取 git `quote.c:unquote_c_style()` 的最小必要集：先按**字节**还原（`\nnn` 1–3 位八进制、
+ * `\a \b \f \n \r \t \v` 以及 `\\`、`\"`），再把整串按 UTF-8 解码（git 写入的就是 UTF-8 字节，
+ * 所以「先字节后解码」才对，逐个字符反转义会因为多字节字符被拆开而错）。
+ * 不带引号的路径**原样返回**：纯 ASCII 路径默认不转义，行为与本片之前逐字相同。
+ *
+ * 未知转义（git 不会产出）保留反斜杠与那个字符，不静默吞字节 —— 路径读不出来应当在下游判红/未判，
+ * 而不是在这里被悄悄改写成另一个合法路径。
+ */
+function unquoteGitPath(raw) {
+  if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return raw;
+  const SIMPLE_ESCAPES = Object.freeze({
+    a: 0x07, b: 0x08, f: 0x0c, n: 0x0a, r: 0x0d, t: 0x09, v: 0x0b, '\\': 0x5c, '"': 0x22,
+  });
+  const body = raw.slice(1, -1);
+  const bytes = [];
+  for (let index = 0; index < body.length;) {
+    if (body[index] !== '\\') {
+      // 按**码点**推进：代理对是两个 UTF-16 单元，逐个 `body[index]` 编码会变成两个替换字符。
+      const literal = String.fromCodePoint(body.codePointAt(index));
+      bytes.push(...Buffer.from(literal, 'utf8'));
+      index += literal.length;
+      continue;
+    }
+    const next = body[index + 1];
+    if (next === undefined) {
+      bytes.push(0x5c);
+      index += 1;
+      continue;
+    }
+    const simple = SIMPLE_ESCAPES[next];
+    if (simple !== undefined) {
+      bytes.push(simple);
+      index += 2;
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(body.slice(index + 1));
+    if (octal !== null) {
+      bytes.push(Number.parseInt(octal[0], 8) & 0xff);
+      index += 1 + octal[0].length;
+      continue;
+    }
+    const unknown = String.fromCodePoint(body.codePointAt(index + 1));
+    bytes.push(0x5c, ...Buffer.from(unknown, 'utf8'));
+    index += 1 + unknown.length;
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/** `docs/demo/本地演示-stack.md` 在 git 默认 quotepath 下的真实形态（`\346…` 是 UTF-8 字节的八进制）。 */
+const QUOTEPATH_DIFF_CN = [
+  'diff --git "a/docs/demo/\\346\\234\\254\\345\\234\\260\\346\\274\\224\\347\\244\\272-stack.md" "b/docs/demo/\\346\\234\\254\\345\\234\\260\\346\\274\\224\\347\\244\\272-stack.md"',
+  'index 1111111..2222222 100644',
+  '--- "a/docs/demo/\\346\\234\\254\\345\\234\\260\\346\\274\\224\\347\\244\\272-stack.md"',
+  '+++ "b/docs/demo/\\346\\234\\254\\345\\234\\260\\346\\274\\224\\347\\244\\272-stack.md"',
+  '@@ -151,8 +151,8 @@ node tools/demo-stack.mjs up',
+  '-旧行（demo-stack-local-2，单一接收方）',
+  '+新行（demo-stack-local-3，weed + tts 两条接收方）',
+  '',
+].join('\n');
+
+test('解析：git 默认 quotepath 的中文名路径必须还原成裸 UTF-8，不许把 `"b/docs/…\\346…"` 转义串漏给下游', () => {
+  const parsed = parseDocDiffSinglePass(QUOTEPATH_DIFF_CN);
+  assert.equal(parsed.length, 1, '一个 section 里只有一个文件');
+  const [file] = parsed;
+  // 正钉：路径就是仓库里的真路径（`ls-tree -z` 给的那种），一个字都不差。
+  assert.equal(file.path, 'docs/demo/本地演示-stack.md', '`+++` 侧必须 unquote 之后才剥 `b/` 前缀');
+  assert.equal(file.oldPath, 'docs/demo/本地演示-stack.md', '`---` 侧用同一套规则还原并剥 `a/`');
+  // 负钉：不许把带引号/带八进制的原样串漏到下游（漏出去就配不上 `changedFiles`，中文名文档的锚点会一律按「没改」审）。
+  assert.doesNotMatch(file.path, /["\\]/, '路径里不许残留引号或反斜杠转义');
+  assert.ok(!file.path.startsWith('b/'), '`b/` 前缀必须剥掉');
+  assert.notEqual(file.path, '"b/docs/demo/\\346\\234\\254\\345\\234\\260\\346\\274\\224\\347\\244\\272-stack.md"',
+    '原样转义串是修复前的错误值，不许再出现');
+  // hunk 内容照旧：还原路径不许影响行对解析。
+  assert.equal(file.hunks.length, 1);
+  assert.equal(file.hunks[0].oldStart, 151);
+  assert.deepEqual(file.hunks[0].oldLines, ['旧行（demo-stack-local-2，单一接收方）']);
+  assert.deepEqual(file.hunks[0].newLines, ['新行（demo-stack-local-3，weed + tts 两条接收方）']);
+});
+
+test('解析反向：英文路径不带引号 ⇒ 原样通过；带引号的 ASCII 路径（含 `\\t`）照常还原', () => {
+  const plain = [
+    'diff --git a/docs/status.md b/docs/status.md',
+    'index 3333333..4444444 100644',
+    '--- a/docs/status.md',
+    '+++ b/docs/status.md',
+    '@@ -1,1 +1,1 @@',
+    '-before',
+    '+after',
+    '',
+  ].join('\n');
+  const parsed = parseDocDiffSinglePass(plain);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].path, 'docs/status.md', 'ASCII 路径不许被新规则多剥/多解一层');
+  assert.equal(parsed[0].oldPath, 'docs/status.md');
+
+  const quotedAscii = [
+    'diff --git "a/docs/tab\\there.md" "b/docs/tab\\there.md"',
+    'index 5555555..6666666 100644',
+    '--- "a/docs/tab\\there.md"',
+    '+++ "b/docs/tab\\there.md"',
+    '@@ -1,1 +1,1 @@',
+    '-x',
+    '+y',
+    '',
+  ].join('\n');
+  const asciiParsed = parseDocDiffSinglePass(quotedAscii);
+  assert.equal(asciiParsed.length, 1);
+  assert.equal(asciiParsed[0].path, 'docs/tab\there.md', '`\\t` 要还原成真正的制表符');
+  assert.equal(asciiParsed[0].oldPath, 'docs/tab\there.md');
+});
+
+test('解析边界：只有 mode 变更的 section（没有 `---`/`+++`）不许当文档收；`+++ /dev/null` 删除侧继续整条过滤', () => {
+  // `git diff` 对纯 chmod 只输出 `old mode`/`new mode`，一个 hunk 都没有 —— 收进来就是「扫描面为空」的假红。
+  const modeOnly = [
+    'diff --git a/docs/status.md b/docs/status.md',
+    'old mode 100644',
+    'new mode 100755',
+    '',
+  ].join('\n');
+  assert.deepEqual(parseDocDiffSinglePass(modeOnly), [], '只有 mode 变更的 section 不是文档改动');
+
+  // 整份文件被删：`+++ /dev/null` ⇒ path 为 null ⇒ 整条过滤（本片不改这条既有行为）。
+  const deleted = [
+    'diff --git a/docs/gone.md b/docs/gone.md',
+    'deleted file mode 100644',
+    '--- a/docs/gone.md',
+    '+++ /dev/null',
+    '@@ -1,3 +0,0 @@',
+    '-a',
+    '-b',
+    '-c',
+    '',
+  ].join('\n');
+  assert.deepEqual(parseDocDiffSinglePass(deleted), [], '删除侧不进扫描面');
+});
+
+/** 端到端钉子用的中文名文档（`docs/**` 才会进扫描面；文件名是中文等价的「本地演示」那种真实形态）。 */
+const CN_TARGET_DOC = 'docs/演示纪要.md';
+
+test('端到端：中文名文档自己插行、自己的锚点随之平移 ⇒ 判绿并进 relocated（旧代码配不上 changedFiles，一律假红/未判）', (t) => {
+  // 裸锚点（`:2`）没有显式路径 ⇒ 判定时会退回**当前文档自身**（judge 里 `target = file.path` 那一支），
+  // 目标路径因此就是这条中文名路径：`changedFiles` 与 `+++` 两侧必须都还原成裸 UTF-8 才命中得上。
+  const baseDoc = '# 演示纪要\n落点内容（被 :2 指着的那一行）\n\n- 见本页 `:2`\n';
+  const headDoc = '# 演示纪要\n新插的一行占位\n落点内容（被 :2 指着的那一行）\n\n- 见本页 `:3`\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [CN_TARGET_DOC]: baseDoc },
+    headFiles: { [CN_TARGET_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.docFiles, 1, '中文名文档必须进扫描面');
+  assert.equal(result.stats.tokens, 1, '中文名文档里的裸锚点必须被抽出来（抽不出来 ⇒ 判定面凭空消失）');
+  assert.deepEqual(result.unresolved, [], `锚点没解析到目标行：${result.unresolved.join('｜')}`);
+  assert.deepEqual(result.violations, [], `中文名文档自己的位移被误判成违规：${result.violations.join('｜')}`);
+  assert.equal(result.stats.judged, 1, '夹具应当恰好判一个锚点');
+  assert.equal(result.stats.relocated, 1, '目标文件「就是本文件」且本文件改了 ⇒ 必须走重定位，不是「行号必须恒等」');
+  t.diagnostic(`夹具（中文名文档自身位移）${summarize(result, 'fixture')}`);
 });
