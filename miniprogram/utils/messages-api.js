@@ -279,7 +279,7 @@ function warnUnreadFailure(error) {
 }
 
 function modeNote(mode) {
-  if (mode === 'real') return '服务端真实模式；消息持久存储未接线时不会返回成功。'
+  if (mode === 'real') return '服务端真实模式；消息由服务端返回，未接实时推送。'
   if (mode === 'preset_demo') return '预设演示数据，不代表真实消息。'
   if (mode === 'stub') return '替身服务数据，仅供联调，不代表真实消息投递。'
   return '消息需重新查询，失败时不会改用本地数据。'
