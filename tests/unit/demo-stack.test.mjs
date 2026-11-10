@@ -14,8 +14,10 @@ import {
   DEFAULT_PORTS,
   DEMO_CONSENT_NOTICE,
   DEMO_CONSENT_POLICY_VERSION,
+  DEMO_CONSENT_PURPOSES,
   DEMO_FLAG_KEYS,
   DEMO_FLAG_REASON,
+  DEMO_POLICY_BODY,
   DEMO_RECIPIENT_ID,
   DEMO_SCHEMA,
   ENV_FILE_TEMPLATE,
@@ -58,6 +60,9 @@ import {
   usage,
   withDemoAccessOrigin,
 } from '../../tools/lib/demo-stack.mjs';
+// 语音提问的必需用途集合以**产品常量**为准（不是在测试里抄一遍）：演示政策少发一条，
+// 上传闸门（`routes/media.ts` 的 consent preHandler）就 403，这条钉子必须跟着常量变。
+import { MEDIA_PURPOSE_REQUIRED_CONSENTS } from '../../packages/privacy/constants.mjs';
 
 const ENV_FILE_TEXT = [
   '# 注释行',
@@ -673,31 +678,75 @@ test('演示政策：不带 --demo 一条语句都不生成（行为与旧版一
   assert.deepEqual(buildDemoConsentStatements(), []);
 });
 
-test('演示政策：--demo 生成 7 条语句，顺序是 复核账号 → 两个接收方 → 停用旧演示版本 → 两条政策 → 启用', () => {
+test('演示政策：--demo 生成 9 条语句，顺序是 复核账号 → 三个接收方 → 停用旧演示版本 → 三条政策 → 启用', () => {
   const statements = buildDemoConsentStatements({ demo: true });
-  assert.equal(statements.length, 7);
+  assert.equal(statements.length, 9);
   assert.match(statements[0], /^INSERT INTO public\.admin_accounts/u);
   assert.match(statements[1], /^INSERT INTO public\.recipients/u);
   assert.match(statements[1], /'weed'/u);
   assert.match(statements[2], /^INSERT INTO public\.recipients/u);
   assert.match(statements[2], /'tts'/u, '合成域按 capability=tts 找唯一接收方（privacy/ledger-pg.ts 的 resolveRecipient）');
-  assert.match(statements[3], /^UPDATE public\.consent_policies/u);
-  assert.match(statements[3], /demo-stack-local-%/u, '只停自家旧版本');
-  assert.match(statements[4], /^INSERT INTO public\.consent_policies/u);
-  assert.match(statements[4], /'media_processing'/u);
-  assert.match(statements[5], /^INSERT INTO public\.consent_policies/u);
-  assert.match(statements[5], /'external_inference'/u);
-  assert.match(statements[6], /^UPDATE public\.consent_policies/u);
+  assert.match(statements[3], /^INSERT INTO public\.recipients/u);
+  assert.match(statements[3], /'asr'/u, '转写域按 capability=asr 找唯一接收方（app.ts 的 speechEgress）');
+  assert.match(statements[4], /^UPDATE public\.consent_policies/u);
+  assert.match(statements[4], /demo-stack-local-%/u, '只停自家旧版本');
+  for (const [offset, purpose] of DEMO_CONSENT_PURPOSES.entries()) {
+    assert.match(statements[5 + offset], /^INSERT INTO public\.consent_policies/u);
+    assert.match(statements[5 + offset], new RegExp(`'${purpose}'`, 'u'), `第 ${5 + offset} 条应该是 ${purpose} 的政策`);
+  }
+  assert.match(statements[8], /^UPDATE public\.consent_policies/u);
 
   const sql = buildDemoConsentSql({ demo: true });
   assert.equal(typeof sql, 'string');
-  assert.equal(sql.split('INSERT INTO public.consent_policies').length - 1, 2, '两条政策各一条 INSERT');
-  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, 2, '识别与合成各一个接收方');
+  assert.equal(sql.split('INSERT INTO public.consent_policies').length - 1, 3, '三条政策各一条 INSERT');
+  assert.equal(sql.split('INSERT INTO public.recipients').length - 1, 3, '识别 / 合成 / 转写各一个接收方');
   assert.equal(sql.split('INSERT INTO public.admin_accounts').length - 1, 1);
 });
 
-test('演示政策：两条 purpose 同版本且都绑同一接收方（外发预留要求每个必需用途都列出接收方）', () => {
-  const [admin, recipient, ttsRecipient, retireOld, media, external, enable] = buildDemoConsentStatements({ demo: true });
+test('演示政策：voice_question 的三个必需用途都能在演示档里找到，asr 接收方也在', () => {
+  const required = [...MEDIA_PURPOSE_REQUIRED_CONSENTS.voice_question];
+  // 顺序即 `CONSENT_PURPOSE_CLOSED_SET` 的顺序；两边任何一侧变了，这条就先红。
+  assert.deepEqual(required, ['recording', 'media_processing', 'external_inference'], '资料类型必需集合变了 ⇒ 这条钉子和演示政策都要跟着改');
+  assert.deepEqual([...DEMO_CONSENT_PURPOSES], required, '演示政策发布的用途必须逐条覆盖 voice_question 的必需集合（少一条上传就 403 CONSENT_REQUIRED）');
+
+  const statements = buildDemoConsentStatements({ demo: true });
+  const policyInserts = statements.filter((statement) => /^INSERT INTO public\.consent_policies/u.test(statement));
+  assert.equal(policyInserts.length, required.length);
+  for (const [offset, purpose] of required.entries()) {
+    assert.ok(
+      policyInserts[offset].includes(`'${purpose}', '${DEMO_CONSENT_POLICY_VERSION}'`),
+      `${purpose} 没有 ${DEMO_CONSENT_POLICY_VERSION} 版本的政策：用户自授会 403 code:'no_policy'`,
+    );
+    assert.match(policyInserts[offset], /'verified'/u, `${purpose} 的政策必须是 source_kind='verified'，否则 grant-pg 拒收`);
+  }
+
+  // 外发预留要求「每个必需用途的授权记录里都有同一个 recipientId」⇒ 三条政策都要绑 asr。
+  for (const statement of policyInserts) {
+    for (const recipientId of [DEMO_RECIPIENT_ID, 'demo-stack-tts-tencent', 'demo-stack-asr-tencent']) {
+      assert.ok(statement.includes(`"${recipientId}"`), `政策没绑定 ${recipientId}：转写受理会 403「用途 X 未绑定接收方」`);
+    }
+    assert.match(statement, /"capability":"asr"/u);
+  }
+  // 接收方行：能力串必须真的登记成 asr，否则 resolveRecipient 按 capability 过滤后 0 行。
+  const asrRecipient = statements.find((statement) => statement.includes(`'demo-stack-asr-tencent'`) && /^INSERT INTO public\.recipients/u.test(statement));
+  assert.ok(asrRecipient, '缺少 demo-stack-asr-tencent 的接收方行');
+  assert.match(asrRecipient, /'demo-stack-asr-tencent', 'Demo local speech recognition provider asr\.tencentcloudapi\.com \(demo-stack local demo profile \(non-production\)\)', 'asr',$/mu, '接收方三件套：id / 展示名（含域名与演示标记）/ capability');
+  assert.match(asrRecipient, new RegExp(`^  '${DEMO_CONSENT_POLICY_VERSION}', 0, 0, true, true, true,$`, 'mu'), '策略版本要与政策同版本，两个 verified 与 0 天留存要写在行上');
+});
+
+test('演示政策：正文 ≥200 码点，且逐字写明「本机演示政策／不是生产核验」', () => {
+  const bodyChars = [...DEMO_POLICY_BODY].length;
+  // 下界与 `tools/lib/consent-policy-import.mjs` 的 MIN_BODY_CHARS 同口径（按 Unicode 码点）：
+  // 正文只作 content_sha256 的原像，缩成一句占位就等于拿占位句去冒充一份可核验条文。
+  assert.ok(bodyChars >= 200, `演示政策正文只有 ${bodyChars} 码点（< 200）：疑似占位或截断`);
+  assert.match(DEMO_POLICY_BODY, /本机演示政策/u);
+  assert.match(DEMO_POLICY_BODY, /不是生产核验/u);
+  assert.match(DEMO_POLICY_BODY, /本机演示栈/u);
+  for (const purpose of DEMO_CONSENT_PURPOSES) assert.match(DEMO_POLICY_BODY, new RegExp(purpose, 'u'), `正文没写 ${purpose}`);
+});
+
+test('演示政策：三条 purpose 同版本且都绑同一批接收方（外发预留要求每个必需用途都列出接收方）', () => {
+  const [admin, recipient, ttsRecipient, asrRecipient, retireOld, recording, media, external, enable] = buildDemoConsentStatements({ demo: true });
   assert.match(admin, /demo-stack-operator/u);
   assert.ok(!(admin.includes('password') || admin.includes('scrypt$')), '演示复核账号不许写可用口令');
   assert.match(admin, /ON CONFLICT \(login_name\) DO NOTHING/u);
@@ -716,16 +765,25 @@ test('演示政策：两条 purpose 同版本且都绑同一接收方（外发�
   assert.match(ttsRecipient, /ON CONFLICT \(id\) DO UPDATE/u);
   assert.match(ttsRecipient, /IS DISTINCT FROM/u);
 
+  assert.match(asrRecipient, /'demo-stack-asr-tencent'/u);
+  assert.match(asrRecipient, /'asr'/u, '转写外发只认 capability=asr 的接收方');
+  assert.match(asrRecipient, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
+  assert.match(asrRecipient, /asr\.tencentcloudapi\.com/u, '接收方必须指向转写供应商端点域名');
+  assert.match(asrRecipient, /ON CONFLICT \(id\) DO UPDATE/u);
+  assert.match(asrRecipient, /IS DISTINCT FROM/u);
+
   assert.match(retireOld, /enabled = false/u);
   assert.match(retireOld, /policy_version LIKE 'demo-stack-local-%'/u);
   assert.match(retireOld, new RegExp(`policy_version <> '${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
 
-  for (const statement of [media, external]) {
+  for (const statement of [recording, media, external]) {
     assert.match(statement, new RegExp(`'${DEMO_CONSENT_POLICY_VERSION}'`, 'u'));
     assert.match(statement, /'verified'/u);
-    assert.ok(statement.includes(DEMO_RECIPIENT_ID), '两条政策都绑定演示接收方');
-    assert.ok(statement.includes('demo-stack-tts-tencent'), '两条政策都绑定合成接收方（外发预留按用途列接收方）');
+    assert.ok(statement.includes(DEMO_RECIPIENT_ID), '三条政策都绑定演示接收方');
+    assert.ok(statement.includes('demo-stack-tts-tencent'), '三条政策都绑定合成接收方（外发预留按用途列接收方）');
+    assert.ok(statement.includes('demo-stack-asr-tencent'), '三条政策都绑定转写接收方：语音提问的每个必需用途都要列出同一个接收方');
   }
+  assert.match(recording, /'recording'/u);
   assert.match(media, /'media_processing'/u);
   assert.match(external, /'external_inference'/u);
 
@@ -746,7 +804,7 @@ test('演示政策：标记落在既有可见列，且不下线别人的政策',
   assert.ok(statements[0].includes(marker), '复审账号的 credential_hash 带标记');
   assert.ok(statements[1].includes(marker), '接收方 display_name 带标记');
   const policyInserts = statements.filter((statement) => /^INSERT INTO public\.consent_policies/u.test(statement));
-  assert.equal(policyInserts.length, 2);
+  assert.equal(policyInserts.length, 3);
   for (const statement of policyInserts) {
     assert.match(statement, /source_ref/u);
     assert.match(statement, /review_evidence_ref/u);
