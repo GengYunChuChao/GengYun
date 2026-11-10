@@ -33,8 +33,8 @@
  *   - `createGrant` **明确拒绝**（`PROVIDER_UNAVAILABLE`，`retryable: false`），绝不伪造 epoch；
  *   - 其余授权方法按「写入路径被拒 ⇒ 行集恒为空」如实返回空/0，因此撤销与清理**不会**
  *     在 `delete`/`complete` 的失败路径上炸掉调用链。
- * 公开内容来源由装配层决定（`services/api/src/app.ts:1816`）：`real` + 持久化社区端口时是 `createRealContentSource()`
- * （读时按社区域端口重算）；端口缺失（`stub` 或 `real` 无池）才回退 `createClosedContentSource()`（404）。两种都 fail-closed。
+ * 本段写的是 `store-pg` 适配器的部署上下文（real + 持久库）：装配在 `services/api/src/app.ts` 的 `contentSource: mediaContentSource ?? createRealContentSource(communityService, mediaStore)`。
+ * 仅 `real` 且没有持久化社区端口时（`communityRealUnwired` ⇒ `communityService = null`，`content-source.ts` 工厂返回 `createClosedContentSource()`）才回退 404；`stub` 会建 `CommunityService`，其 `publishedContent.read` 始终可用，故不回落。
  *
  * ## 错误折叠
  * `57014`（语句超时）/`55P03`（锁不可得）⇒ `PROVIDER_TIMEOUT`；其余 ⇒ `PROVIDER_UNAVAILABLE`
