@@ -15,6 +15,9 @@
  *
  * ## 扫描面 ＝ 全仓 9 类文本扩展名（2026-10-22 补面）
  *
+ * 遍历时整目录跳过 `.git` / `node_modules` / `.local`（见 `SCAN_SKIP_DIRS`）：前两者不是仓库文本，
+ * `.local` 是本机生成的小程序副本（已 gitignore）。
+ *
  * 原扫描面只有 `docs/**\/*.md` ＋ `tools/*.mjs` ＋ `packages/**\/*.mjs` ＝ 397 个文件，而
  * **本片自己规范化过的** `README.md` / `AGENTS.md` / `services/api/src/routes/community.ts` /
  * `tests/unit/gy-i22-message-parity.test.mjs`（743 个 CR，全仓最大的一个）**都不在面内** ——
@@ -54,8 +57,15 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
  */
 export const SCAN_EXTS = Object.freeze(['.md', '.mjs', '.ts', '.json', '.yml', '.sql', '.js', '.cjs', '.py']);
 
-/** 遍历时整目录跳过：版本库自身与依赖（两者都不是仓库文本）。 */
-export const SCAN_SKIP_DIRS = Object.freeze(['.git', 'node_modules']);
+/**
+ * 遍历时整目录跳过：版本库自身、依赖与本机生成物（三者都不是仓库文本）。
+ *
+ * `.local` 是 `node tools/prepare-wechat.mjs local` 生成本地小程序副本的目录，已在 `.gitignore` 里；
+ * 副本由工作区文件复制而来，行尾跟随本机 `core.autocrlf`，不是仓库文本。扫它会让「CI 全绿」的提交
+ * 在本机看到红（2026-11-10 实测 71 条），与 `node_modules` 同类处理。
+ * 顺带一句：`tools/verify-doc-anchors.mjs` 的文件名索引也因同一副本产生过歧义，已于 R103 改为跳过点目录。
+ */
+export const SCAN_SKIP_DIRS = Object.freeze(['.git', 'node_modules', '.local']);
 
 /**
  * 显式排除（仓库相对路径前缀）。`docs/verification/assets/**` 是证据快照：`-text` 原样存取，
@@ -205,6 +215,57 @@ test('eol/扫描面零 CR（含 0x0D 即违规）', () => {
   // 反向自检：判绿必须建立在"确实读了字节"上，扫描面里每个文件都读到了。
   assert.equal(result.scanned.length, files.length);
   assert.ok(result.scanned.every((entry) => entry.bytes > 0), '扫描面里有 0 字节文件，读数不可信');
+});
+
+test('`.local` 副本不进扫描面（本机生成物不得让守卫假红）', () => {
+  // tmp root 里造两个 `.js`：`a.js` 用 LF（必须被扫到），`.local/wechat-local/b.js` 用 CRLF（必须被跳过）。
+  const lfContent = '// 扫描面样本\nconst a = 1;\n';
+  const crlfContent = lfContent.replace(/\n/g, '\r\n');
+  withTempFile('a.js', lfContent, (file) => {
+    const dir = dirname(file);
+    try {
+      const localDir = join(dir, '.local', 'wechat-local');
+      mkdirSync(localDir, { recursive: true });
+      writeFileSync(join(localDir, 'b.js'), crlfContent);
+
+      const files = collectScopeFiles({ root: dir });
+      const rel = files.map((scanned) => displayPath(scanned, dir));
+      assert.ok(
+        rel.includes('a.js'),
+        `根目录的 a.js（LF）没被扫到，扫描面本身失效：实际 ${JSON.stringify(rel)}`,
+      );
+      const localPaths = rel.filter((path) => path.startsWith('.local/'));
+      assert.equal(
+        localPaths.length,
+        0,
+        `.local 下的副本漏进扫描面（本机生成物、行尾跟本机 core.autocrlf，不该守）：实际 ${JSON.stringify(localPaths)}`,
+      );
+
+      const result = judgeEol(files, { root: dir });
+      assert.equal(
+        result.violations.length,
+        0,
+        `.local/wechat-local/b.js 的 CRLF 被算成违规（跳过失效就会多这一条）：${result.summary}`,
+      );
+
+      // 反向自证：把 b.js 复制到 tmp root 根目录（同名不同路径，如 c.js）再收集 ⇒ 必须报 1 条违规，
+      // 证明 b.js 本身确实带 CR，第 ② 条不是「文件没造出来」而空过。
+      writeFileSync(join(dir, 'c.js'), crlfContent);
+      const reversed = judgeEol(collectScopeFiles({ root: dir }), { root: dir });
+      assert.equal(
+        reversed.violations.length,
+        1,
+        `同一份 CRLF 内容放到根目录后应报 1 条违规，实际 ${reversed.violations.length} 条（${reversed.summary}）：说明红的是「.local 被跳过」，不是 b.js 没造出来`,
+      );
+      assert.equal(
+        reversed.violations[0].path,
+        'c.js',
+        `违规应落在根目录的 c.js 上，实际报的是 ${reversed.violations[0].path}`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 test('负控制：tmpdir 里造一个带 CRLF 的 md，同一个判定函数必须报出违规', () => {
