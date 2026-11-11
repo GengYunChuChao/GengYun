@@ -59,7 +59,7 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 2. 真库臂自建临时簇、自跑迁移（日志首行 `[pg] server_version=17.11`、`[pg] migrations=53（一次性空库，全部落地）`）；端口不可由外部指定，`tests/failmatrix/run-real.mjs:93-102` 的 `freePort()` 走 `listen(0)` 取 OS 临时端口。
 3. 命令：`$env:GY_PG_BIN='E:\GengYunCommander\.pg17\pgsql\bin'; $env:GY_I22_PG_ROOT='E:\GengYunCommander\.pg17\tmp\realpg-r82'; node tests/failmatrix/run-real.mjs --json=E:\GengYunCommander\.pg17\tmp\r82-real-arm.json`，退出码 0。
 4. 两条探针（不入库，落在 `.pg17\tmp\`）把「会话在受理后到底还能不能用」直接测出来：探针 1 用受理前那张会话，探针 2 另铸一张 `auth_epoch` 已递增后的新会话。
-5. 判定器口径：`tests/failmatrix/run-real.mjs:788-819` 比 status/code 并要求 `meta.execution_mode === 'real'`，`c.check` 抛错进 `checkProblems`；`:758-772` 的 `domainUnavailable` **只认** 503 `PROVIDER_UNAVAILABLE` 或 409 `OBJECT_UNAVAILABLE` + `feature_flag`，401 不在其中——这决定了本页两条都只能落 `different`，不会被顺手改判成 `not runnable`。
+5. 判定器口径：`tests/failmatrix/run-real.mjs:788-819` 比 status/code 并要求 `meta.execution_mode === 'real'`，`c.check` 抛错进 `checkProblems`；`:836-850` 的 `domainUnavailable` **只认** 503 `PROVIDER_UNAVAILABLE` 或 409 `OBJECT_UNAVAILABLE` + `feature_flag`，401 不在其中——这决定了本页两条都只能落 `different`，不会被顺手改判成 `not runnable`。
 
 ## §4 裁定 C4-15
 

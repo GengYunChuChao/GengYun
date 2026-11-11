@@ -18,8 +18,8 @@ totals: total 180, same 180, sameWithCheck 25, sameWithShape 30,
 ## 2 缺口：闸门没开
 
 - `.github/workflows/real-pg-integration.yml:1374` 原来只带 `--require-no-not-runnable`，没有 `--require-no-different`。
-- 判据本身早在 R89 就落地了：`tests/failmatrix/run-real.mjs:1047` 的解析分支接受这个开关，`tests/failmatrix/run-real.mjs:1622` 把原来无条件的 `return 0` 换成 `return shouldFailOnDifferent(opts, tally, rows);`，判据与 FAIL 文案在 `tests/failmatrix/require-no-different.mjs:77`。
-- 缺的只是 CI 那一处调用：`tests/failmatrix/run-real.mjs:1616` 的 `return 1` 只看 `not_runnable`，所以 `different > 0` 时整臂仍然 exit 0。R89 的证据页自己也写明了这一点（`docs/verification/gy-r89-failmatrix-require-no-different-20261108.md:108`：「脚本现在**有能力**判红，但 … 调这条臂时**没有加**」）。
+- 判据本身早在 R89 就落地了：`tests/failmatrix/run-real.mjs:1047` 的解析分支接受这个开关，`tests/failmatrix/run-real.mjs:1628` 把原来无条件的 `return 0` 换成 `return shouldFailOnDifferent(opts, tally, rows);`，判据与 FAIL 文案在 `tests/failmatrix/require-no-different.mjs:77`。
+- 缺的只是 CI 那一处调用：`tests/failmatrix/run-real.mjs:1622` 的 `return 1` 只看 `not_runnable`，所以 `different > 0` 时整臂仍然 exit 0。R89 的证据页自己也写明了这一点（`docs/verification/gy-r89-failmatrix-require-no-different-20261108.md:108`：「脚本现在**有能力**判红，但 … 调这条臂时**没有加**」）。
 - 这和当初 13 条 `not_runnable` 却 CI 绿是同一个失效模式：**判据在仓里、闸门在 CI 外**，读数照写，流水线照绿。
 
 ## 3 本片改了什么
@@ -43,7 +43,7 @@ totals: total 180, same 180, sameWithCheck 25, sameWithShape 30,
 
 - `different > 0` 时，`.github/workflows/real-pg-integration.yml:1374` 这一步会红：脚本判据（`tests/failmatrix/require-no-different.mjs:77`）已在，开关现在接在同一行上，非 0 退出码由 `.github/workflows/real-pg-integration.yml:1381` 的既有分支 `exit "$rc"` 升级成 CI 红。
 - 有人把开关从那一行删掉时，`tests/unit/failmatrix-require-no-different.test.mjs:281` 会红：本片实测把 workflow 里的 `--require-no-different` 删掉后该用例 exit 1，报错原文点名「只带 not_runnable 时『different 悄悄变多』会静默变绿」；把开关加回去后该用例恢复绿。
-- `not_runnable > 0` 仍由原开关判红：`tests/failmatrix/run-real.mjs:1616` 那 5 行（1487–1491）一字未动，两个开关正交。
+- `not_runnable > 0` 仍由原开关判红：`tests/failmatrix/run-real.mjs:1622` 那 5 行（1622–1626）一字未动，两个开关正交。
 
 **不能证明**
 

@@ -69,9 +69,9 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 
 ## §4 变异自证（新断言是活的）
 
-两次变异都只改 `cases.mjs` 里新加的那一条断言，跑完立即还原；判定「红」是读数行与 `DIFF` 行，因为 `--require-no-not-runnable` 按设计**只**把 `not_runnable` 变成 exit 1（`tests/failmatrix/run-real.mjs:1618`），`different` 不进退出码。
+两次变异都只改 `cases.mjs` 里新加的那一条断言，跑完立即还原；判定「红」是读数行与 `DIFF` 行，因为 `--require-no-not-runnable` 按设计**只**把 `not_runnable` 变成 exit 1（`tests/failmatrix/run-real.mjs:1624`），`different` 不进退出码。
 
-**⚠️ 交付价值说准一点：这条断言在 CI 里红不了——它是「人肉可见」，不是「门禁」。** 真库臂的退出码只由 `not_runnable` 决定：`tests/failmatrix/run-real.mjs:1616-1620` 只在 `--require-no-not-runnable` 且 `tally.notRunnable > 0` 时 `return 1`，正常走到底就是 `return 0`（`:1493`）；脚本也没有 `--require-no-different` 这类开关（`:972` 列的合法参数只有 `--json=` / `--allow-skip` / `--require-no-not-runnable`）。CI 侧 `.github/workflows/real-pg-integration.yml:1264-1270` 的两条判决是「退出码（77 显式升级成 1、其它非 0 原样透出）」与「`--json` 的条数自证」，并且明文写着「⛔ 不断言 `different === 0`」。所以下表变异 A/B 判出的那种红，在 CI 里只会落在合计行的 `different 1` 与一条 `DIFF C4-12：…`（`run-real.mjs:1576`）上，**流水线照旧绿，得有人去翻日志才看得见**。要变成门禁得另开 B 档改动（给 `run-real.mjs` 加 `--require-no-different`，或改成与基线 json 逐条比对）；本页**不声称**它已进 CI 门禁。
+**⚠️ 交付价值说准一点：这条断言在 CI 里红不了——它是「人肉可见」，不是「门禁」。** 真库臂的退出码只由 `not_runnable` 决定：`tests/failmatrix/run-real.mjs:1622-1626` 只在 `--require-no-not-runnable` 且 `tally.notRunnable > 0` 时 `return 1`，正常走到底就是 `return 0`（`:1628`）；脚本也没有 `--require-no-different` 这类开关（`:1050` 列的合法参数只有 `--json=` / `--allow-skip` / `--require-no-not-runnable`）。CI 侧 `.github/workflows/real-pg-integration.yml:1264-1270` 的两条判决是「退出码（77 显式升级成 1、其它非 0 原样透出）」与「`--json` 的条数自证」，并且明文写着「⛔ 不断言 `different === 0`」。所以下表变异 A/B 判出的那种红，在 CI 里只会落在合计行的 `different 1` 与一条 `DIFF C4-12：…`（`run-real.mjs:1582`）上，**流水线照旧绿，得有人去翻日志才看得见**。要变成门禁得另开 B 档改动（给 `run-real.mjs` 加 `--require-no-different`，或改成与基线 json 逐条比对）；本页**不声称**它已进 CI 门禁。
 
 | 变异 | 改法 | 读数 | 判红原文 |
 | --- | --- | --- | --- |

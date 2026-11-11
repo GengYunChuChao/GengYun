@@ -34,7 +34,7 @@ node tests/failmatrix/run-real.mjs --require-no-not-runnable --json=E:\GengYunCo
 
 - 工作目录 `E:\GengYunCommander\.pg17\wt-r87-realarm`；退出码 **0**。
 - 环境变量名逐字：`GY_PG_BIN`（必填，缺则整臂退出 77 未取得）、`GY_I22_PG_ROOT`（可选，簇目录落点）。`GY_I22_PG_KEEP` **未设** ⇒ 走清理分支。
-- `--require-no-not-runnable` 在 `tests/failmatrix/run-real.mjs:1047` 解析；打开后 `not_runnable > 0` 会在 `tests/failmatrix/run-real.mjs:1616` 生效、由 `tests/failmatrix/run-real.mjs:1618` 往 stderr 打 `FAIL：--require-no-not-runnable 下有 N 条 not_runnable` 并 `return 1`。退出码 0 的含义因此是「**且** not_runnable = 0」，不只是「脚本没崩」。
+- `--require-no-not-runnable` 在 `tests/failmatrix/run-real.mjs:1047` 解析；打开后 `not_runnable > 0` 会在 `tests/failmatrix/run-real.mjs:1622` 生效、由 `tests/failmatrix/run-real.mjs:1624` 往 stderr 打 `FAIL：--require-no-not-runnable 下有 N 条 not_runnable` 并 `return 1`。退出码 0 的含义因此是「**且** not_runnable = 0」，不只是「脚本没崩」。
 - 依赖安装：本 worktree 内独立 `npm ci --prefer-offline --no-audit --no-fund --ignore-scripts`（`added 103 packages`），跑完 `git status --porcelain` 仍空、`package-lock.json` 未变。⛔ 没有做任何跨 worktree 的 `node_modules` junction/symlink（§3 红线），因此本片也没有需要摘除的重解析点。
 
 ## §3 读数表（本轮 vs 旧基线）
@@ -91,7 +91,7 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 真 PG 臂完成：180 条权限面用例在 PostgreSQL 17.11 上取得逐条读数，耗时 12586 ms（same=180 sameWithCheck=24 sameWithShape=30 different=0 not-runnable=0）。
 ```
 
-上面那句「权限面合计 …」由 `tests/failmatrix/run-real.mjs:1550` 打印，末句由 `tests/failmatrix/run-real.mjs:1605` 打印。另有整臂零外呼自证：`[pg] media_external_requests=0 fetch_calls=0（整臂零外呼）`。
+上面那句「权限面合计 …」由 `tests/failmatrix/run-real.mjs:1556` 打印，末句由 `tests/failmatrix/run-real.mjs:1611` 打印。另有整臂零外呼自证：`[pg] media_external_requests=0 fetch_calls=0（整臂零外呼）`。
 
 **关于「（无：权限面在 stub 与真 PG 下逐条一致）」这行**：这是 `run-real.mjs` 在 `different=0` 时打印的**固定文案**，不是逐条比对 stub 期望与 real 期望后的结论。本轮 5 条（C3-19/20/21、C4-15、C4-18）按 `realExpect` / `realCheck` 分叉口径比对：stub 侧对 C3-19/20/21 仍是 503 `PROVIDER_UNAVAILABLE`、对 C4-18 仍是 200，real 侧实测分别是 200 与 401 `SESSION_EXPIRED`（逐条见 §6）。因此这行的「逐条一致」只能读作「在**当次判定口径**（real 期望优先）下没有判红的那一条」，**不能**读作「stub 与真 PG 的原始期望值相同」——后者与 §6 的五条分叉自相矛盾，故在此显式澄清。
 
@@ -149,14 +149,14 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 
 - **本机 PG 17.11 ≠ CI 环境**：本页是本机 Windows + `E:\GengYunCommander\.pg17\pgsql\bin` 的 17.11 一次性簇（脚本 `initdb` 于 `tests/failmatrix/run-real.mjs:1095`），不是 CI 的 ubuntu-24.04 + PGDG `postgresql-17`。读数一致只说明「同一脚本、同一棵树、同一 PG 大版本下结果相同」，不替代 CI 的绿。
 - **stub 臂 249 条没跑**：本轮只跑真库臂的权限面 180 条；`node tests/failmatrix/run.mjs` 与 27 条负控制（`tools/i22-failmatrix-negative-control.mjs`）本片**都没有跑**，不得据此宣称 stub 臂本轮全绿。
-- **`--require-no-not-runnable` 的拒红分支没被触发**：本轮 `not_runnable = 0`，`tests/failmatrix/run-real.mjs:1616` 那个 `return 1` 分支从未执行 ⇒ 本页**不证明**该闸门在有 `not_runnable` 时会红（那是既有单测与 `#1054` 口径说明的范围）。
+- **`--require-no-not-runnable` 的拒红分支没被触发**：本轮 `not_runnable = 0`，`tests/failmatrix/run-real.mjs:1622` 那个 `return 1` 分支从未执行 ⇒ 本页**不证明**该闸门在有 `not_runnable` 时会红（那是既有单测与 `#1054` 口径说明的范围）。
 - **不覆盖 stub/real 之外的世界**：无真实对象存储、无真实供应商外呼（整臂 `fetch_calls=0` 自证）、无真机、无真实网络；媒体域走的是合成端点 `storage.example.test`。
 - **媒体域「持久化接线」的口径不一致仍在**（既有，非本片引入）：本轮只证明权限面读数，不宣称媒体已按生产形态持久化。
 - 本页**没有**做任何 commit 之外的写操作到 `cases.mjs` / `run-real.mjs`：证据页是唯一新增文件。
 
 ## §9 清理自证（一次性簇不留在机器上）
 
-- 脚本 `finally` 分支（`tests/failmatrix/run-real.mjs:1636` 起的清理段，`tests/failmatrix/run-real.mjs:1640` 打印 `[pg] 一次性集群已停止，数据目录已删除`）实测生效：日志末行就是这句。
+- 脚本 `finally` 分支（`tests/failmatrix/run-real.mjs:1642` 起的清理段，`tests/failmatrix/run-real.mjs:1646` 打印 `[pg] 一次性集群已停止，数据目录已删除`）实测生效：日志末行就是这句。
 - `Test-Path E:\GengYunCommander\.pg17\tmp\r87-pgroot\gy-i22-failmatrix-realpg-79016-0e68efc2` = **False**；`GY_I22_PG_ROOT` 目录条目数 = **0**。
 - `Get-NetTCPConnection -State Listen` 里 **58055 无监听**；本机现存 7 个 `postgres.exe` 全部带 `-D "E:/GengYunCommander/.pg17/data-r74" -p 55433`（既有簇），与本轮无关。
 - 临时产物（仓外，`E:\GengYunCommander\.pg17\tmp\`）：`r87-real-arm.log`（230 行）、`r87-real.json`（机读产物）、`r87-realarm-npmci.log`。仓库内除本页外无改动。
