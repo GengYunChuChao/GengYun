@@ -9808,24 +9808,24 @@
       "doc": "docs/verification/gy-r82-failmatrix-reconcile-20261106.md",
       "line": 124,
       "target": "tests/failmatrix/run-real.mjs",
-      "from": 783,
-      "to": 814,
+      "from": 861,
+      "to": 892,
       "kind": "block-comment"
     },
     {
       "doc": "docs/verification/gy-r82-failmatrix-reconcile-20261106.md",
       "line": 125,
       "target": "tests/failmatrix/run-real.mjs",
-      "from": 784,
-      "to": 784,
+      "from": 862,
+      "to": 862,
       "kind": "block-comment"
     },
     {
       "doc": "docs/verification/gy-r82-failmatrix-reconcile-20261106.md",
       "line": 126,
       "target": "tests/failmatrix/run-real.mjs",
-      "from": 835,
-      "to": 849,
+      "from": 913,
+      "to": 927,
       "kind": "block-comment"
     },
     {
@@ -9912,16 +9912,16 @@
       "doc": "docs/verification/gy-r87-etag-parity-20261107.md",
       "line": 30,
       "target": "tests/failmatrix/run-real.mjs",
-      "from": 782,
-      "to": 782,
+      "from": 860,
+      "to": 860,
       "kind": "block-comment"
     },
     {
       "doc": "docs/verification/gy-r87-etag-parity-20261107.md",
       "line": 103,
       "target": "tests/failmatrix/run-real.mjs",
-      "from": 782,
-      "to": 782,
+      "from": 860,
+      "to": 860,
       "kind": "block-comment"
     },
     {
