@@ -38,7 +38,7 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  */
 const MIN_CASES = 230;
 /** 每族条数（与 inject 臂同一份用例表，loopback 臂必须逐族一致）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 36, C4: 36, C5: 12, C6: 12, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 36, C4: 36, C5: 12, C6: 12, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39 };
 /** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面）。 */
 const BATCH_COUNTS = { B1: 133, B2: 40, B3: 17, B4: 9, B5: 62 };
 

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "scope": "docs/verification/**/*.md",
-  "accepted": "gy-r90-comment-anchor-shadow-batch + gy-r96-different-gate-comment-refs + gy-r97-consent-withdraw-failmatrix-shift + gy-r108-comment-anchor-collect",
-  "why": "GY-R108（#22 媒体上传片，2026-11-10）：本片在 tests/failmatrix/cases.mjs 的 CASES 数组末尾追加 4 行（C5-11/C5-12 两条用例 + 两行注释），文末判据函数整体下移 4 行；旧基线里 `docs/verification/gy-r31-i22-failure-matrix-20261022.md:173` 那条 `tests/failmatrix/cases.mjs:587-588`（line-comment）随之不再落在注释行上——该页那句是 2026-10-22 的初稿时点读数，按仓规不回填，故按工具提示 `--write-baseline` 收紧掉这一条（1425 → 1424），其余条目逐字保留。 「逐字引用判据注释原文」在本仓是合法证据形态的一类（例如证据页引用 workflow 注释说明不变量），这批历史命中未经逐条人工裁定，先整批登记为影子基线；闸门只拦基线之外的新增，修掉一条再由 --write-baseline 收紧。2026-11-09 追加 4 条（gy-r96-different-gate-comment-refs）：docs/verification/gy-r96-i22-different-gate-20261109.md 逐字引用 tests/failmatrix/run-real.mjs:32 与 .github/workflows/real-pg-integration.yml:1366 两行注释原文，用来证明这两处与新行为矛盾的注释已在同一 PR 内订正（行号零位移），属上述合法形态。 GY-R97（#22 撤回授权失败矩阵片，2026-11-09）：本片在 tests/failmatrix/cases.mjs 的 C4 段插入 8 行（C4-27..C4-31），docs/verification/gy-r31-i22-failure-matrix-20261022.md:173 的**裸锚点** `:587-588` 因此从代码行落到注释行。该页是 2026-10-22 的历史回写页，恒等闸门把这条裸锚点的目标判为「退回本文件」，直接改写行号会被判成对自身行号的位移（实测 identity 报「起 587→587（文档写 595）」），故本片不动那一行，按本工具口径把它登记进影子基线；重锚需要单独一片按该页原意逐条核对，不在本片夹带。",
+  "accepted": "gy-r90-comment-anchor-shadow-batch + gy-r96-different-gate-comment-refs + gy-r97-consent-withdraw-failmatrix-shift + gy-r108-comment-anchor-collect + gy-r111-comment-anchor-reanchor",
+  "why": "GY-R111（#39 后台内容写片，2026-11-11）：本片在 tests/failmatrix/cases.mjs 的 BATCHES/FAMILIES 各插入 1 行、C4/C7 段插入 11 行，第 106 行之后的既有行号整体位移。docs/verification/gy-r82-failmatrix-reconcile-20261106.md:69 那条登记的 `tests/failmatrix/cases.mjs:355-359` 本就锚错了实质行——它落在 C3-35 的「① 空串 ≡ 不过滤」注释上，而该句讲的是 C4-15 的判等 `result.body?.data?.deletion?.id !== prior.deletionId`。按仓规「要么把锚点改到实质行」，本片把它重锚到真实位置 `cases.mjs:410-414`（判等行 `:412`）；目标成了代码行，不再计入注释锚点，故这条影子基线被收紧掉（1424 → 1423），其余条目逐字保留。 GY-R108（#22 媒体上传片，2026-11-10）：本片在 tests/failmatrix/cases.mjs 的 CASES 数组末尾追加 4 行（C5-11/C5-12 两条用例 + 两行注释），文末判据函数整体下移 4 行；旧基线里 `docs/verification/gy-r31-i22-failure-matrix-20261022.md:173` 那条 `tests/failmatrix/cases.mjs:587-588`（line-comment）随之不再落在注释行上——该页那句是 2026-10-22 的初稿时点读数，按仓规不回填，故按工具提示 `--write-baseline` 收紧掉这一条（1425 → 1424），其余条目逐字保留。 「逐字引用判据注释原文」在本仓是合法证据形态的一类（例如证据页引用 workflow 注释说明不变量），这批历史命中未经逐条人工裁定，先整批登记为影子基线；闸门只拦基线之外的新增，修掉一条再由 --write-baseline 收紧。2026-11-09 追加 4 条（gy-r96-different-gate-comment-refs）：docs/verification/gy-r96-i22-different-gate-20261109.md 逐字引用 tests/failmatrix/run-real.mjs:32 与 .github/workflows/real-pg-integration.yml:1366 两行注释原文，用来证明这两处与新行为矛盾的注释已在同一 PR 内订正（行号零位移），属上述合法形态。 GY-R97（#22 撤回授权失败矩阵片，2026-11-09）：本片在 tests/failmatrix/cases.mjs 的 C4 段插入 8 行（C4-27..C4-31），docs/verification/gy-r31-i22-failure-matrix-20261022.md:173 的**裸锚点** `:587-588` 因此从代码行落到注释行。该页是 2026-10-22 的历史回写页，恒等闸门把这条裸锚点的目标判为「退回本文件」，直接改写行号会被判成对自身行号的位移（实测 identity 报「起 587→587（文档写 595）」），故本片不动那一行，按本工具口径把它登记进影子基线；重锚需要单独一片按该页原意逐条核对，不在本片夹带。",
   "entries": [
     {
       "doc": "docs/verification/gy-flake-clock-20261019.md",
@@ -8898,7 +8898,7 @@
       "target": "services/api/src/ai/chat-live-adapter.ts",
       "from": 304,
       "to": 304,
-      "kind": "line-comment"
+      "kind": "jsdoc"
     },
     {
       "doc": "docs/verification/gy-r71-async-privacy-codes-20261030.md",
@@ -9762,14 +9762,6 @@
       "target": "tests/failmatrix/run.mjs",
       "from": 285,
       "to": 298,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r82-failmatrix-reconcile-20261106.md",
-      "line": 69,
-      "target": "tests/failmatrix/cases.mjs",
-      "from": 355,
-      "to": 359,
       "kind": "line-comment"
     },
     {
