@@ -3171,5 +3171,27 @@
   {"doc":"docs/verification/gy-r68-s4-recheck-20261028.md","line":123,"target":".github/workflows/real-pg-integration.yml","from":253,"to":259,"kind":"correction","symbol":"third-party-deletion-pg.mjs","reason":"本行是「库层与最小权限证据仍全部逐字命中」那条，要证的是 CI 侧确实挂着第三方删除真库臂。旧锚第 253 行是那条臂上方注释块的第二行（「# 断言 `public` 下无表）。它自建 5 个 NOLOGIN 域组…」），注释自述不构成执行证据；执行点是第 259 行的 `- run: … && node tests/integration/third-party-deletion-pg.mjs postgres://…`。接线提交 `8b5b8afe`（#610，2026-10-26）。目标文件本提交未改动，故按 correction 登记。"},
   {"doc":"docs/verification/gy-r68-s4-recheck-20261028.md","line":142,"target":".github/workflows/real-pg-integration.yml","from":253,"to":259,"kind":"correction","symbol":"third-party-deletion-pg.mjs","reason":"本行（§3 仍存疑）写「需跑 `tests/integration/third-party-deletion-pg.mjs` 那条真库工作流（CI 侧 `real-pg-integration.yml:259`）」，要指的就是 CI 里真正执行它的一行；旧锚第 253 行是同一条臂上方注释块的第二行，注释不等于执行。第 259 行 `- run: psql … CREATE DATABASE gengyun_third_party_deletion_test' && node tests/integration/third-party-deletion-pg.mjs …` 才是执行行，接线提交 `8b5b8afe`（#610，2026-10-26）。目标文件本提交未改动，故按 correction 登记。"},
   {"doc":"docs/ui-state-inventory.md","line":352,"target":"tools/prepare-wechat.mjs","from":354,"to":498,"kind":"correction","symbol":"assertRegionCentroidPackaging","reason":"旧锚点本来就指错：base（c1641fba）的 `tools/prepare-wechat.mjs:354` 是打包清单中间的数据行 `'data/seed-province-index.js'`，只是「行号落在文件里」就混过了闸门；文档这一格说的是「双向断言（存在却不在清单／在清单却不存在都失败）」，真值在清单数组收尾之后——498 `const regionCentroid = assertRegionCentroidPackaging({` 才是断言入口（495 起传 `resourceExists`）。本提交把清单从「复制计划」降级为「存在性断言」并补了缺失点名的失败文案，锚点必须落在断言调用上。端点映射只会把错号机械平移成 489，而 489 仍是同一条 `'data/seed-province-index.js'`——错位原样保留，故按 correction 登记。"},
-  {"doc":"docs/verification/gy-i07-knowledge-miniprogram-wiring-20261021.md","line":41,"target":"tools/prepare-wechat.mjs","from":50,"fromEnd":51,"to":378,"toEnd":379,"kind":"correction","symbol":"sharedRuntime","reason":"旧锚点本来就指错：base（c1641fba）的 50 是空行、51 是 `function compareReferences(left, right) {`，落在 HELP 数组之后的比较工具函数上，和文档这句「共享 `runtime.js` 被改动时拒绝打包」毫无关系——旧锚点只是「行号在文件里」。本提交在该函数之前重排（新增 `--out`／`--dry-run` 解析与输出根解析），真值是 378 `const sharedRuntime = readFileSync(join(root, 'miniprogram/config/runtime.js'), 'utf8').replace(/\\r\\n/g, '\\n');` 与 379 的 `if (sharedRuntime !== ...) throw new Error('Shared runtime changed. Refuse to package a possible local/stub configuration.')`。端点映射只会平移成 59-60，仍落在 HELP／compareReferences 一带，故按 correction 登记。"}
+  {"doc":"docs/verification/gy-i07-knowledge-miniprogram-wiring-20261021.md","line":41,"target":"tools/prepare-wechat.mjs","from":50,"fromEnd":51,"to":378,"toEnd":379,"kind":"correction","symbol":"sharedRuntime","reason":"旧锚点本来就指错：base（c1641fba）的 50 是空行、51 是 `function compareReferences(left, right) {`，落在 HELP 数组之后的比较工具函数上，和文档这句「共享 `runtime.js` 被改动时拒绝打包」毫无关系——旧锚点只是「行号在文件里」。本提交在该函数之前重排（新增 `--out`／`--dry-run` 解析与输出根解析），真值是 378 `const sharedRuntime = readFileSync(join(root, 'miniprogram/config/runtime.js'), 'utf8').replace(/\\r\\n/g, '\\n');` 与 379 的 `if (sharedRuntime !== ...) throw new Error('Shared runtime changed. Refuse to package a possible local/stub configuration.')`。端点映射只会平移成 59-60，仍落在 HELP／compareReferences 一带，故按 correction 登记。"},
+  {
+    "doc": "docs/verification/gy-r82-failmatrix-reconcile-20261106.md",
+    "line": 69,
+    "target": "tests/failmatrix/cases.mjs",
+    "from": 355,
+    "fromEnd": 359,
+    "to": 410,
+    "toEnd": 414,
+    "kind": "correction",
+    "symbol": "prior.deletionId",
+    "reason": "本页 §3 这句讲的是 C4-15 的 `check` 本体：页面基线 7155b9e7 时 C4-15 在 :354 起，当时写下的 `:355-359` 实际是 C3-35 的检查体（const items / ids.map / 去重判等），与「重放换单」无关。本次（GY-R111 片）按用例行把锚点重锚到 HEAD 上 C4-15 `check` 本体 :410-414（`const prior = ctx.actors.deleter` 在 :411、判等行 `result.body?.data?.deletion?.id !== prior.deletionId` 在 :412、换发回执判等 :413、`return problems;` :414）。端点映射（本提交 cases.mjs 前置 +2）只会把错锚机械平移到 :357-361 的 C3-35 上，故登记 correction；symbol `prior.deletionId` 只出现在新窗口。"
+  },
+  {
+    "doc": "docs/verification/gy-r82-failmatrix-reconcile-20261106.md",
+    "line": 69,
+    "target": "tests/failmatrix/cases.mjs",
+    "from": 357,
+    "to": 412,
+    "kind": "correction",
+    "symbol": "prior.deletionId",
+    "reason": "同一句里的单点引用：原写 `cases.mjs:357`，在页面基线上是 C3-35 的 `const ids = items.map((item) => item?.id)…`，与句子描述的 `result.body?.data?.deletion?.id !== prior.deletionId` 无关（端点映射只会把它平移到 :359）。按符号重锚到 HEAD 的 :412 —— C4-15 `check` 里那一行判等本体。"
+  }
 ]
