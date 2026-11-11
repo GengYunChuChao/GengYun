@@ -20,10 +20,10 @@
 
 ## §2 修法：(a) 用例级补真库断言，而不是改公共判定器
 
-改了 `tests/failmatrix/cases.mjs:404` 那条 C4-12：单行里引用 `realCheck: assertStrongEtagMatchesRevision`（`tests/failmatrix/run-real.mjs:806` 取 `realCheck ?? check`，所以真库臂会用它替掉本条原先不存在的断言），判据函数声明在同一文件的末尾（`tests/failmatrix/cases.mjs:753`）——为什么放末尾见 §5：
+改了 `tests/failmatrix/cases.mjs:404` 那条 C4-12：单行里引用 `realCheck: assertStrongEtagMatchesRevision`（`tests/failmatrix/run-real.mjs:806` 取 `realCheck ?? check`，所以真库臂会用它替掉本条原先不存在的断言），判据函数声明在同一文件的末尾（`tests/failmatrix/cases.mjs:754`）——为什么放末尾见 §5：
 
-- `cases.mjs:755` 取 `result.headers?.etag`、`cases.mjs:756` 取 `result.body?.data?.revision`；`cases.mjs:757` 判强格式，口径与 stub 臂 `run.mjs:144` **逐字同源**：`typeof etag === 'string' && /^"\d+"$/`。
-- `cases.mjs:762` 再把 ETag **逐字钉到正文修订号**：`etag === `"${String(revision)}"``；`cases.mjs:760` 先要求 `revision` 是 ≥1 的安全整数（不是就判红）。这一条比 stub 臂强——stub 臂只看形状，真库臂连「ETag 和正文是同一个修订号」都不许漂。
+- `cases.mjs:756` 取 `result.headers?.etag`、`cases.mjs:757` 取 `result.body?.data?.revision`；`cases.mjs:758` 判强格式，口径与 stub 臂 `run.mjs:144` **逐字同源**：`typeof etag === 'string' && /^"\d+"$/`。
+- `cases.mjs:763` 再把 ETag **逐字钉到正文修订号**：`etag === `"${String(revision)}"``；`cases.mjs:761` 先要求 `revision` 是 ≥1 的安全整数（不是就判红）。这一条比 stub 臂强——stub 臂只看形状，真库臂连「ETag 和正文是同一个修订号」都不许漂。
 
 **为什么不改公共判定器（在 `verdictFor` 里加 `exp.etag` 分支）**：那会把 `tests/failmatrix/run-real.mjs:806` 之后的每一行都往下推，牵动 `docs/verification/` 三处历史取证页的十几个锚点，而今天除 C4-12 外没有任何带 `expect.etag` 的用例进真库臂 ⇒ 检测力净增 0、文档位移代价全额。
 
@@ -75,8 +75,8 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 
 | 变异 | 改法 | 读数 | 判红原文 |
 | --- | --- | --- | --- |
-| A 强→弱 | `cases.mjs:757` 的 `/^"\d+"$/` 改成 `/^W\/"\d+"$/`（要求弱校验前缀） | `same 179 / sameWithCheck 24 / different 1` | `DIFF C4-12：… （ETag 期望强修订号 "n"（不带 W/ 弱前缀；与 stub 臂 run.mjs:144-148 同口径），实际 "\"2\""）` |
-| B 值改一位 | `cases.mjs:762` 的 `String(revision)` 改成 `String(revision + 1)` | `same 179 / sameWithCheck 24 / different 1` | `DIFF C4-12：… （ETag 必须逐字等于正文修订号：期望 "\"2\""，实际 "\"2\""）` |
+| A 强→弱 | `cases.mjs:758` 的 `/^"\d+"$/` 改成 `/^W\/"\d+"$/`（要求弱校验前缀） | `same 179 / sameWithCheck 24 / different 1` | `DIFF C4-12：… （ETag 期望强修订号 "n"（不带 W/ 弱前缀；与 stub 臂 run.mjs:144-148 同口径），实际 "\"2\""）` |
+| B 值改一位 | `cases.mjs:763` 的 `String(revision)` 改成 `String(revision + 1)` | `same 179 / sameWithCheck 24 / different 1` | `DIFF C4-12：… （ETag 必须逐字等于正文修订号：期望 "\"2\""，实际 "\"2\""）` |
 | 还原 | 两处逐字改回 | `same 180 / sameWithCheck 25 / sameWithShape 30 / different 0 / not_runnable 0` | 无 `DIFF` |
 
 变异 B 的文案里「期望」与「实际」看起来同形，是因为**文案取的是真修订号（2）、判等取的是变异后的修订号（3）**：真库此刻 ETag 就是 `"2"`、正文 `data.revision` 也是 `2`，所以判等要求 `"3"` 时必然红，而文案照旧打印真值。读这一行要看 verdict，不要看两个引号之间长得一样。
@@ -91,7 +91,7 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 
 原因是 r82 那三处不是普通锚点，而是 `tests/unit/doc-anchor-relocations.json` 第 598/599/600 条 `kind: "correction"` 登记（`from 354 → to 407`、`from 367 → to 438`，`symbol` 分别是 `C4-15`／`C4-18`）：闸门按「HEAD 上是否仍成立」重验每一条，文档行必须仍然含指向 `tests/failmatrix/cases.mjs:407` 的那个锚点。**只改文档数字会把它判成「陈旧」，而把 `to` 跟着改成 424/455 就得动登记表**——本片明确不动那张表（它不在 `tests/failmatrix/**` 里）。反过来把文档数字留着不动也不行：`to=407` 那条 `correction` 要求「HEAD 的 407 行含 `C4-15`」，而位移后 407 行是别的内容。
 
-所以改成**零位移**的写法：C4-12 仍是第 404 行（一条长对象字面量的单个 `realCheck: assertStrongEtagMatchesRevision` 引用），判据函数 `assertStrongEtagMatchesRevision` 声明在文件末尾（`tests/failmatrix/cases.mjs:753`），函数声明提升让「用例先引用、文末声明」成立。实测：`prefixIdentical: true`（前 403 行逐字未动）、`tailIdentical: true`（原 421 行之后的每一行逐字未动），`git diff --numstat 1b0a3b63 aeaa5c24 -- tests/failmatrix/cases.mjs` 只有 `34 1 tests/failmatrix/cases.mjs`：**34 行新增 = 文末追加的 33 行（第 677 行的分隔空行 + 第 678–709 行的 JSDoc 与函数本体）＋ 第 404 行原位改写的 1 行**；**1 行删除 = 第 404 行的旧内容**。C4-12 **没有折行**——改动前后它都是第 404 行的一整行，变的是 `note` 文案、以及多出 `realCheck: assertStrongEtagMatchesRevision` 这一段引用；文件从 676 行长到 709 行（+33）。（第一版把 `realCheck` 写成 C4-12 里的多行箭头函数，那一版才是折行；§5 开头 676→693 的 +17 讲的就是那一版，最终版已无折行。）
+所以改成**零位移**的写法：C4-12 仍是第 404 行（一条长对象字面量的单个 `realCheck: assertStrongEtagMatchesRevision` 引用），判据函数 `assertStrongEtagMatchesRevision` 声明在文件末尾（`tests/failmatrix/cases.mjs:754`），函数声明提升让「用例先引用、文末声明」成立。实测：`prefixIdentical: true`（前 403 行逐字未动）、`tailIdentical: true`（原 421 行之后的每一行逐字未动），`git diff --numstat 1b0a3b63 aeaa5c24 -- tests/failmatrix/cases.mjs` 只有 `34 1 tests/failmatrix/cases.mjs`：**34 行新增 = 文末追加的 33 行（第 677 行的分隔空行 + 第 678–709 行的 JSDoc 与函数本体）＋ 第 404 行原位改写的 1 行**；**1 行删除 = 第 404 行的旧内容**。C4-12 **没有折行**——改动前后它都是第 404 行的一整行，变的是 `note` 文案、以及多出 `realCheck: assertStrongEtagMatchesRevision` 这一段引用；文件从 676 行长到 709 行（+33）。（第一版把 `realCheck` 写成 C4-12 里的多行箭头函数，那一版才是折行；§5 开头 676→693 的 +17 讲的就是那一版，最终版已无折行。）
 
 代价写在函数注释里：判据离用例远了 290 行。收益是**一条文档锚点都不用动**，登记表不用动，`doc-anchor-relocation-identity` 这条闸门本轮判决面为空（`git diff` 的 docs 侧只有本页这一份纯新增文件 ⇒ 显式 SKIP）。
 
@@ -102,6 +102,6 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 - **本机 PG 17.11 ≠ CI**：不是 CI 的 ubuntu-24.04 + PGDG `postgresql-17`；读数一致只说明同一脚本、同一棵树、同一大版本下相同。
 - **只证明 C4-12 这一条**：`realCheck` 只加在这一条；`verdictFor` 仍然不读 `exp.etag`，所以**将来**新增带 `expect.etag` 的权限面用例仍会静默退化——这一条靠 `run-real.mjs:782` 的注释警告挡，不是靠代码强制。要强制得改公共判定器（见 §2 的代价说明）。
 - **不覆盖 12 条里的另外 11 条**：C5/C6/E1/E2 的 etag 用例只在 stub 臂判定，本页不声称它们有真库判据。
-- **这条判据隐含「200 + 有正文」**：它除了取响应头 `ETag`，还要拿正文 `result.body.data.revision` 做逐字比对（`cases.mjs:762`），所以只适用于「200 且带正文」的用例；304／空正文一类即使也回 ETag 也不能照抄这条 `realCheck`——`revision` 取不到就会落进「`data.revision` 期望正整数」那一支判红。
+- **这条判据隐含「200 + 有正文」**：它除了取响应头 `ETag`，还要拿正文 `result.body.data.revision` 做逐字比对（`cases.mjs:763`），所以只适用于「200 且带正文」的用例；304／空正文一类即使也回 ETag 也不能照抄这条 `realCheck`——`revision` 取不到就会落进「`data.revision` 期望正整数」那一支判红。
 - **`--require-no-not-runnable` 的拒红分支仍未触发**：本轮 `not_runnable = 0`，那个 `return 1` 分支没执行过。
 - 变异自证的两处改动已逐字还原（`git diff --numstat 1b0a3b63 aeaa5c24` 为 `104 0 docs/verification/gy-r87-etag-parity-20261107.md`、`34 1 tests/failmatrix/cases.mjs`、`1 1 tests/failmatrix/run-real.mjs`），本页是唯一新增文件。
