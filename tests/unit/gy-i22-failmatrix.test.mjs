@@ -116,8 +116,8 @@ test(`GY-I22 失败矩阵：全量真跑（≥${MIN_CASES} 条）全绿，且每
 test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、expect 齐备）', () => {
   const ids = new Set();
   for (const one of CASES) {
-    // C1..C7 + C10/C11（异步 AI 域 2026-10 纳入：游客面与归属面）+ E1/E2 + F1（下架后引用跳转）。
-    assert.match(one.id, /^C(?:[1-7]|1[01])-\d{2}$|^E[12]-\d{2}$|^F1-\d{2}$/, `用例 id 形状不对：${one.id}`);
+    // C1..C7 + C10/C11（异步 AI 域 2026-10 纳入：游客面与归属面）+ E1/E2/E3（E3：后台内容写 2026-11 纳入）+ F1（下架后引用跳转）。
+    assert.match(one.id, /^C(?:[1-7]|1[01])-\d{2}$|^E[1-3]-\d{2}$|^F1-\d{2}$/, `用例 id 形状不对：${one.id}`);
     assert.ok(!ids.has(one.id), `用例 id 重复：${one.id}`);
     ids.add(one.id);
     assert.ok(FAMILIES[one.family] !== undefined, `${one.id} 的族 ${one.family} 没有说明`);
