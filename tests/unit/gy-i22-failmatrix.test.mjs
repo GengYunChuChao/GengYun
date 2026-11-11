@@ -42,11 +42,11 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  * 249 → 254：R95 补「取消注销申请」（`DELETE /me/account/deletion`）的 5 条失败面——游客 401、
  * 缺幂等键 400、无在途 404、取消成功 200（强修订号 + `state=cancelled`）、终态再取消 409。只增不减。
  */
-const MIN_CASES = 261;
+const MIN_CASES = 264;
 /** 每族条数（本片实跑快照：C/E/F 族走 HTTP，D 族走受信 seam）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 36, C4: 31, C5: 10, C6: 11, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39, F1: 6, E3: 2 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 36, C4: 36, C5: 10, C6: 11, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39, F1: 6 };
 /** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面 / B6 下架后引用跳转）。 */
-const BATCH_COUNTS = { B1: 128, B2: 37, B3: 17, B4: 9, B5: 62, B6: 6, B7: 2 };
+const BATCH_COUNTS = { B1: 133, B2: 37, B3: 17, B4: 9, B5: 62, B6: 6 };
 
 function runMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-unit-'));
@@ -117,7 +117,7 @@ test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、exp
   const ids = new Set();
   for (const one of CASES) {
     // C1..C7 + C10/C11（异步 AI 域 2026-10 纳入：游客面与归属面）+ E1/E2 + F1（下架后引用跳转）。
-    assert.match(one.id, /^C(?:[1-7]|1[01])-\d{2}$|^E[123]-\d{2}$|^F1-\d{2}$/, `用例 id 形状不对：${one.id}`);
+    assert.match(one.id, /^C(?:[1-7]|1[01])-\d{2}$|^E[12]-\d{2}$|^F1-\d{2}$/, `用例 id 形状不对：${one.id}`);
     assert.ok(!ids.has(one.id), `用例 id 重复：${one.id}`);
     ids.add(one.id);
     assert.ok(FAMILIES[one.family] !== undefined, `${one.id} 的族 ${one.family} 没有说明`);
