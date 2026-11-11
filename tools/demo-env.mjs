@@ -4,7 +4,7 @@
  *
  * 为什么需要这一步工具（此前是每台机器手工抄一遍）：
  * 1. **抄错没人发现**。`real` 模式要 9 个真键（微信 2 + 对象存储 4 + 两把签名钥匙 + DATABASE_URL），
- *    再加上识别与媒体两族可选键一共 13 项；手抄错一个名字，只会等到 `up` 第三步才炸，而那时的
+ *    再加上识别、问答与媒体三族键一共 16 项；手抄错一个名字，只会等到 `up` 第三步才炸，而那时的
  *    报错只说「缺键」，指不到是抄漏还是抄错。
  * 2. **抄的过程会把值带进终端滚动区**。屏幕/聊天记录里出现过的密钥收不回来，所以本工具的值只往
  *    文件里走：stdout 只出现「键名 / 键数 / 路径 / 哪些键是生成的」。
@@ -30,6 +30,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { AI_ENDPOINTS } from './ai-config.mjs';
 
 /** 仓库根：由本文件位置推出（`tools/` → `..`），⛔ 不用 `process.cwd()`——`--out` 的仓库内外判定必须与在哪敲命令无关。 */
 export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,6 +42,22 @@ export const EXIT = Object.freeze({ OK: 0, USAGE: 1, CREDENTIALS: 2 });
 export const RECOGNITION_URL = 'https://api.deepseek.com/v1/chat/completions';
 export const RECOGNITION_PROFILE = 'openai-vision-v1';
 export const RECOGNITION_MODEL = 'deepseek-flash';
+
+/**
+ * 问答剖面：键名走 `services/api/src/config.ts` 的 `CHAT_PROVIDER_ENV`
+ * （`CHAT_LLM_ENDPOINT` / `CHAT_LLM_MODEL` / `CHAT_LLM_API_KEY`）。
+ *
+ * 为什么必须在这里也写出来：`asChatProvider` 三个键**全空**时返回 `null`，装配层就不建真实适配器，
+ * 问答静默退回确定性检索摘要（页面会印「未接真实模型」）——这正是演示栈一贯的默认结局。
+ * 少写这三个键，等于把「已接真实模型」这条动线在演示档里关掉；写进去以后，缺 key 会像识别侧一样
+ * 在 `demo:env` 阶段就报缺键（fail-closed），而不是起起来才发现回答是死的。
+ *
+ * 端点与模型名**不另造常量**：它们与 `tools/ai-config.mjs` 的 `CHAT_LLM_DEFAULT_ENV` 同源
+ * （那张表的注释写明「改白名单即改默认值，两处不可能分叉」）。这里只是把同一对公开值提前写进
+ * env 文件——API 进程直读 `process.env`，不经过 `loadPrivateEnvironment()`，补不了默认值。
+ */
+export const CHAT_URL = AI_ENDPOINTS.llm.endpoint;
+export const CHAT_MODEL = AI_ENDPOINTS.llm.model;
 
 /** 媒体对象引用钥匙的生成口径：32 字节随机 → 64 位十六进制（API 侧三种合法形态之一）。 */
 export const MEDIA_KEY_BYTES = 32;
@@ -94,6 +111,10 @@ export const ENV_SPECS = Object.freeze([
   { env: 'RECOGNITION_PROVIDER_KEY', from: ['deepseekApiKey'], section: 'recognition' },
   { env: 'RECOGNITION_PROVIDER_PROFILE', fixed: RECOGNITION_PROFILE, section: 'recognition' },
   { env: 'RECOGNITION_PROVIDER_MODEL', fixed: RECOGNITION_MODEL, section: 'recognition' },
+  // —— 问答（`ai/chat-wiring.ts` 门②的门票）：三个键缺一，`asChatProvider` 就给 `null` ——
+  { env: 'CHAT_LLM_ENDPOINT', fixed: CHAT_URL, section: 'chat' },
+  { env: 'CHAT_LLM_MODEL', fixed: CHAT_MODEL, section: 'chat' },
+  { env: 'CHAT_LLM_API_KEY', from: ['deepseekApiKey'], section: 'chat' },
   {
     env: 'MEDIA_OBJECT_REF_KEY',
     from: ['mediaObjectRefKey', 'mediaObjectRef'],
@@ -135,6 +156,7 @@ const SECTION_TITLES = Object.freeze({
   storage: '—— 对象存储（六要素里的四项）——',
   signing: '—— 会话 / 注销账本签名钥匙（本机演示用；生产必须是另一套）——',
   recognition: '—— 识别（OpenAI 兼容剖面；端点与剖面是固定值）——',
+  chat: '—— 文字问答（同一 OpenAI 兼容端点；缺这三个键问答会静默退回确定性检索摘要）——',
   media: '—— 媒体对象引用加密钥匙（本机演示用，见下方注释）——',
   tencent: '—— 腾讯云 TC3 凭据（可选：缺了不拦启动，只是 TTS 语音合成 / ASR 语音提问会 503）——',
 });
@@ -456,7 +478,9 @@ export function usageLines() {
   return [
     '用法：node tools/demo-env.mjs --from <credentials.local.json> --out <env 文件> [--force]',
     '',
-    '把仓库外的私密凭据（JSONC）翻成本机演示栈能吃的 env 文件（13 个必填键，其中 1 个由本工具生成）。',
+    '把仓库外的私密凭据（JSONC）翻成本机演示栈能吃的 env 文件（16 个必填键，其中 1 个由本工具生成）。',
+    '其中 CHAT_LLM_ENDPOINT / CHAT_LLM_MODEL / CHAT_LLM_API_KEY 是问答动线的门票：三个都在，文字提问',
+    '才走真实模型；否则装配层按未配置处理，回答退回确定性检索摘要（正文自带「未接真实模型」字样）。',
     '另有 4 个可选的腾讯云凭据键（TENCENTCLOUD_SECRET_ID / _KEY、TENCENTCLOUD_ASR_SECRET_ID / _KEY）：',
     '缺了不拦启动、也不伪造值，只是 TTS 语音合成 / ASR 语音提问会 503 PROVIDER_UNAVAILABLE——',
     '生成时会逐条提示缺哪个键、哪条动线不可用（识别与文字问答不受影响）。',
