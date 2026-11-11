@@ -486,7 +486,8 @@ export function check(options = {}) {
   // 3 图标几何一致
   const paths = readDemoIconPaths();
   const expectIcons = buildIconsWxss(paths);
-  const actualIcons = existsSync(join(ROOT, ICONS_WXSS)) ? read(ICONS_WXSS) : '';
+  // 工作区可能是 CRLF（Windows autocrlf），比对前归一行尾；expectIcons 仍按 LF 生成。
+  const actualIcons = existsSync(join(ROOT, ICONS_WXSS)) ? read(ICONS_WXSS).replace(/\r\n/g, '\n') : '';
   const iconsOk = expectIcons === actualIcons;
   if (!iconsOk) problems.push(`${ICONS_WXSS} 与 demo SVG path 生成结果不一致，请运行 node tools/demo-align.mjs --write-icons`);
   rows.push({ kind: 'icon', count: TAB_ICONS.length * 2 + PLAIN_ICONS.filter(([n]) => paths[n]).length, ok: iconsOk });
