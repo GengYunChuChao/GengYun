@@ -56,19 +56,37 @@ const ARCHIVE_PAGE = 'docs/verification/gy-i22-failmatrix-20261022.md';
 /** 页内两对生成器标记。写盘要求两对都在，否则拒绝。 */
 const MARKERS = Object.freeze(['MATRIX-TABLE', 'NEGATIVE-CONTROL-TABLE']);
 
-/** 每条用例的族 → #22 的 acceptance 条目（自评映射；最终由监工裁决）。 */
+/**
+ * 每条用例的族 → #22 的 acceptance 条目（自评映射；最终由监工裁决）。
+ *
+ * 这张表是**族级**映射，不是逐条 AC 的验收结论：它回答「这一族打的是哪条验收的失败面」。
+ * `#22` 的 12 条 AC（AC01/AC02/AC07/AC08/AC09/AC13/AC16/AC19/AC21/AC22/AC23/AC29）在本表里
+ * 每条至少出现一次，族与批次的新增必须同步登记在这里——否则 `#22 acceptance（自评）` 列对那一族
+ * 就是空的 `—`。
+ *
+ * 为什么专门补 `AC07`（失败和重试）与 `AC23`（注销删除与保留）：这两条此前在 `tests/` 下没有任何
+ * 文件为它们打标签（AC07 的唯一「命中」是哈希串巧合，AC23 只出现在行号登记表的说明文字里），能力证据
+ * 其实分散在 `tests/unit/miniprogram-network-failure-clears.test.mjs`、
+ * `tests/unit/idempotency-retry-after-http.test.mjs`、`tests/integration/retention-purge-pg.mjs`、
+ * `tests/unit/community-account-deletion-retention.test.mjs` 等处，却没有一条机器可读的
+ * AC↔用例对应关系。本表就是那个落点：C6/D1 承 AC07，C4/D1 承 AC23。
+ * `tests/unit/i22-acceptance-map.test.mjs` 钉住「每族都有映射、12 条 AC 都有归属、token 形状合法」。
+ */
 const FAMILY_ACCEPTANCE = Object.freeze({
   C1: 'AC01',
-  C2: 'AC01/AC02',
+  C2: 'AC01/AC09',
   C3: 'AC02/AC07',
-  C4: 'AC08/AC09',
+  C4: 'AC08/AC09/AC23',
   C5: 'AC09/AC13',
-  C6: 'AC16',
-  C7: 'AC19',
+  C6: 'AC07/AC16',
+  C7: 'AC07/AC19',
   E1: 'AC21（F08 提示注入只作数据）',
   E2: 'AC13/AC22（F20 媒体访问凭据）',
-  D1: 'AC23（F13 任务状态机：旧回调不复活）',
-  D2: 'AC21/AC23（F13/F20 AI 失败不得发布）',
+  E3: 'AC19/AC22（后台内容写的版本与引用门槛）',
+  C10: 'AC01/AC29（异步 AI 游客面）',
+  C11: 'AC09/AC29（异步 AI 归属面）',
+  D1: 'AC07/AC23（F13 任务状态机：旧回调不复活）',
+  D2: 'AC19/AC21/AC23（F13/F20 AI 失败不得发布）',
   D3: 'AC22（G4 下架 ⇒ 缓存失效）',
   D4: 'AC22/AC29（内容版本变更 ⇒ 旧结论不复用）',
   F1: 'AC22（下架 ⇒ 消息引用跳转 unavailable，同形不泄露存在性）',
