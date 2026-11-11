@@ -3,18 +3,19 @@
 一套**能重复跑**的权限/安全失败回归：表驱动、每条用例给真实读数、每条关键守卫配**负控制**
 （故意放宽守卫 → 对应用例必须真红 → 原字节恢复 → sha256 前后一致 → 复跑转绿）。
 
-**本片不宣称 #22 完成。** 这里交付骨架 + 249 条用例 + 27 条负控制，覆盖「身份与权限面
+**本片不宣称 #22 完成。** 这里交付骨架 + 269 条用例 + 27 条负控制，覆盖「身份与权限面
 （游客/越权/后台/会话与注销）」「媒体归属与访问凭据」「重复请求」「无效输入」「审核回调与 AI 失败」
 「下架缓存」「版本回写」「提示注入」「下架后引用跳转」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
-断网重试、账号停用、注销到期清理、在途取消 409** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
+断网重试、账号停用、注销到期清理** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
 
-证据页：`docs/verification/gy-i22-failmatrix-20261022.md`（含「用例 id → #22 acceptance → 实际读数」三列表，
-由 `tools/i22-failmatrix-evidence-table.mjs` 从机读结果生成）。
+证据页：`docs/verification/gy-i22-failmatrix-current-20261111.md`（**现行口径**，含「用例 id → #22 acceptance
+→ 实际读数」三列表，由 `tools/i22-failmatrix-evidence-table.mjs` 从机读结果生成）；`docs/verification/gy-i22-failmatrix-20261022.md`
+是 R29 建页时点的冻结快照（168 行 / 23 条），生成器拒绝覆写它，只作历史读数。
 
 ## 一条命令
 
 ```bash
-node tests/failmatrix/run.mjs                  # 全跑（HTTP 229 + 受信 seam 20 = 249 条）
+node tests/failmatrix/run.mjs                  # 全跑（HTTP 249 + 受信 seam 20 = 269 条）
 node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D/E/F 族同样适用）
 node tests/failmatrix/run.mjs --only=D1-01,C6-10 --json=out.json
 node tests/failmatrix/run.mjs --list           # 只列用例
@@ -33,7 +34,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 ```
 
 进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（stub 臂，`npm run test:unit` 会带上它）。
-它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 249，另加一条**静态同步检查**：负控制清单里
+它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 269，另加一条**静态同步检查**：负控制清单里
 每处 `find` 必须在当前产品代码里恰好出现一次（守卫被重构时这条先红，而不是等你发现矩阵不再变红）。
 
 真 PG 臂的闸门入口：`tests/unit/gy-i22-failmatrix-real.test.mjs`（只锁「缺 `GY_PG_BIN` ⇒ 退出 77、
@@ -183,7 +184,11 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 - **真实网络失败**（断网、半开连接、重试退避）与反向代理/TLS——`inject` 不经过网络栈。
 - **账号被停用（`users.state !== 'active'`）真实生效**：stub 没有账号写权威，只覆盖 fail-closed 503。
 - **注销冷静期到期后的真实清理**（在线 7 日 / 备份 30 日执行面）：只覆盖申请→回执→冷静期内原会话可用。
-- **在途取消（`REQUEST_IN_PROGRESS` 409）与「注销-撤回」**：内存台账太快，未出现 409；契约无 cancel-deletion 入口。
+- ~~**在途取消（`REQUEST_IN_PROGRESS` 409）与「注销-撤回」**：内存台账太快，未出现 409；契约无 cancel-deletion 入口。~~
+  **订正（2026-11-11）**：这条已过时。矩阵里 C6 有一条在途请求被判 `409 REQUEST_IN_PROGRESS`（`retryable: true`）的用例；
+  社区发帖、媒体上传、消息并发、OCR/语音/合成各有一条并发用例钉住同一语义；「注销-撤回」由 C4 的取消注销族
+  （`404` / `409 OBJECT_UNAVAILABLE` / `200`）覆盖。仍未取得的是**真实多进程竞争**下的 409 ——
+  矩阵在单进程 `inject` 里用受控的在途台账制造，不是两台客户端真的撞在同一个事务上。
 - **社区媒体授权全链路**：stub 下「带媒体的发帖」会被内容筛查判 `422 INPUT_UNCERTAIN`（`decision=quarantined`），
   正路走不通；本片只能覆盖它前面的 `400/404` 分支（C5）。
 - **收藏的引用跳转**（内容下架后端上跳 `unavailable`）：收藏契约目标闭集是 `species|herbicide|scheme`
@@ -360,7 +365,7 @@ DETAIL:  Failing row contains (d9151d10-…, fedfae4f-…, …, user, 1, 2026-10
 
 ## 与 `#22` 的关系
 
-`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 249 条真读数用例 + 27 条负控制**，
+`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 269 条真读数用例 + 27 条负控制**，
 并把「在 main 上一跑就绿」与「哪些还没取得」分开记账。后续批次直接在 `cases.mjs` 追加族
 `C8+`/`E3+`、在 `seams.mjs` 追加 `D5+`，并在 `mutations.mjs` 追加对应负控制；
 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` / `FAMILY_COUNTS` / `BATCH_COUNTS` 随之抬高——

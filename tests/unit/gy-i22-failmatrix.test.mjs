@@ -41,6 +41,10 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  * 空串 ⇒ 不参与过滤、error_code 正控制。只增不减。
  * 249 → 254：R95 补「取消注销申请」（`DELETE /me/account/deletion`）的 5 条失败面——游客 401、
  * 缺幂等键 400、无在途 404、取消成功 200（强修订号 + `state=cancelled`）、终态再取消 409。只增不减。
+ * 254 → 269：之后几批叠加——C4 注销/回执族扩面（21 → 36，含取消注销与撤回授权/授予授权的失败面）、
+ * C5 媒体用途与声明类型（C5-11 `415`、C5-12 `413`）、C6 带图发帖被判 `422 INPUT_UNCERTAIN`（C6-12）、
+ * E3 后台内容写的版本/引用门槛（`409 REVISION_CONFLICT` / `422 SOURCE_CONFLICT`，同时新增批次 B7）。
+ * 只增不减。
  */
 const MIN_CASES = 269;
 /** 每族条数（本片实跑快照：C/E/F 族走 HTTP，D 族走受信 seam）。 */
