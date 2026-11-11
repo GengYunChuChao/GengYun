@@ -37,8 +37,8 @@ C1=37(37/0/0) C2=24(18/0/6) C3=36(31/3/2) C4=21(14/2/5) C10=23(23/0/0) C11=39(39
 
 | 用例 | stub 期望 | 真库实际 | 分类 | 裁定 |
 | --- | --- | --- | --- | --- |
-| C4-15 `注销申请重放：同一单 + 换发回执` | 202（`tests/failmatrix/cases.mjs:407`） | **202**，但 `[check]` 判红 | `different`（check 判红） | 夹具口径，不是产品缺陷 |
-| C4-18 `冷静期内原会话仍可用（注销在线 7 日到期前）` | 200（`tests/failmatrix/cases.mjs:438`） | **401 `SESSION_EXPIRED`** | `different`（status 判红） | 期望与冻结契约冲突，真库行为正确 |
+| C4-15 `注销申请重放：同一单 + 换发回执` | 202（`tests/failmatrix/cases.mjs:409`） | **202**，但 `[check]` 判红 | `different`（check 判红） | 夹具口径，不是产品缺陷 |
+| C4-18 `冷静期内原会话仍可用（注销在线 7 日到期前）` | 200（`tests/failmatrix/cases.mjs:440`） | **401 `SESSION_EXPIRED`** | `different`（status 判红） | 期望与冻结契约冲突，真库行为正确 |
 
 真库臂原样两行（`.pg17\tmp\r82-real-arm.log`）：
 
@@ -66,7 +66,7 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 **能由仓内补齐**：是，且只涉及夹具与断言两侧。
 
 - 真库臂根本没有播种过「一张已经受理过的注销单」：`tests/failmatrix/run-real.mjs:994-996` 把 `deleter.deletionId`、`.receipt`、`.staleReceipt` 三个字段都设成 `unavailableSeed(...)` 哨兵；对照 stub 臂 `tests/failmatrix/run.mjs:285-298`，那里是**真发一次 202** 再把读数写回夹具。
-- 哨兵是个 `Proxy`，`tests/failmatrix/run-real.mjs:217-226` 的 `get` 陷阱在取值时才抛。而 `tests/failmatrix/cases.mjs:355-359` 的 `check` 里，判等那一行是 `tests/failmatrix/cases.mjs:357`：`result.body?.data?.deletion?.id !== prior.deletionId`——右侧只是一个普通属性取值，返回代理本身不抛；`'f9b4271e-…' !== proxy` 恒为真。所以那句话的正确读法是「这一次 202 的 id 与一个哨兵不相等」，不是「重放换单了」。
+- 哨兵是个 `Proxy`，`tests/failmatrix/run-real.mjs:217-226` 的 `get` 陷阱在取值时才抛。而 `tests/failmatrix/cases.mjs:410-414` 的 `check` 里，判等那一行是 `tests/failmatrix/cases.mjs:412`：`result.body?.data?.deletion?.id !== prior.deletionId`——右侧只是一个普通属性取值，返回代理本身不抛；`'f9b4271e-…' !== proxy` 恒为真。所以那句话的正确读法是「这一次 202 的 id 与一个哨兵不相等」，不是「重放换单了」。
 - 真库臂这一次 202 是**首次受理**：探针 1 首次 POST 就返回 202 并给出新 id，与真库臂红出来的 `f9b4271e-…` 是同一种读数。至于「重放」分支 `services/api/src/routes/account-deletion.ts:281-311`，在**串行**场景（首条受理事务已提交之后）对任何用户会话都不可达——理由是三段串联的：`:255` 的 `preHandler` 先做鉴权（鉴权先于幂等台账）；受理事务按契约撤掉该账号全部会话，`services/api/db/migrations/0016_account_deletion_persistence.sql:130-135`；账号转 `deletion_pending` 后一律拒绝，`services/api/src/auth/middleware.ts:88`。
 - 探针实测坐实这条不可达：受理后用**同一张**会话重放同键 → 401 `SESSION_EXPIRED`（探针 1）；改用 `auth_epoch` 递增后**新铸**的会话 → 403 `ACCOUNT_INACTIVE`（探针 2）。两条路径都拿不到第二个 202，自然也谈不上「同一单 + 换发回执」。
   - 边界：这里说的是**串行**情形。`services/api/src/routes/account-deletion.ts:281-311` 的 replay 分支本身不校验账号状态，判定入口只是「同 subject 同幂等键已存在台账」；理论上存在一个并发窗口（第二条请求在首条受理事务提交**前**过了 `:255` 的鉴权、提交**后**才进 `:261` 的 handler）。本页没有复现这个窗口，也不据此下「对任何会话都不可达」的绝对结论；裁定本身不受影响（同账号同单换发回执，既不越权也不放行）。
@@ -96,7 +96,7 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 | --- | --- | --- | --- |
 | 1 | `tests/failmatrix/run-real.mjs:994-996` | 哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`） | 夹具片 |
 | 2 | C4-15 那条用例（`tests/failmatrix/cases.mjs`）＋ 判定器（`tests/failmatrix/run-real.mjs`） | 加 real 侧期望（受理后重放 401），判定器先读 real 侧 | 夹具片 |
-| 3 | `tests/failmatrix/cases.mjs:438` | 期望 200 → 401，标题去掉「原会话仍可用」 | 夹具片 + 契约确认 |
+| 3 | `tests/failmatrix/cases.mjs:440` | 期望 200 → 401，标题去掉「原会话仍可用」 | 夹具片 + 契约确认 |
 | 4 | stub 世界的注销受理 | 补同事务撤销，让两臂同码 | 单开产品问题（改内存实现） |
 | 5 | `DELETE /api/v1/me/account/deletion` | 受理后取消入口不可达（见下） | 单开产品问题 |
 

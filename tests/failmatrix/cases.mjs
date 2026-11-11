@@ -89,6 +89,7 @@ export const BATCHES = [
   { id: 'B4', title: '批次 4：版本回写、提示注入与媒体访问凭据', families: ['D4', 'E1', 'E2'] },
   { id: 'B5', title: '批次 5：异步 AI 域（识别 / OCR / 转写 / 合成 / 作业 / 会话）的游客面与归属面', families: ['C10', 'C11'] },
   { id: 'B6', title: '批次 6：下架后引用跳转 unavailable（消息引用帖子/评论，删除目标后同一条消息变 unavailable）', families: ['F1'] },
+  { id: 'B7', title: '批次 7：后台内容写面的版本/引用门槛（REVISION_CONFLICT 409 / SOURCE_CONFLICT 422）', families: ['E3'] },
 ];
 
 export const FAMILIES = {
@@ -104,6 +105,7 @@ export const FAMILIES = {
   C10: '异步 AI 域游客面：识别 / OCR / 转写 / 合成 / 作业 / 会话共 23 个 operation 在无凭据时一律 401 SESSION_REQUIRED',
   C11: '异步 AI 域归属面：A 碰 B 的作业 / 识别 / OCR / 转写 / 会话（含轮次）一律 404 且与「不存在」同形；越权写不得改动 B 的行',
   F1: '引用跳转：帖子/评论被下架（删除）后，消息里的引用跳转显示 unavailable（同形，不崩溃不泄露存在性）',
+  E3: '后台内容写面的版本/引用门槛：If-Match 与当前修订不符 ⇒ 409 REVISION_CONFLICT；发布引用未发布来源 ⇒ 422 SOURCE_CONFLICT（同一契约映射，不混用 409）',
 };
 
 export const CASES = [
@@ -731,6 +733,17 @@ export const CASES = [
   { id: 'C5-11', family: 'C5', title: '已登录上传：用途与声明类型不符', actor: 'fresh', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, purpose: 'voice_question' }, headers: key('i22-c5-11'), expect: { status: 415, code: 'MEDIA_TYPE_UNSUPPORTED' }, note: '用途与声明类型不符由服务层判（packages/media/validate.mjs:47-62；允许集 packages/media/constants.mjs:45-50），schema 只校全局 mime 枚举 ⇒ 415 而不是 400' },
   { id: 'C5-12', family: 'C5', title: '已登录上传：超过该用途上限', actor: 'fresh', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, bytes: 6 * 1024 * 1024 }, headers: key('i22-c5-12'), expect: { status: 413, code: 'MEDIA_TOO_LARGE' }, note: 'community_image 上限 5 MiB（packages/media/constants.mjs:61-66），超限由 packages/media/validate.mjs:54-62 抛 413 MEDIA_TOO_LARGE' },
   { id: 'C6-12', family: 'C6', title: '带图发帖（B 的合法媒体）⇒ 422 INPUT_UNCERTAIN（stub 无图片审核端口，不得发布）', actor: 'b', method: 'POST', path: `${API}/posts`, body: (ctx) => ({ title: '合成标题（矩阵 · 带图发帖探针）', body: '合成正文（矩阵 · 带图发帖探针），不含真实病例或真实农药用量。', media_ids: [ctx.seeded.media.mediaId] }), headers: key('i22-c6-12-media-post'), expect: { status: 422, code: 'INPUT_UNCERTAIN' }, check: (result) => { const error = result.body?.error ?? {}; const codes = (error.details ?? []).map((one) => one?.code); const problems = []; if (error.retryable !== false) problems.push(`error.retryable 期望 false 实际 ${JSON.stringify(error.retryable ?? null)}`); if (!codes.includes('IMAGE_MODERATION_UNAVAILABLE')) problems.push(`error.details 里至少应含 IMAGE_MODERATION_UNAVAILABLE，实际 ${JSON.stringify(codes)}`); if (result.etag !== undefined) problems.push(`422 不得带 ETag，实际 ${JSON.stringify(result.etag)}`); return problems; }, note: '依据：`services/api/src/moderation/demo-port.ts:6`（演示端口只替代文本 tms 结论，图片 ims 仍是替身/未接线）、`services/api/src/community/service.ts:146-150`（审核域未明确放行 ⇒ 隔离且不落内容行）、`:403`（isolation ⇒ 422 INPUT_UNCERTAIN）、`:692`（422 封套构造）；探针实测 6/6（stub、app.inject、零端口）：B 的合法媒体 `ctx.seeded.media.mediaId` 来自 `world.mjs` 的 `uploadReadyMedia()` 两段式上传（run.mjs 的 path/body 解析是同步的，故复用种子阶段这条同源媒体，不在 body 函数里 await），同用户同正文仅 `media_ids` 不同 ⇒ 本请求 422、`retryable=false`、details 含 MEDIA_NOT_EVALUATED_BY_RULE_LAYER / NOT_PUBLISHABLE / IMAGE_MODERATION_UNAVAILABLE、`Cache-Control: no-store`、无 ETag；而 `media_ids: []` 为 201 + `visibility=published` + `audit_state=approved` + `reason_codes=[]` + `ETag: "1"`。一句话：stub 世界没有图片审核端口 ⇒ 带图内容不得发布。族内依据：C6-05..07 已覆盖同一 `POST /posts` 的社区发帖与重放，C6-11 已先例容纳非幂等状态的写前置失败（428），本条补同端点的带媒体分支。' },
+
+  // ------------------------- E3 后台内容写面的版本 / 引用门槛
+  { id: 'E3-01', family: 'E3', title: '全权限后台改来源：If-Match 与当前修订不符 ⇒ 409 REVISION_CONFLICT', actor: 'adminFull', method: 'PATCH', path: (ctx) => {
+    seedE3Draft(ctx, { id: E3_SOURCE_01_ID, family: 'sources', content: E3_SOURCE_01, label: 'E3-01 的 draft 来源' });
+    return `${API}/admin/sources/${E3_SOURCE_01_ID}`;
+  }, body: () => E3_SOURCE_01, headers: wkey('i22-e3-01', '"999"'), expect: { status: 409, code: 'REVISION_CONFLICT' }, note: '`services/api/src/routes/admin.ts` 的 `PATCH /admin/sources/:id` 进入编辑草稿；`services/api/src/admin/identity.ts` 的 `assertIfMatchMatches` 把 `If-Match: "999"` 与当前 `revision=1` 的不等判为 `REVISION_CONFLICT`；`services/api/src/contract.ts` 的 `ERROR_STATUS_MAP` 把该码归入 409 档。' },
+  { id: 'E3-02', family: 'E3', title: '全权限后台发布限制条件：引用的来源仍在 draft ⇒ 422 SOURCE_CONFLICT', actor: 'adminFull', method: 'POST', path: (ctx) => {
+    seedE3Draft(ctx, { id: E3_SOURCE_02_ID, family: 'sources', content: E3_SOURCE_02, label: 'E3-02 的 draft 来源' });
+    seedE3Draft(ctx, { id: E3_RESTRICTION_02_ID, family: 'restrictions', content: E3_RESTRICTION_02, label: 'E3-02 的 restriction draft' });
+    return `${API}/admin/restrictions/${E3_RESTRICTION_02_ID}/publish`;
+  }, body: () => E3_PUBLISH_BODY, headers: wkey('i22-e3-02', '"1"'), expect: { status: 422, code: 'SOURCE_CONFLICT' }, note: '`services/api/src/admin/service.ts` 的 `publishDraft` 在发布前走引用门槛；`services/api/src/admin/reference-integrity.ts` 的 `sourceConflict()` 对未发布来源返回 `SOURCE_CONFLICT`；`services/api/src/contract.ts` 的 `ERROR_STATUS_MAP` 把该码归入 422 档（不是 409）。' },
 ];
 
 /**
@@ -764,4 +777,57 @@ function assertStrongEtagMatchesRevision(result) {
     problems.push(`ETag 必须逐字等于正文修订号：期望 ${JSON.stringify(`"${String(revision)}"`)}，实际 ${JSON.stringify(etag ?? null)}`);
   }
   return problems;
+}
+
+// ---------------------------------------------------------------------------
+// E3 夹具：两条用例都要求「目标真实存在且 head 恰为 revision 1」。
+//
+// runner 只在发请求前同步解析 `path` / `body` / `headers`，没有异步 setup 钩子；
+// 因此这里用 `ctx.world.app.adminContentService.store` 的**内存**同步写面播两条 draft
+// （`createEntity` + `appendRevision`，与 `POST /admin/sources` 落库后的形状一致）。
+// 只在 stub 内存 store 可用；E3 不进入真库臂，遇到真库 store 直接抛错而不是伪造。
+// ---------------------------------------------------------------------------
+const E3_VALID_FROM = '2026-10-25T04:00:00.000Z';
+const E3_SOURCE_01_ID = '00000000-0000-4000-8e30-000000000001';
+const E3_SOURCE_02_ID = '00000000-0000-4000-8e31-000000000001';
+const E3_RESTRICTION_02_ID = '00000000-0000-4000-8e32-000000000001';
+
+const e3Source = (suffix) => ({
+  title: `合成来源（E3 ${suffix} · 矩阵）`,
+  url: `https://example.org/e3-${suffix}`,
+  publisher: '合成出版方（矩阵）',
+  source_kind: 'simulation',
+  evidence_kind: 'research',
+  version: `2026.11-${suffix}`,
+  content_hash: 'a'.repeat(64),
+  locator: `synthetic-e3-${suffix}`,
+  valid_from: E3_VALID_FROM,
+  valid_to: null,
+});
+
+const E3_SOURCE_01 = e3Source('e3-01');
+const E3_SOURCE_02 = e3Source('e3-02');
+const E3_RESTRICTION_02 = {
+  source_id: E3_SOURCE_02_ID,
+  source_version: E3_SOURCE_02.version,
+  formulation_id: null,
+  conditions: { crop_id: 'rice', region_code: '330100' },
+  effect: 'restricted',
+  reason: '合成限制条件（E3-02），不含真实农药用量或真实病例。',
+  valid_from: E3_VALID_FROM,
+  valid_to: null,
+};
+const E3_PUBLISH_BODY = { evidence_ref: 'synthetic-e3-02', reason: '合成发布尝试（矩阵）' };
+
+function seedE3Draft(ctx, { id, family, content, label }) {
+  const store = ctx.world?.app?.adminContentService?.store;
+  if (store === undefined || store.persistent !== false) {
+    throw new Error(`E3 夹具需要 stub 内存 store（${label}）`);
+  }
+  if (store.getEntity(id) !== undefined) return;
+  const stewardId = ctx.actors?.adminFull?.userId;
+  if (typeof stewardId !== 'string' || stewardId === '') throw new Error(`E3 夹具缺少 adminFull（${label}）`);
+  const createdAt = new Date(E3_VALID_FROM);
+  const entity = store.createEntity({ id, family, stewardId: stewardId.toLowerCase(), createdAt });
+  store.appendRevision({ entity, content, authorId: stewardId.toLowerCase(), createdAt, derivedFromRevision: null });
 }
