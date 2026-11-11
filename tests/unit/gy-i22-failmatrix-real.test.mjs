@@ -38,9 +38,9 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  */
 const MIN_CASES = 230;
 /** 每族条数（与 inject 臂同一份用例表，loopback 臂必须逐族一致）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 36, C4: 36, C5: 12, C6: 12, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 40, C4: 36, C5: 12, C6: 12, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39 };
 /** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面）。 */
-const BATCH_COUNTS = { B1: 133, B2: 40, B3: 17, B4: 9, B5: 62 };
+const BATCH_COUNTS = { B1: 137, B2: 40, B3: 17, B4: 9, B5: 62 };
 
 function runLoopbackMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-real-'));
@@ -157,12 +157,12 @@ test('GY-I22 真 PG 臂：只有显式 --allow-skip 才把「未取得」降级�
   assert.match(stdout, /EXITCODE=0/);
 });
 
-test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C4/C10/C11，185 条，不另写一套用例）', () => {
+test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C4/C10/C11，199 条，不另写一套用例）', () => {
   for (const family of PERMISSION_FAMILIES) {
     assert.ok(FAMILIES[family] !== undefined, `权限面族 ${family} 不在 stub 用例表 FAMILIES 里`);
   }
   const permissionCases = CASES.filter((one) => PERMISSION_FAMILIES.includes(one.family));
-  assert.equal(permissionCases.length, 195, '权限面 C1–C4/C10/C11 必须是 195 条（与 stub 用例表同源）');
+  assert.equal(permissionCases.length, 199, '权限面 C1–C4/C10/C11 必须是 199 条（与 stub 用例表同源）');
 });
 
 test('GY-I22 真 PG 臂：--require-no-not-runnable 被接受，且 not_runnable > 0 会让退出码非 0（CI 用它）', () => {
