@@ -47,7 +47,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 EXIT=0  ELAPSED_SEC=1.86
 ```
 
-> 用例条数写「159」是 2026-10-22 那次跑的测试**标题**文案（按 §11 原样保留，不回填）；标题已随 `a3e53fbe` 改成 249（现见 `tests/unit/gy-i22-failmatrix.test.mjs:72`），与 `MIN_CASES = 249`（同页第 206 条）一致。（2026-11-09 追记：R95 补「取消注销」5 条后 `MIN_CASES = 254`，测试标题改为不写死条数，避免每加一条就过期；本节「159」仍是 2026-10-22 的标题原文。）
+> 用例条数写「159」是 2026-10-22 那次跑的测试**标题**文案（按 §11 原样保留，不回填）；标题已随 `a3e53fbe` 改成 249（现见 `tests/unit/gy-i22-failmatrix.test.mjs:68`），与 `MIN_CASES = 249`（同页第 206 条）一致。（2026-11-09 追记：R95 补「取消注销」5 条后 `MIN_CASES = 254`，测试标题改为不写死条数，避免每加一条就过期；本节「159」仍是 2026-10-22 的标题原文。）
 
 **本轮补的正是这三件缺的事**：一个固定检查名（`failmatrix`）、一条命令（`npm run test:failmatrix`）、一份可下载的机读产物（`failmatrix-<sha>`），并且**不依赖** `test:unit` 是否被人盯着。
 
@@ -226,7 +226,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 1. 写进 `tests/failmatrix/cases.mjs` 的 `CASES` 数组：`{ id, family, title, method, path, headers?, body?, expect: { status, code?, etag?, ... }, check? }`。`path` 可以是函数（依赖世界装配）。
 2. 期望值必须是**实跑读数**，行尾注释写清日期与执行模式（沿用现有风格）。
 3. 族必须已登记在 `FAMILIES`，**并且**被某个 `BATCHES[].families` 收口；否则 `test:unit` 的「用例表自洽」会红。
-4. 同步改 `tests/unit/gy-i22-failmatrix.test.mjs:49` 的 `MIN_CASES`、`:51` 的 `FAMILY_COUNTS`、`:53` 的 `BATCH_COUNTS`。（2026-11-09 追记：R95 补「取消注销」5 条后这三个常量各下移两行；2026-11-11 追记：R110–R112 追加 C4/C5/C6/E3 用例与伪造角色四条后三者再各下移两行，`MIN_CASES = 269`。）**不改就红**——这是防止用例被悄悄删的机制；⛔ 只准往上调。
+4. 同步改 `tests/unit/gy-i22-failmatrix.test.mjs:49` 的 `MIN_CASES`、`:51` 的 `FAMILY_COUNTS`、`:53` 的 `BATCH_COUNTS`。（2026-11-09 追记：R95 补「取消注销」5 条后这三个常量各下移两行，`MIN_CASES = 254`；2026-11-11 再追记：R112 补 4 条伪造角色用例（C3-37…C3-40）与 NC-26／NC-27，三个常量在演进注释增行后位于 `:49`／`:51`／`:53`，`MIN_CASES = 273`、`MUTATIONS` 29 条。）**不改就红**——这是防止用例被悄悄删的机制；⛔ 只准往上调。
 
 ### 6.2 新增一条 seam 用例（回调 / AI 失败 / 下架 / 版本回写）
 

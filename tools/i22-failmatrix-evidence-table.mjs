@@ -20,8 +20,8 @@
  *
  * 归档页保护：真实路径比较 + **文件身份（dev + ino）** + 仓库内包含性校验；`--write` 无隐式默认页。
  * 本工具原来默认写 `docs/verification/gy-i22-failmatrix-20261022.md`——那是 R29 建页时的**归档快照**
- * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵继续校正（现为 269 / 27）之后，
- * 那个默认值就变成「裸跑一次 --write 就把归档快照无报错重写成 269 行」，所以：
+ * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵继续校正（现为 273 / 29）之后，
+ * 那个默认值就变成「裸跑一次 --write 就把归档快照无报错重写成 273 行」，所以：
  *   1. `--write` 无隐式默认页：裸 `--write` 一律 exit 1，必须显式 `--page=`；
  *   2. 目标页按仓库根解析成绝对路径后，**先判文件身份**（`statSync` 的 `dev` + `ino`）是不是归档页：
  *      `docs/verification/./x.md`、`docs/verification/../verification/x.md`、`DOCS/verification/x.md`
@@ -31,7 +31,7 @@
  *      不会写到仓库外）；
  *   4. 归档页只允许「同一基线刷新读数」：即便给了 `--i-know-this-rewrites-archive`，
  *      页内表格行数 / 负控制行数仍必须与 `EXPECTED` 逐项相等才放行。本页当前是 168 / 23、
- *      `EXPECTED` 是 269 / 27，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
+ *      `EXPECTED` 是 273 / 29，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
  *      确认，不是绕过条数校验的开关；要刷新得先迁移台账口径，不是加个旗标改写历史快照；
  *   5. 所有写盘都在 `problems` 对账**之后**：对账不通过一律不写盘、exit 1。
  *
@@ -48,7 +48,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  * 归档快照页：R29 建页时点（表格 168 行 / 负控制 23 条）的冻结记录。
  * 生成器**不再默认写它**；显式点名时按**文件身份**（`dev` + `ino`）识别——字符串别名、symlink、
  * junction、`\\?\` 前缀路径、硬链接都算同一个文件，不算另一个目标——且即便给了
- * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 269 / 27
+ * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 273 / 29
  * ⇒ 当前必然被拒（见 `planWrite`）。
  */
 const ARCHIVE_PAGE = 'docs/verification/gy-i22-failmatrix-20261022.md';
@@ -79,32 +79,32 @@ const FAMILY_ACCEPTANCE = Object.freeze({
  *
  * 口径（三项都必须对得上才放行）：
  *   - `total` 数的是**失败矩阵的用例条数**：`run.mjs --json` 机读结果里「一行一条用例」的
- *     `rows.length`，本版 `totals.total` 与 `rows.length` 同为 269，逐族求和与逐批求和也都是 269。
+ *     `rows.length`，本版 `totals.total` 与 `rows.length` 同为 273，逐族求和与逐批求和也都是 273。
  *   - `families` / `batches` 是同一批行的**分组计数**，各自的全集必须等于 `total`：
- *     C1…C7 + E1 + E2 + E3 + C10 + C11 + F1 + D1…D4 = 269；B1…B7 = 269。
- *   - `negativeControls` 数的是 `tests/failmatrix/mutations.mjs` 的 `MUTATIONS.length`（27）。
+ *     C1…C7 + E1 + E2 + E3 + C10 + C11 + F1 + D1…D4 = 273；B1…B7 = 273。
+ *   - `negativeControls` 数的是 `tests/failmatrix/mutations.mjs` 的 `MUTATIONS.length`（29）。
  *   - **反向也要对得上**：矩阵里出现了 `EXPECTED` 没登记的新族/新批次，同样判失败（见 `main` 里的
  *     反向集合检查）。只按 `EXPECTED` 的键正着遍历的话，新增族/批次会被静默漏检 —— 这正是 249 落后
- *     到 269 那 20 条一路没人变红的原因。
+ *     到 273 那 24 条一路没人变红的原因。
  *
  * 时点：`168` 是 R29 建页时点（只有 C1…C7 + E1 + E2 + D1…D4，见 `docs/verification/gy-i22-failmatrix-20261022.md`）
  * 的**同一口径旧读数**，不是另一个维度；R31 补上异步 AI 域 C10(23) + C11(39) ⇒ 168 + 23 + 39 = 230，
- * #546 补 F1(6) ⇒ 236，R34 负控制 23 → 26、R72/W10 追加 NC-25 ⇒ 27；R18 补 C4(3) + C6(1) ⇒ 240；S-6 补 C3(9)（作业过滤的
+ * #546 补 F1(6) ⇒ 236，R34 负控制 23 → 26、R72/W10 追加 NC-25 ⇒ 27；R112 追加 NC-26/NC-27（伪造角色）⇒ 29；R18 补 C4(3) + C6(1) ⇒ 240；S-6 补 C3(9)（作业过滤的
  * 拒绝/降级语义：闭集外/类型错/游标绑筛选/合法空页）⇒ 249。本常量跟**当前**矩阵走。
  * 249 之后：C4 的注销/回执族扩面（21 → 36，+15）、C5 媒体用途与声明类型（+2，C5-11/C5-12）、
  * C6 带图发帖判 `INPUT_UNCERTAIN`（+1，C6-12）、E3 后台内容写面的版本/引用门槛（+2，E3-01/E3-02，
- * 同时新增批次 B7）⇒ 269。
+ * 同时新增批次 B7）⇒ 269；R112 追加 4 条伪造角色用例（C3-37…C3-40）⇒ 273。
  * ⚠️ 本常量与用例表的同步由 `tests/unit/i22-evidence-table-expectation-sync.test.mjs` 钉住：这里手抄的
  * 数字一旦与 `cases.mjs` + `seams.mjs` + `mutations.mjs` 的普查不一致，`unit-tests` 直接红。
- * ⚠️ 归档页那份 R29 快照（168 行 / 23 条）**不允许**被本常量改写成 269 行：`--write` 无隐式默认页，
+ * ⚠️ 归档页那份 R29 快照（168 行 / 23 条）**不允许**被本常量改写成 273 行：`--write` 无隐式默认页，
  * 显式点名时按**真实路径**识别归档页，并且页内条数必须已经等于本常量（见 `planWrite`）。
- * 也就是说 `--i-know-this-rewrites-archive` 也改写不了它：本页当前 168 / 23 与 269 / 27 不一致 ⇒ 必然被拒。
+ * 也就是说 `--i-know-this-rewrites-archive` 也改写不了它：本页当前 168 / 23 与 273 / 29 不一致 ⇒ 必然被拒。
  */
 const EXPECTED = Object.freeze({
-  families: { C1: 37, C2: 24, C3: 36, C4: 36, C5: 12, C6: 12, C7: 16, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39, D1: 11, D2: 4, D3: 2, D4: 3, F1: 6 },
-  batches: { B1: 133, B2: 40, B3: 17, B4: 9, B5: 62, B6: 6, B7: 2 },
-  total: 269,
-  negativeControls: 27,
+  families: { C1: 37, C2: 24, C3: 40, C4: 36, C5: 12, C6: 12, C7: 16, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39, D1: 11, D2: 4, D3: 2, D4: 3, F1: 6 },
+  batches: { B1: 137, B2: 40, B3: 17, B4: 9, B5: 62, B6: 6, B7: 2 },
+  total: 273,
+  negativeControls: 29,
 });
 
 function parseArgs(argv) {
@@ -286,7 +286,7 @@ function planWrite(opts) {
   //    只比 realpath 又会被**硬链接**绕过（同一 inode 的另一个目录项，realpath 解不掉），故比 inode。
   //    死参数说明（选定方案 a：保留 `--i-know-this-rewrites-archive`，把提示语改成与实际行为一致）：
   //    该旗标现在**永远成功不了**——它只关掉「没给旗标」那道提示，条数校验仍然在；本页是 168 / 23 的
-  //    冻结快照、EXPECTED 是 269 / 27，两者必然不等。所以旗标的语义只剩「我确认这是归档页，请按条数
+  //    冻结快照、EXPECTED 是 273 / 29，两者必然不等。所以旗标的语义只剩「我确认这是归档页，请按条数
   //    规则判」，真正的刷新路径是**迁移台账口径另建新页**，不是加旗标改写历史。提示语必须与这条一致。
   if (samePath(pagePath, path.resolve(ROOT, ARCHIVE_PAGE))) {
     const baseline = declaredBaseline(page);
@@ -402,7 +402,7 @@ function main(argv) {
     check(count, row?.total, `批次 ${batch}`, problems);
   }
   // 反向：矩阵里出现 EXPECTED 没登记的族/批次 ⇒ 同样判失败。只正着遍历 EXPECTED 的键时，
-  // 新增族（E3）与新增批次（B7）会被静默漏检 —— 249 一路落后到 269 就是没这条检查。
+  // 新增族（E3）与新增批次（B7）会被静默漏检 —— 249 一路落后到 269、再到 273 就是没这条检查。
   for (const family of Object.keys(matrix.families ?? {})) {
     if (!(family in EXPECTED.families)) problems.push(`族 ${family} 出现在矩阵里、但 EXPECTED 没有登记（新增族没进对账）`);
   }

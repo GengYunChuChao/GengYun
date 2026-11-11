@@ -25,7 +25,7 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 ## 2 矩阵读数
 
 <!-- BEGIN:MATRIX-TABLE -->
-一次真跑：2026-11-11T11:42:41.524Z · node v24.19.0 · 基线 e6421b8301 · 传输方式 `app.inject+trusted-seam`。
+一次真跑：2026-11-11T12:40:09.630Z · node v24.19.0 · 基线 4452ce71f4 · 传输方式 `app.inject+trusted-seam`。
 
 | 用例 id | 族 | 期望 | 实际读数（status · code · cache · etag） | #22 acceptance（自评） | 判定 |
 | --- | --- | --- | --- | --- | --- |
@@ -278,6 +278,10 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `C6-12` | C6 | 422 INPUT_UNCERTAIN | 422 · INPUT_UNCERTAIN · no-store · — | AC16 | PASS |
 | `E3-01` | E3 | 409 REVISION_CONFLICT | 409 · REVISION_CONFLICT · no-store · — | — | PASS |
 | `E3-02` | E3 | 422 SOURCE_CONFLICT | 422 · SOURCE_CONFLICT · no-store · — | — | PASS |
+| `C3-37` | C3 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC02/AC07 | PASS |
+| `C3-38` | C3 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC02/AC07 | PASS |
+| `C3-39` | C3 | 403 SCOPE_DENIED | 403 · SCOPE_DENIED · no-store · — | AC02/AC07 | PASS |
+| `C3-40` | C3 | 200 | 200 · — · no-store · — | AC02/AC07 | PASS |
 | `D1-01` | D1 | undefined CALLBACK_REPLAY |  · CALLBACK_REPLAY · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
 | `D1-02` | D1 | undefined CALLBACK_JOB_TERMINAL |  · CALLBACK_JOB_TERMINAL · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
 | `D1-03` | D1 | undefined CALLBACK_TARGET_WITHDRAWN |  · CALLBACK_TARGET_WITHDRAWN · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
@@ -303,7 +307,7 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 ## 3 负控制读数
 
 <!-- BEGIN:NEGATIVE-CONTROL-TABLE -->
-一次真跑：2026-11-11T11:44:25.408Z · node v24.19.0 · **合计 27 条：PASS 27 / FAIL 0**。
+一次真跑：2026-11-11T12:37:37.463Z · node v24.19.0 · **合计 29 条：PASS 29 / FAIL 0**。
 
 | 负控制 | 真改的那一处 | watch（必须真红） | sha256 改前（前 16 位） | 恢复后一致 | 判定 |
 | --- | --- | --- | --- | --- | --- |
@@ -334,6 +338,8 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `NC-23` public/home：删掉语句超时单独分级（504 PROVIDER_TIMEOUT 退化成 503） | `services/api/src/db/catalog.ts` |  | catalog.ts=3fd779cc9be18f7b… | true | PASS |
 | `NC-24` registrations/verify：非 matched 不再 fail-closed 成 4xx（登记校验结论退化成 500） | `services/api/src/knowledge/applicability-screen.ts` |  | applicability-screen.ts=45cad9090813c2f2… | true | PASS |
 | `NC-25` consents：删掉隐私政策读面的 requireUser（游客也能读 /me/privacy-policy） | `services/api/src/routes/consents.ts` |  | consents.ts=a11a50ff6c46616d… | true | PASS |
+| `NC-26` auth：会话令牌改成「去掉尾字符再查」——篡改后的令牌仍算命中 | `services/api/src/auth/middleware.ts` | C3-38 | middleware.ts=7d27f11e9cc3bde7… | true | PASS |
+| `NC-27` auth：scope 改成「请求头能自称」——x-admin-scopes 同时覆盖路由门与服务层身份 | `services/api/src/auth/middleware.ts` + `services/api/src/routes/admin.ts` | C3-39 | middleware.ts=7d27f11e9cc3bde7…；admin.ts=eaa41d6355c7cf91… | true | PASS |
 <!-- END:NEGATIVE-CONTROL-TABLE -->
 
 ## 4 本页能证明什么
