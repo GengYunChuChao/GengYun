@@ -41,7 +41,7 @@
 
 ## 6. failmatrix 时钟冻结
 
-- **现象**：`tests/failmatrix` 的 scriptedClock（`services/api/src/test-helpers/scripted-clock.ts`）返回固定 epoch，429 `RATE_LIMITED` 后的 60s 窗口恢复不可证。
+- **现象**：`tests/failmatrix` 的 scriptedClock（`tests/failmatrix/world.mjs` 里的 `export function scriptedClock(startMs = START)`，只暴露 `now()` 与 `ms`）返回固定 epoch，429 `RATE_LIMITED` 后的 60s 窗口恢复不可证。
 - **CI**：同（共用同一 stub 世界，`scriptedClock` 无 `advance()`）。
 - **处置**：不修（429 后的窗口恢复需要真实时间流逝或 `scriptedClock.advance()`，后者未交付；与可达性断言覆盖范围无关）。
 
