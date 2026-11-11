@@ -606,8 +606,17 @@ export function parseDemoCatalogCounts(text) {
  * `external_inference`）+ 三条演示接收方（`weed` / `tts` / `asr`），三用途共用同一份
  * 绑定表——外发预留要求**每个**必需用途的授权记录都列出同一个接收方
  * （`services/api/src/privacy/ledger-pg.ts:548-560`），语音动线要的那一条是 `asr`。
+ *
+ * 为什么是 `-5`：`-4` 里没有 `capability='llm'` 的接收方，而文字问答接真实模型后
+ * （`services/api/src/ai/chat-wiring.ts` 门④ ⇒ `privacy/task-egress.ts:331` 的
+ * `createChatEgress`）外发预留固定用 `capability: 'llm'`
+ * （`services/api/src/privacy/ledger-pg.ts:633-659` 的 `r.capability = $3`）。
+ * `-4` 的接收方只有 `weed` / `tts` / `asr` ⇒ `rows.length !== 1` ⇒ 每一轮文字提问都在
+ * 受理处 403 `CONSENT_REQUIRED`，装配层的 `live` 回答器永远走不到供应商，页面只能拿回
+ * 确定性摘要（正文印「未接真实模型」）。所以 `-5` 在**同一版本**里补第四条演示接收方
+ * （`llm`），四用途仍共用同一份绑定表。
  */
-export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-4';
+export const DEMO_CONSENT_POLICY_VERSION = 'demo-stack-local-5';
 
 /**
  * 演示接收方 id；`--demo` 的**同一版本三条**政策都绑定这一条（`capability='weed'`）。
@@ -636,6 +645,17 @@ const DEMO_TTS_RECIPIENT_ID = 'demo-stack-tts-tencent';
  * 刻意不导出：它只在绑定表与接收方 INSERT 里出现，测试按字面量断言（少一个公开符号）。
  */
 const DEMO_ASR_RECIPIENT_ID = 'demo-stack-asr-tencent';
+
+/**
+ * 演示文字问答接收方 id；`--demo` 的**同一版本**政策也绑这一条（`capability='llm'`）。
+ *
+ * 没有它，真实问答的受理闸门永远 403：`privacy/task-egress.ts` 的 `createChatEgress`
+ * 用 `capability: 'llm'` 调 `resolveRecipient`，而 `-4` 的 `recipients` 里只登记了
+ * `weed` / `tts` / `asr` 能力 ⇒ `rows.length !== 1` ⇒ 403 `CONSENT_REQUIRED`，
+ * 文字提问永远走不到供应商，只能退回确定性摘要。
+ * 刻意不导出：它只在绑定表与接收方 INSERT 里出现，测试按字面量断言（少一个公开符号）。
+ */
+const DEMO_LLM_RECIPIENT_ID = 'demo-stack-llm-deepseek';
 
 /** 演示接收方配置版本；必须与政策 `recipient_bindings[].config_version` 逐字相等。 */
 export const DEMO_RECIPIENT_CONFIG_VERSION = 'demo-stack-config-1';
@@ -670,6 +690,9 @@ const TTS_ENDPOINT_HOST = new URL(AI_ENDPOINTS.tts.endpoint).host;
 /** 语音转写供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.asr` 同源。 */
 const ASR_ENDPOINT_HOST = new URL(AI_ENDPOINTS.asr.endpoint).host;
 
+/** 文字问答（LLM）供应商端点域名：与 `tools/ai-config.mjs` 的 `AI_ENDPOINTS.llm` 同源。 */
+const LLM_ENDPOINT_HOST = new URL(AI_ENDPOINTS.llm.endpoint).host;
+
 /**
  * 演示接收方展示名。这两张隐私表**没有 note/reason 列**，演示标记逐字落在
  * `display_name` / `source_ref` / `review_evidence_ref` 里，用
@@ -686,6 +709,9 @@ const DEMO_TTS_RECIPIENT_DISPLAY_NAME = `Demo local speech synthesis provider ${
 /** 演示语音转写接收方的展示名（同样只用 ASCII；域名取自 ASR 端点）。 */
 const DEMO_ASR_RECIPIENT_DISPLAY_NAME = `Demo local speech recognition provider ${ASR_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
 
+/** 演示文字问答接收方的展示名（同样只用 ASCII；域名取自 LLM 端点）。 */
+const DEMO_LLM_RECIPIENT_DISPLAY_NAME = `Demo local text QA provider ${LLM_ENDPOINT_HOST} (demo-stack local demo profile (non-production))`;
+
 /**
  * 演示政策的正文；只作为 `content_sha256` 的原像（这两张表**没有** body 列，正文不写库）。
  *
@@ -697,7 +723,7 @@ const DEMO_ASR_RECIPIENT_DISPLAY_NAME = `Demo local speech recognition provider 
 export const DEMO_POLICY_BODY =
   '本机演示政策（demo-stack local demo profile，非生产）：只覆盖本机演示栈，不是生产核验，也不代表任何第三方审核、机构背书或真实用户同意。'
   + '本政策只用于本地演示栈联调，覆盖三个用途：recording（录音采集）、media_processing（媒体处理）、external_inference（外部推理）；'
-  + '绑定的接收方全部是本机演示登记的供应商端点（weed 识别 / tts 语音合成 / asr 语音转写），在线与备份留存均为 0 天，不用于模型训练，'
+  + '绑定的接收方全部是本机演示登记的供应商端点（weed 识别 / tts 语音合成 / asr 语音转写 / llm 文字问答），在线与备份留存均为 0 天，不用于模型训练，'
   + '删除与不训练证据见各接收方绑定里的 evidence_ref。政策随演示状态目录存在，down 或 reset 之后即不再生效；'
   + '要改形状只能发新版本（政策行一旦复核就不可改）。⛔ 不要照抄这段去做生产环境的合规判断。';
 
@@ -712,7 +738,7 @@ const demoEvidenceRef = (purpose, kind) =>
  * 演示政策的 `recipient_bindings`（jsonb 字面量）：字段与演示接收方行逐字段相等。
  *
  * **三个** purpose 共用这一份绑定表，所以每个必需用途的授权记录都会同时列出
- * `weed` / `tts` / `asr` 三条接收方；外发预留再按 `r.capability` 各取一条
+ * `weed` / `tts` / `asr` / `llm` 四条接收方；外发预留再按 `r.capability` 各取一条
  * （`privacy/ledger-pg.ts:633-659` 要求「唯一可用接收方」）。
  *
  * 为什么 `recording` 也列出全部三条：外发预留对**每个**必需用途都要求「授权记录里
@@ -742,6 +768,15 @@ const DEMO_RECIPIENT_BINDING_SPEC = Object.freeze({
   },
   [DEMO_ASR_RECIPIENT_ID]: {
     capability: 'asr',
+    config_version: DEMO_RECIPIENT_CONFIG_VERSION,
+    policy_version: DEMO_CONSENT_POLICY_VERSION,
+    retention_online_days: 0,
+    retention_backup_days: 0,
+    no_training_evidence_ref: demoEvidenceRef('external_inference', 'no-training'),
+    deletion_evidence_ref: demoEvidenceRef('external_inference', 'deletion'),
+  },
+  [DEMO_LLM_RECIPIENT_ID]: {
+    capability: 'llm',
     config_version: DEMO_RECIPIENT_CONFIG_VERSION,
     policy_version: DEMO_CONSENT_POLICY_VERSION,
     retention_online_days: 0,
@@ -798,8 +833,8 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
       `  ${reviewer}, clock_timestamp(), true)`,
     ].join('\n');
 
-  // 三条演示接收方各写一条 INSERT（`weed` 识别 + `tts` 语音合成 + `asr` 语音转写）。
-  // 能力串只认 `recipients_capability_check` 的闭集；导出的常量仍只有 weed 那条，测试按字面量断言 tts / asr 那两条。
+  // 四条演示接收方各写一条 INSERT（`weed` 识别 + `tts` 语音合成 + `asr` 语音转写 + `llm` 文字问答）。
+  // 能力串只认 `recipients_capability_check` 的闭集；导出的常量仍只有 weed 那条，测试按字面量断言 tts / asr / llm 那三条。
   const recipientStatement = (id, displayName, capability) =>
     [
       'INSERT INTO public.recipients',
@@ -842,6 +877,7 @@ export function buildDemoConsentStatements({ demo = false } = {}) {
     recipientStatement(DEMO_RECIPIENT_ID, DEMO_RECIPIENT_DISPLAY_NAME, 'weed'),
     recipientStatement(DEMO_TTS_RECIPIENT_ID, DEMO_TTS_RECIPIENT_DISPLAY_NAME, 'tts'),
     recipientStatement(DEMO_ASR_RECIPIENT_ID, DEMO_ASR_RECIPIENT_DISPLAY_NAME, 'asr'),
+    recipientStatement(DEMO_LLM_RECIPIENT_ID, DEMO_LLM_RECIPIENT_DISPLAY_NAME, 'llm'),
     [
       'UPDATE public.consent_policies',
       '   SET enabled = false, updated_at = clock_timestamp()',
@@ -875,7 +911,7 @@ export function buildDemoConsentSql(options = {}) {
 
 /** 演示档写入后给人看的一句总结（⛔ 不要把这段当成生产核验结论）。 */
 export const DEMO_CONSENT_NOTICE =
-  '这是本机演示政策，不是生产核验：只覆盖本机演示栈，recording / media_processing / external_inference 三个用途绑定的都是本机演示接收方（weed / tts / asr）';
+  '这是本机演示政策，不是生产核验：只覆盖本机演示栈，recording / media_processing / external_inference 三个用途绑定的都是本机演示接收方（weed / tts / asr / llm）';
 
 /**
  * `up --demo` 自检的第一行：政策版本 + 政策清单 + 接收方清单（纯渲染，不手写枚举）。

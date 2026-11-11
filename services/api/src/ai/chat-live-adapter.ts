@@ -89,8 +89,44 @@ export interface ChatCallReading {
   duration_ms: number;
   prompt_tokens: number | null;
   completion_tokens: number | null;
+  /**
+   * 失败归因三项之一：`choices[0].finish_reason`（`stop` / `length` / …），没读到为 `null`。
+   * 与识别侧同口径：`length` ⇒ 预算类（答案被截断，调 `max_tokens`）；`stop` 且正文非空 ⇒ 结构类。
+   */
+  finish_reason: string | null;
+  /** 失败归因三项之三：模型正文的字符数（**不是**正文本身）。没读到为 `null`。 */
+  content_length: number | null;
   attempts: number;
   outcome: 'answered' | 'no_sources' | 'failed';
+}
+
+/**
+ * 从供应商响应里取**失败归因的三项结构读数**：`finishReason` / `completionTokens` / `contentLength`。
+ *
+ * 为什么单独成一个函数（而不是散在 `compose` 里）：识别侧把同一组读数收在
+ * `recognitions/openai-vision-content.ts`，两域因此用同一套归因语言——`finish_reason === 'length'`
+ * ⇒ 预算类；`'stop'` 且 `contentLength > 0` ⇒ 结构类（200 但形状不对 / 正文被截断）。
+ * 抽成纯函数后，这三项的判据可以单独喂形状畸形的响应来证明，不必起一次假外发。
+ *
+ * ⛔ 只回结构：`contentLength` 是**字符数**，不是正文；本函数**不**返回 `message.content`。
+ * ⛔ 形状不认识就如实 `null`，不猜、不抛——「200 但读不出」的判定留给调用方按 `null` 做。
+ */
+export function chatReadingsOf(body: unknown): {
+  finishReason: string | null;
+  completionTokens: number | null;
+  contentLength: number | null;
+} {
+  const parsed = (body ?? null) as ChatCompletionBody | null;
+  const choice = parsed?.choices?.[0];
+  const finishReason = choice?.finish_reason;
+  const content = choice?.message?.content;
+  const completionTokens = parsed?.usage?.completion_tokens;
+  return {
+    finishReason: typeof finishReason === 'string' ? finishReason : null,
+    completionTokens: typeof completionTokens === 'number' ? completionTokens : null,
+    // UTF-16 码元数（与识别侧 `openai-vision-content.ts` 的 `contentLength` 同口径）。
+    contentLength: typeof content === 'string' ? content.length : null,
+  };
 }
 
 interface ChatCompletionBody {
@@ -179,6 +215,7 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
   async function requestOnce(
     body: unknown,
     signal: AbortSignal,
+    onStatus?: (status: number) => void,
   ): Promise<{ status: number; json: ChatCompletionBody }> {
     const response = await doFetch(profile.endpoint, {
       method: 'POST',
@@ -189,6 +226,9 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
       body: JSON.stringify(body),
       signal,
     });
+    // 状态码先交出去：非 2xx 会在下一行抛出，若不在这里回填，失败读数里的 `status`
+    // 就只能如实写 null——而"401 还是 429"正是最该留下的归因（`observation-log` 同口径）。
+    onStatus?.(response.status);
     // 只用状态码判定；**不**读错误正文（不把供应商正文带进日志/异常）。
     if (!response.ok) {
       throw chatApiError(chatFailureForStatus(response.status), `http_${response.status}`);
@@ -217,7 +257,16 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
       const items = input.set?.items ?? [];
       if (items.length === 0) {
         // 无依据 ⇒ **不外发**（不花一次调用去让模型说“我不知道”）。
-        last = { status: null, duration_ms: 0, prompt_tokens: null, completion_tokens: null, attempts: 0, outcome: 'no_sources' };
+        last = {
+          status: null,
+          duration_ms: 0,
+          prompt_tokens: null,
+          completion_tokens: null,
+          finish_reason: null,
+          content_length: null,
+          attempts: 0,
+          outcome: 'no_sources',
+        };
         return { text: '', citations: [], dose_cards: [] };
       }
       const context = input.egress;
@@ -265,7 +314,9 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
           for (let attempt = 0; attempt <= profile.maxRetries; attempt += 1) {
             attempts += 1;
             try {
-              const result = await requestOnce(body, controller.signal);
+              const result = await requestOnce(body, controller.signal, (seen) => {
+                status = seen;
+              });
               status = result.status;
               return result.json;
             } catch (error) {
@@ -302,39 +353,71 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
         });
       } catch (error) {
         // 失败读数同样只含结构信息（状态码/耗时/尝试次数/模型名），供取证与告警。
+        // 这条路径**没拿到响应**⇒ 归因三项如实为 null（不猜 finish_reason）。
         last = {
           status,
           duration_ms: Date.now() - started,
           prompt_tokens: null,
           completion_tokens: null,
+          finish_reason: null,
+          content_length: null,
           attempts,
           outcome: 'failed',
         };
         deps.log?.warn(
-          { status, duration_ms: last.duration_ms, attempts, model: profile.model },
+          {
+            status,
+            duration_ms: last.duration_ms,
+            attempts,
+            model: profile.model,
+            // 三项**键仍在**、值如实为 null：读日志的一方不必按"哪条路径"猜字段集
+            // （`null` 在这里的含义是"没拿到可用正文"，与 `0`＝键在值为空 区分开）。
+            finish_reason: last.finish_reason,
+            content_length: last.content_length,
+            completion_tokens: last.completion_tokens,
+            // 失败**类别**进日志：`error.code` 是契约既有码（不新造），运维据此区分
+            // 401/403（auth ⇒ PROVIDER_UNAVAILABLE，不可重试）与 429/5xx（可重试）与 200-坏形状。
+            code: error instanceof ApiError ? error.code : null,
+          },
           '问答真实模型外发失败（只记结构读数，不含正文/密钥）',
         );
         throw error;
       }
 
       const duration = Date.now() - started;
-      const choice = parsed.choices?.[0];
-      const content = typeof choice?.message?.content === 'string' ? choice.message.content.trim() : '';
+      // 归因三项在**任何**出口都要有值：空正文/成功/越界三种结局共用同一份读数。
+      const readings = chatReadingsOf(parsed);
+      const content = typeof parsed.choices?.[0]?.message?.content === 'string' ? parsed.choices[0].message.content.trim() : '';
       if (content.length === 0) {
         // 200 但没有可用正文：**不**把它当"成功但空回答"（那会掩盖供应商改形状）。
+        // 归因三项必须在这里落日志 —— `finish_reason=length` 就是"预算被吃掉"的唯一指纹。
         last = {
           status,
           duration_ms: duration,
           prompt_tokens: null,
-          completion_tokens: null,
+          completion_tokens: readings.completionTokens,
+          finish_reason: readings.finishReason,
+          content_length: readings.contentLength,
           attempts,
           outcome: 'failed',
         };
+        deps.log?.warn(
+          {
+            status,
+            duration_ms: duration,
+            attempts,
+            finish_reason: readings.finishReason,
+            completion_tokens: readings.completionTokens,
+            content_length: readings.contentLength,
+            model: profile.model,
+          },
+          '问答真实模型返回 200 但正文不可用（只记结构读数，不含正文/密钥）',
+        );
         throw chatApiError(chatFailure('bad_response'), 'empty_content');
       }
       const usage = parsed.usage ?? {};
       const prompt_tokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null;
-      const completion_tokens = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null;
+      const completion_tokens = readings.completionTokens;
 
       // 正文自检（**先**做，早于结构化引用回填）：正文里越界的编号/未检索链接一律记违规。
       // 只把违规从 citations 里丢掉、正文照发，等于让集合外引用/虚构链接直接出给用户 —— 返修要点。
@@ -358,6 +441,8 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
         duration_ms: duration,
         prompt_tokens,
         completion_tokens,
+        finish_reason: readings.finishReason,
+        content_length: readings.contentLength,
         attempts,
         outcome: 'answered',
       };
@@ -367,6 +452,10 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
           duration_ms: duration,
           prompt_tokens,
           completion_tokens,
+          // 失败归因三项（**不含正文**）：`finish_reason=length` ⇒ 预算类；
+          // `stop` 且 `content_length > 0` ⇒ 结构类（正文被截断/形状异常）。
+          finish_reason: readings.finishReason,
+          content_length: readings.contentLength,
           attempts,
           sources: used.length,
           citations: citations.length,
