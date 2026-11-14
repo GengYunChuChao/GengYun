@@ -15,14 +15,14 @@
 | PG 版本（`initdb --version` 原文） | `initdb (PostgreSQL) 17.11` |
 | PG 版本（脚本自报，`SHOW server_version`） | `[pg] server_version=17.11` |
 | PG 二进制 | `E:\GengYunCommander\.pg17\pgsql\bin`（`initdb.exe` / `pg_ctl.exe` / `postgres.exe` / `psql.exe` / `createdb.exe` 逐个 `Test-Path` 为 True） |
-| 端口 / 库名 | 端口 **58055**（脚本自取，见 §2 说明）；库名 **`postgres`**（`tests/failmatrix/run-real.mjs:1000` 的连接串固定 `/postgres`，本臂不另建库、不跑 `createdb`） |
+| 端口 / 库名 | 端口 **58055**（脚本自取，见 §2 说明）；库名 **`postgres`**（`tests/failmatrix/run-real.mjs:1082` 的连接串固定 `/postgres`，本臂不另建库、不跑 `createdb`） |
 | 迁移 | `[pg] migrations=54（一次性空库，全部落地）` |
 | Node | `v24.16.0`（json `node` 字段） |
 | transport | `app.inject (real PG stores)`（json `transport` 字段原文：用例经 `app.inject` 直接打到真实 PG 支撑的存储层，不起 HTTP 监听） |
 
 **哪些读数来自日志、哪些来自 json**：端口 `58055`、耗时 `12586 ms`、`migrations=54` 三项**只来自日志**（`.pg17\tmp\r87-real-arm.log`）。json 的元数据只有 `generated_at` / `node` / `base_commit` / `postgres` / `execution_mode` / `transport` 六项，其余是 `totals` / `shapePass` / `families` / `rows` 四块数据；端口、耗时、迁移数都不在机读产物里，无法从 json 复算。
 
-**端口为什么不是指挥派单里写的 554xx**：本臂的簇由脚本自己 `initdb` + `pg_ctl start`、并在 `finally` 里 stop + 删目录，端口在 `tests/failmatrix/run-real.mjs:143` 的 `freePort()` 里用 `listen(0, '127.0.0.1')` 向 OS 取临时端口，外部无法指定。能钉住的只有**监听地址**——`tests/failmatrix/run-real.mjs:1023` 把 `-c listen_addresses=127.0.0.1` 写进 `pg_ctl -o`，即只听回环。本轮实测取到 58055；开跑前本机 55400–55500 段只有 55433 在听（既有 `data-r74` 簇），与本轮无关。
+**端口为什么不是指挥派单里写的 554xx**：本臂的簇由脚本自己 `initdb` + `pg_ctl start`、并在 `finally` 里 stop + 删目录，端口在 `tests/failmatrix/run-real.mjs:143` 的 `freePort()` 里用 `listen(0, '127.0.0.1')` 向 OS 取临时端口，外部无法指定。能钉住的只有**监听地址**——`tests/failmatrix/run-real.mjs:1105` 把 `-c listen_addresses=127.0.0.1` 写进 `pg_ctl -o`，即只听回环。本轮实测取到 58055；开跑前本机 55400–55500 段只有 55433 在听（既有 `data-r74` 簇），与本轮无关。
 
 ## §2 命令（逐字）
 
@@ -34,7 +34,7 @@ node tests/failmatrix/run-real.mjs --require-no-not-runnable --json=E:\GengYunCo
 
 - 工作目录 `E:\GengYunCommander\.pg17\wt-r87-realarm`；退出码 **0**。
 - 环境变量名逐字：`GY_PG_BIN`（必填，缺则整臂退出 77 未取得）、`GY_I22_PG_ROOT`（可选，簇目录落点）。`GY_I22_PG_KEEP` **未设** ⇒ 走清理分支。
-- `--require-no-not-runnable` 在 `tests/failmatrix/run-real.mjs:969` 解析；打开后 `not_runnable > 0` 会在 `tests/failmatrix/run-real.mjs:1487` 生效、由 `tests/failmatrix/run-real.mjs:1489` 往 stderr 打 `FAIL：--require-no-not-runnable 下有 N 条 not_runnable` 并 `return 1`。退出码 0 的含义因此是「**且** not_runnable = 0」，不只是「脚本没崩」。
+- `--require-no-not-runnable` 在 `tests/failmatrix/run-real.mjs:1047` 解析；打开后 `not_runnable > 0` 会在 `tests/failmatrix/run-real.mjs:1622` 生效、由 `tests/failmatrix/run-real.mjs:1624` 往 stderr 打 `FAIL：--require-no-not-runnable 下有 N 条 not_runnable` 并 `return 1`。退出码 0 的含义因此是「**且** not_runnable = 0」，不只是「脚本没崩」。
 - 依赖安装：本 worktree 内独立 `npm ci --prefer-offline --no-audit --no-fund --ignore-scripts`（`added 103 packages`），跑完 `git status --porcelain` 仍空、`package-lock.json` 未变。⛔ 没有做任何跨 worktree 的 `node_modules` junction/symlink（§3 红线），因此本片也没有需要摘除的重解析点。
 
 ## §3 读数表（本轮 vs 旧基线）
@@ -49,7 +49,7 @@ node tests/failmatrix/run-real.mjs --require-no-not-runnable --json=E:\GengYunCo
 | `different` | **0** | 5 | −5 |
 | `not_runnable` | **0** | 13 | −13 |
 
-两臂条数口径不同不是冲突：真库臂只跑权限面六族（`tests/failmatrix/run-real.mjs:990` 的 `PERMISSION_FAMILIES` 筛出 180 条，`tests/failmatrix/run-real.mjs:991` 落筛选），stub 臂跑整个矩阵 249 条。
+两臂条数口径不同不是冲突：真库臂只跑权限面六族（`tests/failmatrix/run-real.mjs:1072` 的 `PERMISSION_FAMILIES` 筛出 180 条，`tests/failmatrix/run-real.mjs:1073` 落筛选），stub 臂跑整个矩阵 249 条。（R111 起该集合扩到八族 —— 追加 `E3`／`F1`，臂面 203 条；本页 180 是 R87 时点读数，不改写。）
 
 json `totals` 逐字段（`E:\GengYunCommander\.pg17\tmp\r87-real.json` 原样）：
 
@@ -91,7 +91,7 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 真 PG 臂完成：180 条权限面用例在 PostgreSQL 17.11 上取得逐条读数，耗时 12586 ms（same=180 sameWithCheck=24 sameWithShape=30 different=0 not-runnable=0）。
 ```
 
-上面那句「权限面合计 …」由 `tests/failmatrix/run-real.mjs:1421` 打印，末句由 `tests/failmatrix/run-real.mjs:1476` 打印。另有整臂零外呼自证：`[pg] media_external_requests=0 fetch_calls=0（整臂零外呼）`。
+上面那句「权限面合计 …」由 `tests/failmatrix/run-real.mjs:1556` 打印，末句由 `tests/failmatrix/run-real.mjs:1611` 打印。另有整臂零外呼自证：`[pg] media_external_requests=0 fetch_calls=0（整臂零外呼）`。
 
 **关于「（无：权限面在 stub 与真 PG 下逐条一致）」这行**：这是 `run-real.mjs` 在 `different=0` 时打印的**固定文案**，不是逐条比对 stub 期望与 real 期望后的结论。本轮 5 条（C3-19/20/21、C4-15、C4-18）按 `realExpect` / `realCheck` 分叉口径比对：stub 侧对 C3-19/20/21 仍是 503 `PROVIDER_UNAVAILABLE`、对 C4-18 仍是 200，real 侧实测分别是 200 与 401 `SESSION_EXPIRED`（逐条见 §6）。因此这行的「逐条一致」只能读作「在**当次判定口径**（real 期望优先）下没有判红的那一条」，**不能**读作「stub 与真 PG 的原始期望值相同」——后者与 §6 的五条分叉自相矛盾，故在此显式澄清。
 
@@ -113,7 +113,7 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 
 ## §6 `#1033` 的五条分叉：本轮真库读数下是否成立
 
-判定器口径：期望取 `realExpect ?? expect`（`tests/failmatrix/run-real.mjs:791`），断言取 `realCheck ?? check`（`tests/failmatrix/run-real.mjs:806`）。
+判定器口径：期望取 `realExpect ?? expect`（`tests/failmatrix/run-real.mjs:869`），断言取 `realCheck ?? check`（`tests/failmatrix/run-real.mjs:884`）。
 
 | 用例 | stub 期望 | `#1033` 加的 real 侧期望 | 本轮真库实测 | 断言 | 结论 |
 | --- | --- | --- | --- | --- | --- |
@@ -147,16 +147,16 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 
 ## §8 局限与未取得
 
-- **本机 PG 17.11 ≠ CI 环境**：本页是本机 Windows + `E:\GengYunCommander\.pg17\pgsql\bin` 的 17.11 一次性簇（脚本 `initdb` 于 `tests/failmatrix/run-real.mjs:1013`），不是 CI 的 ubuntu-24.04 + PGDG `postgresql-17`。读数一致只说明「同一脚本、同一棵树、同一 PG 大版本下结果相同」，不替代 CI 的绿。
+- **本机 PG 17.11 ≠ CI 环境**：本页是本机 Windows + `E:\GengYunCommander\.pg17\pgsql\bin` 的 17.11 一次性簇（脚本 `initdb` 于 `tests/failmatrix/run-real.mjs:1095`），不是 CI 的 ubuntu-24.04 + PGDG `postgresql-17`。读数一致只说明「同一脚本、同一棵树、同一 PG 大版本下结果相同」，不替代 CI 的绿。
 - **stub 臂 249 条没跑**：本轮只跑真库臂的权限面 180 条；`node tests/failmatrix/run.mjs` 与 27 条负控制（`tools/i22-failmatrix-negative-control.mjs`）本片**都没有跑**，不得据此宣称 stub 臂本轮全绿。
-- **`--require-no-not-runnable` 的拒红分支没被触发**：本轮 `not_runnable = 0`，`tests/failmatrix/run-real.mjs:1487` 那个 `return 1` 分支从未执行 ⇒ 本页**不证明**该闸门在有 `not_runnable` 时会红（那是既有单测与 `#1054` 口径说明的范围）。
+- **`--require-no-not-runnable` 的拒红分支没被触发**：本轮 `not_runnable = 0`，`tests/failmatrix/run-real.mjs:1622` 那个 `return 1` 分支从未执行 ⇒ 本页**不证明**该闸门在有 `not_runnable` 时会红（那是既有单测与 `#1054` 口径说明的范围）。
 - **不覆盖 stub/real 之外的世界**：无真实对象存储、无真实供应商外呼（整臂 `fetch_calls=0` 自证）、无真机、无真实网络；媒体域走的是合成端点 `storage.example.test`。
 - **媒体域「持久化接线」的口径不一致仍在**（既有，非本片引入）：本轮只证明权限面读数，不宣称媒体已按生产形态持久化。
 - 本页**没有**做任何 commit 之外的写操作到 `cases.mjs` / `run-real.mjs`：证据页是唯一新增文件。
 
 ## §9 清理自证（一次性簇不留在机器上）
 
-- 脚本 `finally` 分支（`tests/failmatrix/run-real.mjs:1507` 起的清理段，`tests/failmatrix/run-real.mjs:1511` 打印 `[pg] 一次性集群已停止，数据目录已删除`）实测生效：日志末行就是这句。
+- 脚本 `finally` 分支（`tests/failmatrix/run-real.mjs:1642` 起的清理段，`tests/failmatrix/run-real.mjs:1646` 打印 `[pg] 一次性集群已停止，数据目录已删除`）实测生效：日志末行就是这句。
 - `Test-Path E:\GengYunCommander\.pg17\tmp\r87-pgroot\gy-i22-failmatrix-realpg-79016-0e68efc2` = **False**；`GY_I22_PG_ROOT` 目录条目数 = **0**。
 - `Get-NetTCPConnection -State Listen` 里 **58055 无监听**；本机现存 7 个 `postgres.exe` 全部带 `-D "E:/GengYunCommander/.pg17/data-r74" -p 55433`（既有簇），与本轮无关。
 - 临时产物（仓外，`E:\GengYunCommander\.pg17\tmp\`）：`r87-real-arm.log`（230 行）、`r87-real.json`（机读产物）、`r87-realarm-npmci.log`。仓库内除本页外无改动。

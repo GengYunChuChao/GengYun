@@ -8,8 +8,8 @@
 
 2026-11-07 的对抗性审查把这件事判成 **P1**，原话是「本 PR 新断言在 CI 里永远不会让流水线变红，价值只是『人肉可见』」。根因在退出码的判据本身：
 
-- `tests/failmatrix/run-real.mjs:1487` 全臂只有一条能判红的判据——给了 `--require-no-not-runnable` 且 `not_runnable > 0` 时才 `return 1`；
-- `tests/failmatrix/run-real.mjs:1493` 其后是**无条件** `return 0`（本轮改前的原文）。
+- `tests/failmatrix/run-real.mjs:1622` 全臂只有一条能判红的判据——给了 `--require-no-not-runnable` 且 `not_runnable > 0` 时才 `return 1`；
+- `tests/failmatrix/run-real.mjs:1628` 其后是**无条件** `return 0`（本轮改前的原文）。
 - ⇒ `different > 0`（真 PG 的实际与期望不一致）时整臂照样 **exit 0**；汇总行里的「差异归因：different N 条」只是写给人看的，流水线不会红。
 
 `.github/workflows/real-pg-integration.yml` 对这条臂写死了「⛔ 不断言 different === 0：差异正是这条臂的产品」。所以本任务**不碰 workflow**（改 `.github/**` 属 B 档）：本次只把「判红的能力」做进脚本并用开关默认关住，接线留给后续 PR（§7）。
@@ -27,19 +27,19 @@
 
 「一行 FAIL」的形状（`tests/failmatrix/require-no-different.mjs` 里 `differentFailureMessage`）：含 **`different` 计数**与**受影响用例 id**；id 最多列 10 个，多的写「等 N 条」（N 是实际条数，不是还剩几条）。逐条读数里找不到 DIFF 行（计数与读数字面不一致）时，列表位置写「逐条读数里没有 DIFF 行：计数与读数不一致，先查这个」，不静默。
 
-**与 `--require-no-not-runnable` 正交**：新判据**从不读** `not_runnable`，旧判据**从不读** `different`（旧块从 `tests/failmatrix/run-real.mjs:1487` 起的那 5 行一字未动，含 `return 1;` 与 FAIL 文案，新判据接在它之后的原 `return 0` 位置）。两个开关各开各的，互不吞并——这是 §4 第 ④ 条单测钉住的东西。
+**与 `--require-no-not-runnable` 正交**：新判据**从不读** `not_runnable`，旧判据**从不读** `different`（旧块从 `tests/failmatrix/run-real.mjs:1622` 起的那 5 行一字未动，含 `return 1;` 与 FAIL 文案，新判据接在它之后的原 `return 0` 位置）。两个开关各开各的，互不吞并——这是 §4 第 ④ 条单测钉住的东西。
 
 ## §3 实现：为什么抽模块、为什么 import 写在文件末尾
 
 - 新文件 `tests/failmatrix/require-no-different.mjs`（无副作用，可被单测直接 import）导出三样：`requireFlagField`（`--require-no-not-runnable` / `--require-no-different` → 开关字段名；穷举 `switch`，**未知参数抛错**，不再是 fail-open 的静默别名）、`differentFailureMessage`（上面那行 FAIL 文案）、`shouldFailOnDifferent(opts, tally, rows)`（判定，返回 0/1）。
-- `tests/failmatrix/run-real.mjs:1493` 只把原来的 `return 0;` 换成 `return shouldFailOnDifferent(opts, tally, rows);`——一个表达式，没有挪动任何既有行。
-- 参数解析就地扩展，与既有开关同风格（布尔、无参数、`continue`）：`tests/failmatrix/run-real.mjs:965` 的默认值对象加 `requireNoDifferent: false`，`tests/failmatrix/run-real.mjs:969` 的布尔分支接受两个开关名，`tests/failmatrix/run-real.mjs:972` 的未知参数提示补上新名字。
+- `tests/failmatrix/run-real.mjs:1628` 只把原来的 `return 0;` 换成 `return shouldFailOnDifferent(opts, tally, rows);`——一个表达式，没有挪动任何既有行。
+- 参数解析就地扩展，与既有开关同风格（布尔、无参数、`continue`）：`tests/failmatrix/run-real.mjs:1043` 的默认值对象加 `requireNoDifferent: false`，`tests/failmatrix/run-real.mjs:1047` 的布尔分支接受两个开关名，`tests/failmatrix/run-real.mjs:1050` 的未知参数提示补上新名字。
 - 文件头 usage 同步补一句（`tests/failmatrix/run-real.mjs:32`）：本脚本没有 `--help`，用法块是唯一的入口说明。
-- `import` 写在文件**末尾**（`tests/failmatrix/run-real.mjs:1540`）：ESM 的 import 会被提升，与写在第一行等价，而写在第一行会把下面每一行下推一格，牵动 `docs/verification/` 里一批 `run-real.mjs:<行号>` 锚点（同一取舍见 `docs/verification/gy-r87-etag-parity-20261107.md:28`）。文件末尾的注释块写明了「⛔ 不要挪上去」。（2026-11-09 追记：R95 在 `run-real.mjs` 中部补取消族演员 +10 行，该 import 由第 1530 行下移到第 1540 行。）
+- `import` 写在文件**末尾**（`tests/failmatrix/run-real.mjs:1675`）：ESM 的 import 会被提升，与写在第一行等价，而写在第一行会把下面每一行下推一格，牵动 `docs/verification/` 里一批 `run-real.mjs:<行号>` 锚点（同一取舍见 `docs/verification/gy-r87-etag-parity-20261107.md:28`）。文件末尾的注释块写明了「⛔ 不要挪上去」。（2026-11-09 追记：R95 在 `run-real.mjs` 中部补取消族演员 +10 行，该 import 由第 1530 行下移到第 1540 行。）
 - **不改**的部分（下面每个符号都能在仓里 `git grep -n` 命中；括号里给的是真实声明/使用行，不是示意）：
-  - 逐条判定入口 `verdictFor`（`tests/failmatrix/run-real.mjs:790`），一个字没动。
-  - 权限族表 `PERMISSION_FAMILIES`（`tests/failmatrix/run-real.mjs:990`），一个字没动。
-  - 「权限面合计 …」汇总行文案（`tests/failmatrix/run-real.mjs:1421`）——这一行没有独立符号名，按文案本身引用，一个字符没动。
+  - 逐条判定入口 `verdictFor`（`tests/failmatrix/run-real.mjs:868`），一个字没动。
+  - 权限族表 `PERMISSION_FAMILIES`（`tests/failmatrix/run-real.mjs:1072`），一个字没动（R111 起该集合另案追加 `E3`／`F1`，与本页的门禁改动无关）。
+  - 「权限面合计 …」汇总行文案（`tests/failmatrix/run-real.mjs:1556`）——这一行没有独立符号名，按文案本身引用，一个字符没动。
   - `--json=` 的产物结构，一个字节都没动。
 
 ## §4 单测：10 条（`tests/unit/failmatrix-require-no-different.test.mjs`）
@@ -86,7 +86,7 @@ node tests/failmatrix/run-real.mjs --require-no-not-runnable --require-no-differ
 
 **变异 A（判定恒假，钉第 ①/④ 条）**：把 `shouldFailOnDifferent` 临时改成恒 `false`（函数首行加一行 `return 0;`，短路掉 FAIL 分支）⇒ `node --test tests/unit/failmatrix-require-no-different.test.mjs` 变 **EXIT 1 / `ℹ tests 10` / `ℹ pass 8` / `ℹ fail 2`**，红的两条正是第 ① 条（「开关打开 + `different > 0` ⇒ 返回 1 …」，断言在 `tests/unit/failmatrix-require-no-different.test.mjs:72`）与第 ④ 条（「两开关互不吞」，断言在 `tests/unit/failmatrix-require-no-different.test.mjs:119`）——「开关失效」直接被打死，不是靠别的用例兜住。
 
-**变异 B（解析器里 `requireFlagField` 未定义，钉第 ⑦ 条的新断言）**：把 `tests/failmatrix/run-real.mjs:969` 的调用点临时改成 `requireFlagFieldX(arg)`（等价于删掉文件末尾那句 import：名字解析不到）⇒ `node --test --test-name-pattern="被 parseArgs 接受" tests/unit/failmatrix-require-no-different.test.mjs` 变 **EXIT 1**，红点就是第 ⑦ 条新增的那条正向断言（`tests/unit/failmatrix-require-no-different.test.mjs:192` 的 `assert.match(output, /\[pg\] bin=/)`）：子进程在**模块求值阶段**就 `ReferenceError: requireFlagFieldX is not defined`（`at parseArgs (…run-real.mjs:969:84)`、`at …run-real.mjs:976:14`），`main()` 根本没进，所以 `[pg] bin=` / `[pg] dataDir=` 一行都没出现。**旧写法在这次变异下是绿的**：它的两条断言（`doesNotMatch(/未知参数/)`、`status === 1`）都被满足——ReferenceError 的进程退出码同样是 1，输出里也没有「未知参数」。这正是把否定式断言换成正向标记的原因。
+**变异 B（解析器里 `requireFlagField` 未定义，钉第 ⑦ 条的新断言）**：把 `tests/failmatrix/run-real.mjs:1047` 的调用点临时改成 `requireFlagFieldX(arg)`（等价于删掉文件末尾那句 import：名字解析不到）⇒ `node --test --test-name-pattern="被 parseArgs 接受" tests/unit/failmatrix-require-no-different.test.mjs` 变 **EXIT 1**，红点就是第 ⑦ 条新增的那条正向断言（`tests/unit/failmatrix-require-no-different.test.mjs:192` 的 `assert.match(output, /\[pg\] bin=/)`）：子进程在**模块求值阶段**就 `ReferenceError: requireFlagFieldX is not defined`（`at parseArgs (…run-real.mjs:1047:84)`、`at …run-real.mjs:1054:14`），`main()` 根本没进，所以 `[pg] bin=` / `[pg] dataDir=` 一行都没出现。**旧写法在这次变异下是绿的**：它的两条断言（`doesNotMatch(/未知参数/)`、`status === 1`）都被满足——ReferenceError 的进程退出码同样是 1，输出里也没有「未知参数」。这正是把否定式断言换成正向标记的原因。
 
 两条变异都还原成 HEAD 原始内容（变异 A 的还原顺带把本片对 `tests/failmatrix/require-no-different.mjs` 的 `switch` 改动一起冲掉了，已重新落地并复核）；还原后 **EXIT 0 / `ℹ tests 10` / `ℹ pass 10` / `ℹ fail 0`**，`git status --porcelain` 里 `tests/failmatrix/run-real.mjs` 零残留，`tests/failmatrix/require-no-different.mjs` 只剩本片那处 fail-closed 改动。
 

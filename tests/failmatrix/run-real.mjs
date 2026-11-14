@@ -2,7 +2,7 @@
 /**
  * GY-I22（#22）失败回归矩阵 · **真实 PostgreSQL 17 运行臂**。
  *
- * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，共 180 条）跑在
+ * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，R111 起另有 E3 / F1，共 203 条）跑在
  * **一次性真实 PostgreSQL 17 集群**上，把矩阵 world 的内存 store 换成真 PG store，
  * 逐条记录期望与 `真 PG 实际` 的差异：期望缺省取 `cases.mjs` 的 `expect`，写了 `realExpect`
  * 的用例（R83 起 C3-19/20/21、C4-15/18）改用 real 侧那份，断言同理走 `realCheck ?? check`。
@@ -39,7 +39,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CASES, FAMILIES } from './cases.mjs';
+import { CASES, E3_SEED_PLAN, FAMILIES } from './cases.mjs';
 import { API, SPECIES_ID, envelopeShape, inject, seedReceiptHolder, seedInFlightDeletion } from './world.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -313,6 +313,8 @@ async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
     ocrId: unavailableSeed('OCR（需媒体 + 真实供应商）'),
     transcriptionId: unavailableSeed('转写（需媒体 + 真实供应商）'),
     hideTargetPostId: unavailableSeed('社区投稿（审核管线未接线，隐藏目标）'),
+    // F1 引用跳转的专属夹具（帖 + 评论 + 两条消息），播不上就留 null ⇒ 该族如实 not-runnable。
+    refJump: null,
     // 缺陷 C-2：三个会话侧 id 用**会响的哨兵**而不是裸 `null`。`?? null` 会把路径拼成
     // `/conversations/null/turns/null`，被 `routes/conversations.ts:60`/`:67` 的 `format: 'uuid'`
     // 挡成 400 INVALID_REQUEST —— 读数看着像一条正常的越权拒绝，实际一条判据都没验到。
@@ -460,6 +462,8 @@ async function seedFailClosedRowsReal({ pool, world, owner, attacker, seeded }) 
     comment: fixtureId(2),
     report: fixtureId(3),
     hideTarget: fixtureId(4),
+    refJumpPost: fixtureId(5),
+    refJumpComment: fixtureId(6),
     job: fixtureId(21),
     recognition: fixtureId(22),
     ocr: fixtureId(31),
@@ -620,6 +624,80 @@ async function seedFailClosedRowsReal({ pool, world, owner, attacker, seeded }) 
       seeded.hideTargetPostId = ids.hideTarget;
     } catch (error) {
       warnSeed('隐藏目标帖（C3-25/C3-27）', error);
+    }
+  }
+
+  // ---- 引用跳转（F1 全族）-------------------------------------------------
+  // 与 stub 臂 `run.mjs:240-283` 同构：一帖 + 一条评论 + 两条指向它们的消息（同一条
+  // `messagesService.appendMessage` 形状，`target_ref` 指向 post/comment）。
+  // ⛔ 不复用 `ids.post` / `ids.comment`：F1-03 / F1-05 是**作者删除**（真写），共享夹具被删会让
+  // C2/C3 的「越权 404 与不存在 404 同形」失去对照面（那条同形的证明力全靠目标行真实存在）。
+  // 期望值的来源在 `cases.mjs:685-730`：`reference_state` 由社区引用端口**每次读取时**重查公开读面。
+  if (community !== null) {
+    try {
+      const postRecord = {
+        id: ids.refJumpPost,
+        revision: 1,
+        author_id: owner.userId,
+        anonymized_author_ref: null,
+        title: '真 PG 臂种子的引用跳转目标帖（F1 用）',
+        body: '这是引用跳转目标帖的正文：只用于验证「下架后消息引用变 unavailable」，不含真实病例或真实用量。',
+        crop_id: null,
+        region_code: null,
+        media_ids: [],
+        linked_knowledge_ref: null,
+        visibility: 'published',
+        audit_state: 'approved',
+        created_at: atIso,
+        updated_at: atIso,
+      };
+      const postInserted = await community.insertPost(
+        postRecord,
+        verdictOf('post', ids.refJumpPost, 1, postModerationText(postRecord), 14),
+      );
+      if (postInserted !== true && (await community.getPost(ids.refJumpPost)) === null) {
+        throw new Error('community_posts 未落行（引用跳转目标帖）');
+      }
+      const commentRecord = {
+        id: ids.refJumpComment,
+        revision: 1,
+        post_id: ids.refJumpPost,
+        author_id: owner.userId,
+        anonymized_author_ref: null,
+        body: '这是引用跳转目标评论的正文：只用于验证下架后的 unavailable。',
+        visibility: 'published',
+        audit_state: 'approved',
+        created_at: atIso,
+      };
+      const commentInserted = await community.insertComment(
+        commentRecord,
+        verdictOf('comment', ids.refJumpComment, 1, commentRecord.body, 15),
+        { id: ids.refJumpPost, revision: 1 },
+      );
+      if (commentInserted !== true) throw new Error('community_comments 未落行（引用跳转目标评论）');
+      const postMessage = await world.app.messagesService.appendMessage({
+        owner_id: owner.userId,
+        type: 'comment',
+        target_ref: { type: 'post', id: ids.refJumpPost, revision: 1 },
+        event_key: 'i22-realpg-seed-refjump-msg-post',
+      });
+      const commentMessage = await world.app.messagesService.appendMessage({
+        owner_id: owner.userId,
+        type: 'comment',
+        target_ref: { type: 'comment', id: ids.refJumpComment, revision: 1 },
+        event_key: 'i22-realpg-seed-refjump-msg-comment',
+      });
+      seeded.refJump = {
+        postId: ids.refJumpPost,
+        // 新播种行的修订号恒为 1 ⇒ 强 ETag 就是 `"1"`（与 stub 臂 `refJumpPost.etag ?? '"1"'` 同口径）。
+        postEtag: '"1"',
+        commentId: ids.refJumpComment,
+        commentEtag: '"1"',
+        postMessageId: postMessage.message.id,
+        commentMessageId: commentMessage.message.id,
+      };
+    } catch (error) {
+      warnSeed('引用跳转目标帖 / 评论 / 消息（F1 全族）', error);
     }
   }
 
@@ -987,7 +1065,11 @@ function resolveValue(value, ctx) {
   return typeof value === 'function' ? value(ctx) : value;
 }
 
-const PERMISSION_FAMILIES = new Set(['C1', 'C2', 'C3', 'C4', 'C10', 'C11']);
+// 真库臂覆盖的族：原权限面六族（C1–C4 / C10 / C11）＋ R111 起的 E3（后台内容写的版本/引用门槛）
+// 与 F1（引用跳转）。加这两族的理由不是「条数好看」：两族的失败语义都**依赖真库状态**才能成立 ——
+// E3 的 409 打的是 `admin_content_entities` 行的 head 修订号，F1 的 `reference_state` 打的是社区
+// 公开读面对**真被删掉**的行的判定；stub 臂用的是内存 store 与替身端口，证明不了这一层。
+const PERMISSION_FAMILIES = new Set(['C1', 'C2', 'C3', 'C4', 'C10', 'C11', 'E3', 'F1']);
 const selected = CASES.filter((c) => PERMISSION_FAMILIES.has(c.family));
 
 async function main() {
@@ -1126,7 +1208,7 @@ async function main() {
       console.log(`[pg] receipt_holder=${receiptHolder.userId} deletion=${receiptHolder.deletionId}（回执已换发一次）`);
     } catch (error) {
       // 播不上就把三个槽位一起换成会响的哨兵（**全或无**：绝不半套值混进读数）⇒ 这 5 条如实 not-runnable，
-      // ⛔ 不让整臂抛死（否则连一份 180 条的诊断报告都拿不到）。
+      // ⛔ 不让整臂抛死（否则连一份 203 条的诊断报告都拿不到）。
       const reason = error instanceof Error ? error.message : String(error);
       const dead = missingSeed(`注销受理（C4 回执族专用账号）—— ${reason}`);
       receiptHolder = { deletionId: dead, receipt: dead, staleReceipt: dead };
@@ -1134,6 +1216,55 @@ async function main() {
     }
 
     const seeded = await seedOwnerRowsReal(world, b, { pool, attacker: a });
+
+    // -------------------------------------- 夹具：E3 后台内容写面的三条 draft
+    // 真库 store 是异步的（`persistent === true`：`createEntity` / `appendRevision` 返回 Promise），
+    // 而用例的 `path` 解析是同步的（runner 没有 async setup 钩子）⇒ 只能在播种阶段 await 播好，
+    // 再把「已播 id 集」放进 `ctx.e3Drafts`，由 `cases.mjs` 的 `seedE3Draft` 做存在性校验。
+    // 播不上就留空集 ⇒ E3 两条如实 not-runnable（⛔ 不退化成「实体不存在」冒充 409/422）。
+    const e3Drafts = new Set();
+    {
+      const store = app.adminContentService?.store;
+      const stewardId = typeof adminFull?.userId === 'string' ? adminFull.userId.toLowerCase() : '';
+      if (store === undefined || store.persistent !== true || stewardId === '') {
+        warnSeed(
+          'E3 后台内容写面草稿（E3 全族）',
+          new Error(`adminContentService.store 不是真库存储（persistent=${String(store?.persistent)}）或缺 adminFull`),
+        );
+      } else {
+        for (const item of E3_SEED_PLAN) {
+          try {
+            const createdAt = new Date(item.createdAt);
+            // 幂等：同一 id 已在该库播过（其它臂/重跑留下的行）就不再 append 第二条修订，
+            // 否则 head 修订号会变成 2，E3-01 的「当前 revision=1」前提就没了。
+            let entity = await store.getEntity(item.id);
+            let head;
+            if (entity === undefined || entity === null) {
+              entity = await store.createEntity({ id: item.id, family: item.family, stewardId, createdAt });
+              // ⛔ 别拿 `createEntity` 的返回值数修订：真库实现的返回值是 `toEntity(row, [])`，
+              // `revisions` 恒为空数组（首版按 `Array.isArray(...)` 取长度，读出 0 条 ⇒ 三份草稿全判
+              // 「head 修订为 0」而一条没播成）。首条修订的编号以 `appendRevision` 的返回值为准。
+              const revision = await store.appendRevision({
+                entity,
+                content: item.content,
+                authorId: stewardId,
+                createdAt,
+                derivedFromRevision: null,
+              });
+              head = typeof revision?.revision === 'number' ? revision.revision : null;
+            } else {
+              head = Array.isArray(entity.revisions) ? entity.revisions.length : null;
+            }
+            if (head !== 1) {
+              throw new Error(`草稿 head 修订为 ${String(head)}，E3 要求恰为 1（${item.label}）`);
+            }
+            e3Drafts.add(item.id);
+          } catch (error) {
+            warnSeed(`E3 草稿（${item.label}）`, error);
+          }
+        }
+      }
+    }
 
     // ------------------------------------------- 夹具：C3-21 专用「待停用账号」
     // ⛔ 这个账号**只给** `cases.mjs:178` 的 C3-21（后台停用账号）用；任何其它用例都不许引用它
@@ -1175,6 +1306,10 @@ async function main() {
       hideTargetPostId: seeded.hideTargetPostId,
       // C3-21 的专用停用目标（见 main() 里的播种块）。stub 臂没有这个槽位，用例行用 `??` 兜底。
       suspendTargetUserId,
+      // F1 引用跳转夹具（帖 / 评论 / 两条消息）；播不上是 null ⇒ 该族如实 not-runnable。
+      refJump: seeded.refJump ?? null,
+      // E3 后台内容写面草稿的「已播 id 集」：真库 store 异步，用例侧只做存在性校验（见 cases.mjs 的 seedE3Draft）。
+      e3Drafts,
       injection: '',
     };
 

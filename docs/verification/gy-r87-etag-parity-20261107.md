@@ -10,24 +10,24 @@
 | --- | --- | --- |
 | stub | `tests/failmatrix/run.mjs:144` | `exp.etag === true && !/^"\d+"$/.test(result.etag ?? '')` ⇒ 判 **存在 + 强格式**（引号包纯数字；`W/"n"` 这种弱校验前缀过不了） |
 | stub | `tests/failmatrix/run.mjs:145` | 判红文案 `ETag 期望强修订号 "n"，实际 …`；`run.mjs:147` 另管 `etag === false`（必须缺失） |
-| 真库 | `tests/failmatrix/run-real.mjs:790` 的 `verdictFor` | 只有三段判据——`exp.status`、`exp.code`、`meta.execution_mode`——＋ 用例自带的 `check = c.realCheck ?? c.check`（`tests/failmatrix/run-real.mjs:806`）。**整个函数从不读 `exp.etag`** |
+| 真库 | `tests/failmatrix/run-real.mjs:868` 的 `verdictFor` | 只有三段判据——`exp.status`、`exp.code`、`meta.execution_mode`——＋ 用例自带的 `check = c.realCheck ?? c.check`（`tests/failmatrix/run-real.mjs:884`）。**整个函数从不读 `exp.etag`** |
 
 即：同一条 `expect: { status: 200, etag: true }`，stub 臂会判「有没有 ETag、是不是强格式」，真库臂只判「200 且没有 code」。真库侧漏测，不是「真库侧另有更强判据」。
 
-**受影响用例有多少条**：`cases.mjs` 里带 `expect.etag` 的共 12 条（C4-12、C5-09、C6-01/02/05/06/08/09、E1-01/02/03、E2-03）。但真库臂只跑权限面六族——`tests/failmatrix/run-real.mjs:990` 的 `PERMISSION_FAMILIES = new Set(['C1','C2','C3','C4','C10','C11'])`（`:991` 落筛选）——C5/C6/E1/E2 十一条**不进真库臂**，所以「两臂不对等」在今天的实际暴露面**恰好只有 C4-12 一条**（C4 族、`receiptHolder` 回执读自己的注销单、期望 200）。
+**受影响用例有多少条**：`cases.mjs` 里带 `expect.etag` 的共 12 条（C4-12、C5-09、C6-01/02/05/06/08/09、E1-01/02/03、E2-03）。但真库臂只跑权限面六族——`tests/failmatrix/run-real.mjs:1072` 的 `PERMISSION_FAMILIES`（本页时点为 `new Set(['C1','C2','C3','C4','C10','C11'])`；R111 起追加 `E3`／`F1` 共八族）——当时 C5/C6/E1/E2 十一条**不进真库臂**，所以「两臂不对等」在当时的实际暴露面**恰好只有 C4-12 一条**（C4 族、`receiptHolder` 回执读自己的注销单、期望 200）。
 
 **真库侧该不该更强**：不该弱。`services/api/src/routes/account-deletion.ts:353` 就是 GET 注销单的响应头——`.header('ETag', `"${String(projected['revision'])}"`)`——用正文修订号拼**强** ETag；`services/api/src/privacy/account-deletion.ts:419` 的 `normalizeRevision` 保证该字段是 ≥1 的安全整数，所以真库的 ETag 只可能是 `"n"` 形状。stub 桩件与真库在这个 header 上**结构相同**，没有「真库只能更弱」的合法理由 ⇒ 走 (a) 补断言，不走 (b) 写「有意不对等」。
 
 ## §2 修法：(a) 用例级补真库断言，而不是改公共判定器
 
-改了 `tests/failmatrix/cases.mjs:406` 那条 C4-12：单行里引用 `realCheck: assertStrongEtagMatchesRevision`（`tests/failmatrix/run-real.mjs:806` 取 `realCheck ?? check`，所以真库臂会用它替掉本条原先不存在的断言），判据函数声明在同一文件的末尾（`tests/failmatrix/cases.mjs:767`）——为什么放末尾见 §5：
+改了 `tests/failmatrix/cases.mjs:406` 那条 C4-12：单行里引用 `realCheck: assertStrongEtagMatchesRevision`（`tests/failmatrix/run-real.mjs:884` 取 `realCheck ?? check`，所以真库臂会用它替掉本条原先不存在的断言），判据函数声明在同一文件的末尾（`tests/failmatrix/cases.mjs:767`）——为什么放末尾见 §5：
 
 - `cases.mjs:769` 取 `result.headers?.etag`、`cases.mjs:770` 取 `result.body?.data?.revision`；`cases.mjs:771` 判强格式，口径与 stub 臂 `run.mjs:144` **逐字同源**：`typeof etag === 'string' && /^"\d+"$/`。
 - `cases.mjs:776` 再把 ETag **逐字钉到正文修订号**：`etag === `"${String(revision)}"``；`cases.mjs:774` 先要求 `revision` 是 ≥1 的安全整数（不是就判红）。这一条比 stub 臂强——stub 臂只看形状，真库臂连「ETag 和正文是同一个修订号」都不许漂。
 
-**为什么不改公共判定器（在 `verdictFor` 里加 `exp.etag` 分支）**：那会把 `tests/failmatrix/run-real.mjs:806` 之后的每一行都往下推，牵动 `docs/verification/` 三处历史取证页的十几个锚点，而今天除 C4-12 外没有任何带 `expect.etag` 的用例进真库臂 ⇒ 检测力净增 0、文档位移代价全额。
+**为什么不改公共判定器（在 `verdictFor` 里加 `exp.etag` 分支）**：那会把 `tests/failmatrix/run-real.mjs:884` 之后的每一行都往下推，牵动 `docs/verification/` 三处历史取证页的十几个锚点，而今天除 C4-12 外没有任何带 `expect.etag` 的用例进真库臂 ⇒ 检测力净增 0、文档位移代价全额。
 
-改为在 `tests/failmatrix/run-real.mjs:782`（同一函数注释里 `checkProblems` 那一条）**行数不变**地补一句显式警告：本函数不读 `expect.etag`，新增带 `expect.etag` 的权限面用例**必须同时**给 real 侧断言，否则真库侧会静默退化成状态码级。把「这一类洞」写在决策点旁，比补一条今天用不上的公共分支更能挡住复发。
+改为在 `tests/failmatrix/run-real.mjs:860`（同一函数注释里 `checkProblems` 那一条）**行数不变**地补一句显式警告：本函数不读 `expect.etag`，新增带 `expect.etag` 的权限面用例**必须同时**给 real 侧断言，否则真库侧会静默退化成状态码级。把「这一类洞」写在决策点旁，比补一条今天用不上的公共分支更能挡住复发。
 
 C4-12 的 `note` 也同步改写：不再写「两臂强度不对等属既有实现」，改写成「本条已对等 + 由 realCheck 判 + 变红条件（真库不再回 ETag / 回弱形式 `W/"n"` / 与 `data.revision` 不再逐字相等）」。
 
@@ -69,9 +69,9 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 
 ## §4 变异自证（新断言是活的）
 
-两次变异都只改 `cases.mjs` 里新加的那一条断言，跑完立即还原；判定「红」是读数行与 `DIFF` 行，因为 `--require-no-not-runnable` 按设计**只**把 `not_runnable` 变成 exit 1（`tests/failmatrix/run-real.mjs:1489`），`different` 不进退出码。
+两次变异都只改 `cases.mjs` 里新加的那一条断言，跑完立即还原；判定「红」是读数行与 `DIFF` 行，因为 `--require-no-not-runnable` 按设计**只**把 `not_runnable` 变成 exit 1（`tests/failmatrix/run-real.mjs:1624`），`different` 不进退出码。
 
-**⚠️ 交付价值说准一点：这条断言在 CI 里红不了——它是「人肉可见」，不是「门禁」。** 真库臂的退出码只由 `not_runnable` 决定：`tests/failmatrix/run-real.mjs:1487-1491` 只在 `--require-no-not-runnable` 且 `tally.notRunnable > 0` 时 `return 1`，正常走到底就是 `return 0`（`:1493`）；脚本也没有 `--require-no-different` 这类开关（`:972` 列的合法参数只有 `--json=` / `--allow-skip` / `--require-no-not-runnable`）。CI 侧 `.github/workflows/real-pg-integration.yml:1264-1270` 的两条判决是「退出码（77 显式升级成 1、其它非 0 原样透出）」与「`--json` 的条数自证」，并且明文写着「⛔ 不断言 `different === 0`」。所以下表变异 A/B 判出的那种红，在 CI 里只会落在合计行的 `different 1` 与一条 `DIFF C4-12：…`（`run-real.mjs:1447`）上，**流水线照旧绿，得有人去翻日志才看得见**。要变成门禁得另开 B 档改动（给 `run-real.mjs` 加 `--require-no-different`，或改成与基线 json 逐条比对）；本页**不声称**它已进 CI 门禁。
+**⚠️ 交付价值说准一点：这条断言在 CI 里红不了——它是「人肉可见」，不是「门禁」。** 真库臂的退出码只由 `not_runnable` 决定：`tests/failmatrix/run-real.mjs:1622-1626` 只在 `--require-no-not-runnable` 且 `tally.notRunnable > 0` 时 `return 1`，正常走到底就是 `return 0`（`:1628`）；脚本也没有 `--require-no-different` 这类开关（`:1050` 列的合法参数只有 `--json=` / `--allow-skip` / `--require-no-not-runnable`）。CI 侧 `.github/workflows/real-pg-integration.yml:1264-1270` 的两条判决是「退出码（77 显式升级成 1、其它非 0 原样透出）」与「`--json` 的条数自证」，并且明文写着「⛔ 不断言 `different === 0`」。所以下表变异 A/B 判出的那种红，在 CI 里只会落在合计行的 `different 1` 与一条 `DIFF C4-12：…`（`run-real.mjs:1582`）上，**流水线照旧绿，得有人去翻日志才看得见**。要变成门禁得另开 B 档改动（给 `run-real.mjs` 加 `--require-no-different`，或改成与基线 json 逐条比对）；本页**不声称**它已进 CI 门禁。
 
 | 变异 | 改法 | 读数 | 判红原文 |
 | --- | --- | --- | --- |
@@ -100,7 +100,7 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 ## §6 局限（不要外推）
 
 - **本机 PG 17.11 ≠ CI**：不是 CI 的 ubuntu-24.04 + PGDG `postgresql-17`；读数一致只说明同一脚本、同一棵树、同一大版本下相同。
-- **只证明 C4-12 这一条**：`realCheck` 只加在这一条；`verdictFor` 仍然不读 `exp.etag`，所以**将来**新增带 `expect.etag` 的权限面用例仍会静默退化——这一条靠 `run-real.mjs:782` 的注释警告挡，不是靠代码强制。要强制得改公共判定器（见 §2 的代价说明）。
+- **只证明 C4-12 这一条**：`realCheck` 只加在这一条；`verdictFor` 仍然不读 `exp.etag`，所以**将来**新增带 `expect.etag` 的权限面用例仍会静默退化——这一条靠 `run-real.mjs:860` 的注释警告挡，不是靠代码强制。要强制得改公共判定器（见 §2 的代价说明）。
 - **不覆盖 12 条里的另外 11 条**：C5/C6/E1/E2 的 etag 用例只在 stub 臂判定，本页不声称它们有真库判据。
 - **这条判据隐含「200 + 有正文」**：它除了取响应头 `ETag`，还要拿正文 `result.body.data.revision` 做逐字比对（`cases.mjs:776`），所以只适用于「200 且带正文」的用例；304／空正文一类即使也回 ETag 也不能照抄这条 `realCheck`——`revision` 取不到就会落进「`data.revision` 期望正整数」那一支判红。
 - **`--require-no-not-runnable` 的拒红分支仍未触发**：本轮 `not_runnable = 0`，那个 `return 1` 分支没执行过。
