@@ -60,7 +60,7 @@ function runLoopbackMatrix() {
   }
 }
 
-test('GY-I22 失败矩阵 loopback 臂：同一 249 条矩阵走真实 TCP 全绿，且每条都有真实读数', () => {
+test('GY-I22 失败矩阵 loopback 臂：同一套矩阵（≥230 条）走真实 TCP 全绿，且每条都有真实读数', () => {
   const payload = runLoopbackMatrix();
 
   assert.equal(payload.execution_mode, 'stub');
