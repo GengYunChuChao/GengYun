@@ -744,6 +744,19 @@ export const CASES = [
     seedE3Draft(ctx, { id: E3_RESTRICTION_02_ID, family: 'restrictions', content: E3_RESTRICTION_02, label: 'E3-02 的 restriction draft' });
     return `${API}/admin/restrictions/${E3_RESTRICTION_02_ID}/publish`;
   }, body: () => E3_PUBLISH_BODY, headers: wkey('i22-e3-02', '"1"'), expect: { status: 422, code: 'SOURCE_CONFLICT' }, note: '`services/api/src/admin/service.ts` 的 `publishDraft` 在发布前走引用门槛；`services/api/src/admin/reference-integrity.ts` 的 `sourceConflict()` 对未发布来源返回 `SOURCE_CONFLICT`；`services/api/src/contract.ts` 的 `ERROR_STATUS_MAP` 把该码归入 422 档（不是 409）。' },
+
+  // ------------------------------------------- C3 伪造角色 / 篡改凭据（R112）
+  // 会话凭据是**服务端存档的不透明串**（库里只有 sha256，`auth/tokens.ts` 的 `mintOpaqueToken`／`hashToken`），
+  // 客户端手上没有任何可改的身份、角色或 scope 字段；scope 也只从会话台账读（`auth/middleware.ts` 的
+  // `listAdminScopes`），**不看请求头**。下面四条把这两条各钉一遍，并与 C3-01…C3-13 的「真会话但缺 scope」
+  // 分开：那批证明的是授权判定，这批证明的是**凭据本身不可伪造**。
+  // 为什么追加在表尾（而不是接在 C3-27 后面）：本文件后面那些行被 `docs/verification/` 的取证页按行号锚着，
+  // 插在中间会把它们整体下推；与 R108 的 C5-11／C5-12 同一处置。伪造令牌的字面量也内联在这里（不留顶层
+  // 常量），否则常量声明会把第 51 行之后的每一行都下推。
+  { id: 'C3-37', family: 'C3', title: '伪造不透明令牌（形状合法、台账里没有这个串）打后台内容族', method: 'GET', path: `${API}/admin/sources`, headers: { authorization: `Bearer ${'i22forged' + 'A'.repeat(34)}` }, expect: { status: 401, code: 'SESSION_EXPIRED' }, note: '令牌形状照真令牌写成 44 位 base64url（能过 `readBearerToken` 的正则），但 sha256 在会话台账里查不到 ⇒ 鉴权层 401 SESSION_EXPIRED。⛔ 不得 403 SCOPE_DENIED（那等于「认了这个身份、只是权限不够」，是更严重的错法）、更不得 200' },
+  { id: 'C3-38', family: 'C3', title: '篡改会话令牌（合法后台令牌末尾多写一个字符）', actor: 'adminFull', method: 'GET', path: `${API}/admin/sources`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.adminFull.token}x` }), expect: { status: 401, code: 'SESSION_EXPIRED' }, note: '拿真令牌加尾字符 ⇒ 摘要整体不同 ⇒ 会话查不到 ⇒ 401。这条钉的是「凭据按**整串**比对」：任何前缀匹配、去掉尾字符再查、按长度容错都会让它 200（负控制 NC-26 就是把这处放宽，watch 本条必须变红）。actor 仍传 adminFull 以证明请求里没有别的凭据来源，最终生效的只有被篡改的头' },
+  { id: 'C3-39', family: 'C3', title: '只有 sources:read 的后台会话在请求头里自称全权限', actor: 'adminRead', method: 'GET', path: `${API}/admin/accounts`, headers: { 'x-admin-scopes': 'accounts:read,accounts:write,admin:write', 'x-scopes': 'admin:write', 'x-role': 'admin' }, expect: { status: 403, code: 'SCOPE_DENIED' }, note: 'scope 只从服务端台账取（`listAdminScopes`），请求头不参与鉴权：同一会话带着「自称全权限」的三只头，仍然 403。⛔ 若哪天有人把 scope 改成从请求头/查询串读，本条立刻变绿为 200（负控制 NC-27 就是这一处放宽）' },
+  { id: 'C3-40', family: 'C3', title: '正控制：同一组自称权限的请求头不改变 sources:read 的既有能力', actor: 'adminRead', method: 'GET', path: `${API}/admin/sources`, headers: { 'x-admin-scopes': 'accounts:read,accounts:write,admin:write', 'x-scopes': 'admin:write', 'x-role': 'admin' }, expect: { status: 200 }, note: '与 C3-39 同一组头、同一会话，只是换成它本来就有权读的端点：必须 200。这条防的是「把 C3-39 的 403 误判成『这组头让请求整体被拒』」——即 403 的来源必须是 scope 判定，不是头本身' },
 ];
 
 /**

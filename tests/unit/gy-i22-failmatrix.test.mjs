@@ -46,11 +46,11 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  * E3 后台内容写的版本/引用门槛（`409 REVISION_CONFLICT` / `422 SOURCE_CONFLICT`，同时新增批次 B7）。
  * 只增不减。
  */
-const MIN_CASES = 269;
+const MIN_CASES = 273;
 /** 每族条数（本片实跑快照：C/E/F 族走 HTTP，D 族走受信 seam）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 36, C4: 36, C5: 12, C6: 12, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39, F1: 6 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 40, C4: 36, C5: 12, C6: 12, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, E3: 2, C10: 23, C11: 39, F1: 6 };
 /** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面 / B6 下架后引用跳转 / B7 后台内容写面的版本与引用门槛）。 */
-const BATCH_COUNTS = { B1: 133, B2: 40, B3: 17, B4: 9, B5: 62, B6: 6, B7: 2 };
+const BATCH_COUNTS = { B1: 137, B2: 40, B3: 17, B4: 9, B5: 62, B6: 6, B7: 2 };
 
 function runMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-unit-'));
@@ -154,8 +154,8 @@ test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、exp
 });
 
 test('GY-I22 负控制清单与当前产品代码同步（每条 find 恰好命中一次）', () => {
-  // 基线只准上调：R34 追加 3 条单元靶子（NC-22/23/24），23 → 26；R72/W10 追加 NC-25（隐私说明域读面），26 → 27。
-  assert.ok(MUTATIONS.length >= 27, `负控制只剩 ${MUTATIONS.length} 条（基线 27 条）`);
+  // 基线只准上调：R34 追加 3 条单元靶子（NC-22/23/24），23 → 26；R72/W10 追加 NC-25（隐私说明域读面），26 → 27；R112 追加 NC-26/27（C3 伪造角色与篡改 claim），27 → 29。
+  assert.ok(MUTATIONS.length >= 29, `负控制只剩 ${MUTATIONS.length} 条（基线 29 条）`);
   const seen = new Set();
   for (const mutation of MUTATIONS) {
     assert.ok(!seen.has(mutation.id), `负控制 id 重复：${mutation.id}`);

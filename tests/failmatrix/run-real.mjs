@@ -2,7 +2,7 @@
 /**
  * GY-I22（#22）失败回归矩阵 · **真实 PostgreSQL 17 运行臂**。
  *
- * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，R111 起另有 E3 / F1，共 203 条）跑在
+ * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，R111 起另有 E3 / F1，共 207 条）跑在
  * **一次性真实 PostgreSQL 17 集群**上，把矩阵 world 的内存 store 换成真 PG store，
  * 逐条记录期望与 `真 PG 实际` 的差异：期望缺省取 `cases.mjs` 的 `expect`，写了 `realExpect`
  * 的用例（R83 起 C3-19/20/21、C4-15/18）改用 real 侧那份，断言同理走 `realCheck ?? check`。
@@ -1208,7 +1208,7 @@ async function main() {
       console.log(`[pg] receipt_holder=${receiptHolder.userId} deletion=${receiptHolder.deletionId}（回执已换发一次）`);
     } catch (error) {
       // 播不上就把三个槽位一起换成会响的哨兵（**全或无**：绝不半套值混进读数）⇒ 这 5 条如实 not-runnable，
-      // ⛔ 不让整臂抛死（否则连一份 203 条的诊断报告都拿不到）。
+      // ⛔ 不让整臂抛死（否则连一份 207 条的诊断报告都拿不到）。
       const reason = error instanceof Error ? error.message : String(error);
       const dead = missingSeed(`注销受理（C4 回执族专用账号）—— ${reason}`);
       receiptHolder = { deletionId: dead, receipt: dead, staleReceipt: dead };
