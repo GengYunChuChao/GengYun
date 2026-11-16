@@ -11,7 +11,7 @@
  * 臂 2 · 真实 PostgreSQL 17 运行臂：这组测试**不碰真库**（不需要 GY_PG_BIN），只锁住 `run-real.mjs` 的两条**闸门契约**：
  *   1) 没有 `GY_PG_BIN` 时必须退出 **77**（POSIX「skipped」＝未取得，⛔ 不是通过），
  *      并显式打印「未取得，不是通过」；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0；
- *   2) 权限面覆盖范围与 stub 用例表同源（C1–C4 / C10 / C11，共 185 条），不另写一套用例。
+ *   2) 真库臂覆盖范围与 stub 用例表同源（C1–C4 / C10 / C11 + E3 / F1，共 203 条），不另写一套用例。
  *   （真 PG 臂的价值是逐条记录 stub 期望 vs 真 PG 实际的差异，不要求 185 条在真库上全绿；真 PG 读数由 run-real.mjs 实跑取得。）
  */
 import assert from 'node:assert/strict';
@@ -123,8 +123,8 @@ test('GY-I22 失败矩阵 loopback 臂：同一 249 条矩阵走真实 TCP 全�
 // ---------------------------------------------------------------------------
 const RUN_REAL = path.join(ROOT, 'tests', 'failmatrix', 'run-real.mjs');
 
-/** 真 PG 臂覆盖的权限面族（与 README 的「至少 C1-C4/C10/C11」一致）。 */
-const PERMISSION_FAMILIES = ['C1', 'C2', 'C3', 'C4', 'C10', 'C11'];
+/** 真 PG 臂覆盖的族（R111 起在权限面六族之外加了 E3 后台内容写面与 F1 引用跳转）。 */
+const PERMISSION_FAMILIES = ['C1', 'C2', 'C3', 'C4', 'C10', 'C11', 'E3', 'F1'];
 
 /** 抹掉本机可能泄漏的 PG 环境变量，确保测的是「缺 GY_PG_BIN」这条真实路径。 */
 function runReal(args = []) {
@@ -157,12 +157,12 @@ test('GY-I22 真 PG 臂：只有显式 --allow-skip 才把「未取得」降级�
   assert.match(stdout, /EXITCODE=0/);
 });
 
-test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C4/C10/C11，185 条，不另写一套用例）', () => {
+test('GY-I22 真 PG 臂：覆盖范围与 stub 用例表同源（C1–C4/C10/C11 + E3/F1，203 条，不另写一套用例）', () => {
   for (const family of PERMISSION_FAMILIES) {
-    assert.ok(FAMILIES[family] !== undefined, `权限面族 ${family} 不在 stub 用例表 FAMILIES 里`);
+    assert.ok(FAMILIES[family] !== undefined, `真库臂族 ${family} 不在 stub 用例表 FAMILIES 里`);
   }
   const permissionCases = CASES.filter((one) => PERMISSION_FAMILIES.includes(one.family));
-  assert.equal(permissionCases.length, 195, '权限面 C1–C4/C10/C11 必须是 195 条（与 stub 用例表同源）');
+  assert.equal(permissionCases.length, 203, '真库臂族（C1–C4/C10/C11 + E3/F1）必须是 203 条（与 stub 用例表同源）');
 });
 
 test('GY-I22 真 PG 臂：--require-no-not-runnable 被接受，且 not_runnable > 0 会让退出码非 0（CI 用它）', () => {
