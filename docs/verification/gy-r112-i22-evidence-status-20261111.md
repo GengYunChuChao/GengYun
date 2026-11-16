@@ -18,8 +18,8 @@
 | 真库权限面 | `node tests/failmatrix/run-real.mjs`（需 `GY_PG_BIN`） | 207 条：same 207 / different 0 / not-runnable 0 |
 | 矩阵与文档是否自洽 | `node tools/i22-failmatrix-evidence-table.mjs` | 「自洽：矩阵 273 条全 PASS、负控制 29 条全 PASS，与文档声明一致」 |
 
-族分布（矩阵，合计 273）：C1 37、C2 24、C3 40、C4 36、C5 12、C6 12、C7 16、E1 3、E2 3、C10 23、C11 39、F1 6、E3 2，D 族（受信 seam）D1 11、D2 4、D3 2、D4 3。
-真库臂只跑权限面八族（C1–C4、C10、C11、E3、F1）＝207 条；其余族依赖对象存储／真实供应商／异步作业，在 real 模式下 fail-closed，属例如实记 `not-runnable`，不进真库臂。
+族分布不在这里重抄（逐族条数与逐条判定见 `docs/verification/gy-i22-failmatrix-current-20261111.md` 的生成区）：矩阵合计 273 条，其中 HTTP 表 253 条、受信 seam 20 条；
+真库臂只跑权限面八族（C1–C4、C10、C11、E3、F1），合计 207 条；其余族依赖对象存储／真实供应商／异步作业，在 real 模式下 fail-closed，属例如实记 `not-runnable`，不进真库臂。
 
 **追记（2026-11-16，基线 `359a04b4`，`#1222` 已合入 main 后复跑）**：矩阵 273 = PASS 273 / FAIL 0（exit 0）、负控制 29 = PASS 29 / FAIL 0（exit 0）、真库臂 **207 条 = same 207 / different 0 / not-runnable 0**（18095 ms，`sameWithCheck 33` / `sameWithShape 30`）；证据表生成器对两份机读结果自洽通过（矩阵 273 行、负控制 29 行）。新增的 `C3-37`…`C3-40` 在真 PG 下与 stub 逐条一致：伪造不透明令牌与「真令牌加尾字符」都是 `401 SESSION_EXPIRED`，自称权限的请求头不改变 `sources:read` 会话对 `/admin/accounts` 的 `403 SCOPE_DENIED`、对 `/admin/sources` 仍是 `200`。
 
