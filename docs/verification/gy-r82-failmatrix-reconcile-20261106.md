@@ -59,13 +59,13 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 2. 真库臂自建临时簇、自跑迁移（日志首行 `[pg] server_version=17.11`、`[pg] migrations=53（一次性空库，全部落地）`）；端口不可由外部指定，`tests/failmatrix/run-real.mjs:93-102` 的 `freePort()` 走 `listen(0)` 取 OS 临时端口。
 3. 命令：`$env:GY_PG_BIN='E:\GengYunCommander\.pg17\pgsql\bin'; $env:GY_I22_PG_ROOT='E:\GengYunCommander\.pg17\tmp\realpg-r82'; node tests/failmatrix/run-real.mjs --json=E:\GengYunCommander\.pg17\tmp\r82-real-arm.json`，退出码 0。
 4. 两条探针（不入库，落在 `.pg17\tmp\`）把「会话在受理后到底还能不能用」直接测出来：探针 1 用受理前那张会话，探针 2 另铸一张 `auth_epoch` 已递增后的新会话。
-5. 判定器口径：`tests/failmatrix/run-real.mjs:710-741` 比 status/code 并要求 `meta.execution_mode === 'real'`，`c.check` 抛错进 `checkProblems`；`:758-772` 的 `domainUnavailable` **只认** 503 `PROVIDER_UNAVAILABLE` 或 409 `OBJECT_UNAVAILABLE` + `feature_flag`，401 不在其中——这决定了本页两条都只能落 `different`，不会被顺手改判成 `not runnable`。
+5. 判定器口径：`tests/failmatrix/run-real.mjs:788-819` 比 status/code 并要求 `meta.execution_mode === 'real'`，`c.check` 抛错进 `checkProblems`；`:836-850` 的 `domainUnavailable` **只认** 503 `PROVIDER_UNAVAILABLE` 或 409 `OBJECT_UNAVAILABLE` + `feature_flag`，401 不在其中——这决定了本页两条都只能落 `different`，不会被顺手改判成 `not runnable`。
 
 ## §4 裁定 C4-15
 
 **能由仓内补齐**：是，且只涉及夹具与断言两侧。
 
-- 真库臂根本没有播种过「一张已经受理过的注销单」：`tests/failmatrix/run-real.mjs:994-996` 把 `deleter.deletionId`、`.receipt`、`.staleReceipt` 三个字段都设成 `unavailableSeed(...)` 哨兵；对照 stub 臂 `tests/failmatrix/run.mjs:285-298`，那里是**真发一次 202** 再把读数写回夹具。
+- 真库臂根本没有播种过「一张已经受理过的注销单」：`tests/failmatrix/run-real.mjs:1076-1078` 把 `deleter.deletionId`、`.receipt`、`.staleReceipt` 三个字段都设成 `unavailableSeed(...)` 哨兵；对照 stub 臂 `tests/failmatrix/run.mjs:285-298`，那里是**真发一次 202** 再把读数写回夹具。
 - 哨兵是个 `Proxy`，`tests/failmatrix/run-real.mjs:217-226` 的 `get` 陷阱在取值时才抛。而 `tests/failmatrix/cases.mjs:410-414` 的 `check` 里，判等那一行是 `tests/failmatrix/cases.mjs:412`：`result.body?.data?.deletion?.id !== prior.deletionId`——右侧只是一个普通属性取值，返回代理本身不抛；`'f9b4271e-…' !== proxy` 恒为真。所以那句话的正确读法是「这一次 202 的 id 与一个哨兵不相等」，不是「重放换单了」。
 - 真库臂这一次 202 是**首次受理**：探针 1 首次 POST 就返回 202 并给出新 id，与真库臂红出来的 `f9b4271e-…` 是同一种读数。至于「重放」分支 `services/api/src/routes/account-deletion.ts:281-311`，在**串行**场景（首条受理事务已提交之后）对任何用户会话都不可达——理由是三段串联的：`:255` 的 `preHandler` 先做鉴权（鉴权先于幂等台账）；受理事务按契约撤掉该账号全部会话，`services/api/db/migrations/0016_account_deletion_persistence.sql:130-135`；账号转 `deletion_pending` 后一律拒绝，`services/api/src/auth/middleware.ts:88`。
 - 探针实测坐实这条不可达：受理后用**同一张**会话重放同键 → 401 `SESSION_EXPIRED`（探针 1）；改用 `auth_epoch` 递增后**新铸**的会话 → 403 `ACCOUNT_INACTIVE`（探针 2）。两条路径都拿不到第二个 202，自然也谈不上「同一单 + 换发回执」。
@@ -86,7 +86,7 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 ## §6 与旧页的关系（旧读数，不得回填）
 
 - 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:35` 把 C4-15 归为 `domain-unavailable`「注销域整域失闭（受理面本身 503，202 无从产生）」。**本轮推翻**：真库臂 C4-15 实测 202，探针也 202，装配层 `services/api/src/app.ts:2339` 的 `available` 在 real + 真库下为真。
-- 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:36` 说 C4-12 的夹具字段「唯一生产者是 C4-15 的 202」。方向对，但前提已不成立：C4-15 现在能产出 202，缺的是**播种回写**（`tests/failmatrix/run-real.mjs:994-996`），所以 C4-12/13/14/16/17 仍落 `not runnable`。
+- 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:36` 说 C4-12 的夹具字段「唯一生产者是 C4-15 的 202」。方向对，但前提已不成立：C4-15 现在能产出 202，缺的是**播种回写**（`tests/failmatrix/run-real.mjs:1076-1078`），所以 C4-12/13/14/16/17 仍落 `not runnable`。
 - 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:8` 与同页 `:17-18` 记的是 180 = same 161 / different 3 / not runnable 16（旧读数）。本页是 180 = same 162 / different 5 / not runnable 13；差值来自注销域这组用例的状态迁移：旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:33` 的 C1-30、`:34` 的 C4-11 本轮已不在 `not runnable` 名单里，而 C4-15、C4-18 从「不可跑」变成「跑起来了但不一致」。三组数字不可互相换算。
 - 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:71` 与同页 `:78` 对 C3-19/20/21 的「不改期望、不记缺陷、按模式的合法分歧」结论本轮继续成立（本轮它们仍是 503/200 的差异）。
 
@@ -94,7 +94,7 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 
 | # | 改哪里 | 改什么 | 谁来做 |
 | --- | --- | --- | --- |
-| 1 | `tests/failmatrix/run-real.mjs:994-996` | 哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`） | 夹具片 |
+| 1 | `tests/failmatrix/run-real.mjs:1076-1078` | 哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`） | 夹具片 |
 | 2 | C4-15 那条用例（`tests/failmatrix/cases.mjs`）＋ 判定器（`tests/failmatrix/run-real.mjs`） | 加 real 侧期望（受理后重放 401），判定器先读 real 侧 | 夹具片 |
 | 3 | `tests/failmatrix/cases.mjs:440` | 期望 200 → 401，标题去掉「原会话仍可用」 | 夹具片 + 契约确认 |
 | 4 | stub 世界的注销受理 | 补同事务撤销，让两臂同码 | 单开产品问题（改内存实现） |
@@ -120,10 +120,10 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 | `freePort()`（真库臂取空闲端口） | `tests/failmatrix/run-real.mjs:93-102` | `tests/failmatrix/run-real.mjs:141-150` |
 | `createAccount()`（铸账号与会话） | `tests/failmatrix/run-real.mjs:165-178` | `tests/failmatrix/run-real.mjs:213-226` |
 | `unavailableSeed()`（哨兵工厂） | `tests/failmatrix/run-real.mjs:217-226` | `tests/failmatrix/run-real.mjs:265-274` |
-| 注销夹具哨兵（`deleter.deletionId` / `.receipt` / `.staleReceipt`） | `tests/failmatrix/run-real.mjs:994-996` | `tests/failmatrix/run-real.mjs:1103-1105` |
-| 真库臂判定器 `verdictFor()` 全体 | `tests/failmatrix/run-real.mjs:710-741` | `tests/failmatrix/run-real.mjs:783-814` |
-| 判定器取期望那一行（`const exp = c.expect ?? {};`） | `tests/failmatrix/run-real.mjs:711` | `tests/failmatrix/run-real.mjs:784` |
-| `domainUnavailable()`（整域失闭判据） | `tests/failmatrix/run-real.mjs:758-772` | `tests/failmatrix/run-real.mjs:835-849` |
+| 注销夹具哨兵（`deleter.deletionId` / `.receipt` / `.staleReceipt`） | `tests/failmatrix/run-real.mjs:1076-1078` | `tests/failmatrix/run-real.mjs:1185-1187` |
+| 真库臂判定器 `verdictFor()` 全体 | `tests/failmatrix/run-real.mjs:788-819` | `tests/failmatrix/run-real.mjs:861-892` |
+| 判定器取期望那一行（`const exp = c.expect ?? {};`） | `tests/failmatrix/run-real.mjs:789` | `tests/failmatrix/run-real.mjs:862` |
+| `domainUnavailable()`（整域失闭判据） | `tests/failmatrix/run-real.mjs:836-850` | `tests/failmatrix/run-real.mjs:913-927` |
 
 上表七行逐条按**内容比对**核过，不是按差值推算：其中六行的首末行在两侧逐字相同，哨兵那行例外——`unavailableSeed()` 的参数**字面量**在 `#1028` 里被改写（基线是「注销受理（real 模式整域 fail-closed）」，`main` 上改成「deleter 不真受理注销（受理会撤销它的全部会话）」），只能按「同一条赋值语句、字面量随该次合入改写」对位；哨兵那行在 `main` 上从第 1096 行起是 7 行注释、赋值语句落在第 1103–1105 行，故区间取赋值行本身。
 
@@ -135,5 +135,5 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 
 ### 承接 PR `#1033` 合入之后（2026-11-07）
 
-`tests/failmatrix/run-real.mjs` 又被 `#1033` 加长 17 行（1493 → 1510），上表右列是 `main = 1dec1bbb` 的快照：哨兵那三条赋值现在落在第 1111–1113 行，判定器取期望那一行现在是第 790 行（`const exp = (c.realExpect ?? c.expect) ?? {};`）。其余五组在上表左侧同样各偏 1～8 行（142／214／266／789／843），换算时同样以行内容为准。同理，本页 §7 引的 `tests/failmatrix/run-real.mjs:994-996` 在当前树上已落到真库臂启动段的三行（`dataDir`、`logFile` 与 `keep`），不再指向哨兵——那处属 §1–§8 的基线读数，按 §11 不回填，换算时请以行内容为准。
+`tests/failmatrix/run-real.mjs` 又被 `#1033` 加长 17 行（1493 → 1510），上表右列是 `main = 1dec1bbb` 的快照：哨兵那三条赋值现在落在第 1111–1113 行，判定器取期望那一行现在是第 790 行（`const exp = (c.realExpect ?? c.expect) ?? {};`）。其余五组在上表左侧同样各偏 1～8 行（142／214／266／789／843），换算时同样以行内容为准。同理，本页 §7 引的 `tests/failmatrix/run-real.mjs:1076-1078` 在当前树上已落到真库臂启动段的三行（`dataDir`、`logFile` 与 `keep`），不再指向哨兵——那处属 §1–§8 的基线读数，按 §11 不回填，换算时请以行内容为准。
 

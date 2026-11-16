@@ -39,7 +39,13 @@ import { createMemoryHistoryStore } from '../../services/api/src/history/store.t
 import { createAccountProvider } from '../privacy/_fixtures.mjs';
 
 const API = '/api/v1';
-const START = Date.UTC(2026, 10, 7, 0, 0, 0);
+// 冻结时钟只为让会话「未过期」且可复现，**不能**写成固定的过去日期：
+// `sessions.created_at` 取库内真实时钟（DEFAULT now()），而 `expires_at` 用这里的
+// 冻结时钟 + TTL（USER_SESSION_TTL_SECONDS=7d）推出；一旦真实时间越过「START + 7 天」，
+// 就会 `expires_at < created_at`，违反 `sessions_expires_after_creation`（issue #1225：
+// 2026-11-14 起 unit-tests 因此必红）。故把冻结时钟锚在「真实 now 往前一分钟」，
+// 既让过期窗口保持在未来，又不依赖具体日期。
+const START = Date.now() - 60_000;
 const MEDIA_ID = '11111111-1111-4111-8111-111111111111';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

@@ -782,10 +782,17 @@ function assertStrongEtagMatchesRevision(result) {
 // ---------------------------------------------------------------------------
 // E3 夹具：两条用例都要求「目标真实存在且 head 恰为 revision 1」。
 //
-// runner 只在发请求前同步解析 `path` / `body` / `headers`，没有异步 setup 钩子；
-// 因此这里用 `ctx.world.app.adminContentService.store` 的**内存**同步写面播两条 draft
-// （`createEntity` + `appendRevision`，与 `POST /admin/sources` 落库后的形状一致）。
-// 只在 stub 内存 store 可用；E3 不进入真库臂，遇到真库 store 直接抛错而不是伪造。
+// runner 只在发请求前同步解析 `path` / `body` / `headers`，没有异步 setup 钩子 ⇒ 播种只有两条路：
+//
+// 1. **stub 臂**（本文件的默认路）：用 `ctx.world.app.adminContentService.store` 的**内存**同步写面
+//    播（`createEntity` + `appendRevision`，与 `POST /admin/sources` 落库后的形状一致）。
+// 2. **真库臂**（R111 起 E3 进 `run-real.mjs` 的 `PERMISSION_FAMILIES`）：真库 store 是异步的
+//    （`persistent === true`，`createEntity` / `appendRevision` 返回 Promise），同步 `path` 里没法 await
+//    ⇒ 由 `run-real.mjs` 在**播种阶段**用同一对原语 await 播好，并在这里留下 `ctx.e3Drafts`（已播 id 集合）。
+//    本函数这时只做存在性校验：缺了就抛 ⇒ 该条如实 `not-runnable`，⛔ 不伪造修订。
+//
+// 两条路都必须落在同一个 `E3_*_ID` 上，否则「If-Match 与当前修订不符」打不到同一条
+// `admin_content_entities` 行，409 就退化成「实体不存在」的另一种拒绝。
 // ---------------------------------------------------------------------------
 const E3_VALID_FROM = '2026-10-25T04:00:00.000Z';
 const E3_SOURCE_01_ID = '00000000-0000-4000-8e30-000000000001';
@@ -819,10 +826,37 @@ const E3_RESTRICTION_02 = {
 };
 const E3_PUBLISH_BODY = { evidence_ref: 'synthetic-e3-02', reason: '合成发布尝试（矩阵）' };
 
+/**
+ * 真库臂（`run-real.mjs`）的 E3 播种计划：与 `seedE3Draft` 同一批 (id, family, content)。
+ *
+ * 为什么要把计划挪到用例表这一侧：两条 E3 用例的期望（409 `REVISION_CONFLICT` / 422 `SOURCE_CONFLICT`）
+ * 只有打在**固定的** id 上才有判定面；如果真库臂自己另起一套 id，用例的 `path` 会指到不存在的实体，
+ * 「If-Match 与当前修订不符」就退化成「实体不存在」，读数看着是拒绝、实际一条判据都没验到。
+ * 真库 store 是异步的（`persistent === true`），同步 `path` 里没法 await ⇒ 由臂在播种阶段用同一对原语
+ * （`createEntity` + `appendRevision`）await 播好，再把 id 集放进 `ctx.e3Drafts`。
+ */
+export const E3_SEED_PLAN = Object.freeze([
+  { id: E3_SOURCE_01_ID, family: 'sources', content: E3_SOURCE_01, label: 'E3-01 的 draft 来源', createdAt: E3_VALID_FROM },
+  { id: E3_SOURCE_02_ID, family: 'sources', content: E3_SOURCE_02, label: 'E3-02 的 draft 来源', createdAt: E3_VALID_FROM },
+  {
+    id: E3_RESTRICTION_02_ID,
+    family: 'restrictions',
+    content: E3_RESTRICTION_02,
+    label: 'E3-02 的 restriction draft',
+    createdAt: E3_VALID_FROM,
+  },
+]);
+
 function seedE3Draft(ctx, { id, family, content, label }) {
+  // 真库臂：草稿已由 `run-real.mjs` 在播种阶段 await 播好（真库 store 是异步的，同步 path 里没法 await）。
+  // 这里只校验「同名 id 真的播上了」，缺了就抛 ⇒ 用例如实 not-runnable。
+  if (ctx.e3Drafts instanceof Set) {
+    if (ctx.e3Drafts.has(id)) return;
+    throw new Error(`E3 夹具缺少真库预播草稿（${label}）：ctx.e3Drafts 里没有 ${id}`);
+  }
   const store = ctx.world?.app?.adminContentService?.store;
   if (store === undefined || store.persistent !== false) {
-    throw new Error(`E3 夹具需要 stub 内存 store（${label}）`);
+    throw new Error(`E3 夹具需要 stub 内存 store 或真库预播集合（${label}）`);
   }
   if (store.getEntity(id) !== undefined) return;
   const stewardId = ctx.actors?.adminFull?.userId;
