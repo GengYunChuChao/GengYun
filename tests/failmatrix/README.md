@@ -3,7 +3,7 @@
 一套**能重复跑**的权限/安全失败回归：表驱动、每条用例给真实读数、每条关键守卫配**负控制**
 （故意放宽守卫 → 对应用例必须真红 → 原字节恢复 → sha256 前后一致 → 复跑转绿）。
 
-**本片不宣称 #22 完成。** 这里交付骨架 + 269 条用例 + 27 条负控制，覆盖「身份与权限面
+**本片不宣称 #22 完成。** 这里交付骨架 + 273 条用例 + 29 条负控制，覆盖「身份与权限面
 （游客/越权/后台/会话与注销）」「媒体归属与访问凭据」「重复请求」「无效输入」「审核回调与 AI 失败」
 「下架缓存」「版本回写」「提示注入」「下架后引用跳转」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
 断网重试、账号停用、注销到期清理** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
@@ -15,12 +15,12 @@
 ## 一条命令
 
 ```bash
-node tests/failmatrix/run.mjs                  # 全跑（HTTP 249 + 受信 seam 20 = 269 条）
+node tests/failmatrix/run.mjs                  # 全跑（HTTP 253 + 受信 seam 20 = 273 条）
 node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D/E/F 族同样适用）
 node tests/failmatrix/run.mjs --only=D1-01,C6-10 --json=out.json
 node tests/failmatrix/run.mjs --list           # 只列用例
 
-node tools/i22-failmatrix-negative-control.mjs               # 27 条负控制
+node tools/i22-failmatrix-negative-control.mjs               # 29 条负控制
 node tools/i22-failmatrix-negative-control.mjs --only=NC-09  # 只跑一条
 
 # 真实 PostgreSQL 17 臂（把权限面 C1–C4/C10/C11 与 R111 起的 E3／F1 共八族跑在一次性真 PG 集群上，逐条记录 stub vs 真 PG 差异）
@@ -34,7 +34,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 ```
 
 进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（stub 臂，`npm run test:unit` 会带上它）。
-它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 269，另加一条**静态同步检查**：负控制清单里
+它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 273，另加一条**静态同步检查**：负控制清单里
 每处 `find` 必须在当前产品代码里恰好出现一次（守卫被重构时这条先红，而不是等你发现矩阵不再变红）。
 
 真 PG 臂的闸门入口：`tests/unit/gy-i22-failmatrix-real.test.mjs`（只锁「缺 `GY_PG_BIN` ⇒ 退出 77、
@@ -72,7 +72,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
 | `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11（R111 起另有 E3／F1 两族）的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过）。**R72-W12 起已接进 CI**：`.github/workflows/real-pg-integration.yml` 末尾的 job `failmatrix-real-17.11`（键 `failmatrix-real-17-11`）每次 PR 真跑它，`GY_PG_BIN` 由 PGDG 装出的 `postgresql-17` 提供（`/usr/lib/postgresql/17/bin`），`--json` 产物按 artifact 归档；判决口径见下节末「进 CI 后的判决口径」 |
-| `mutations.mjs` | 27 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
+| `mutations.mjs` | 29 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
 | `tools/i22-failmatrix-negative-control.mjs` | 负控制执行器：sha256 → 改 → 跑（必须全红）→ 原字节恢复 → sha256 复核 → 复跑（必须全绿） |
 | `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败；归档页保护基于真实路径比较 + 文件身份（`dev` + `ino`，硬链接也拦得住）+ 仓库内包含性校验，`--write` 无隐式默认页（必须显式 `--page=`，且目标必须在仓库内；点名归档页要 `--i-know-this-rewrites-archive`，带旗标也仍受条数一致性约束——页内条数必须等于 `EXPECTED`，所以当前 168 / 23 的归档页必被拒），对账不通过一律不写盘 |
 
@@ -198,7 +198,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 - **真实 PG 下的同一矩阵（R34 追加：已接真 PG 臂，差异见下节）**：`run-real.mjs` 已把权限面
   C1–C4/C10/C11（R111 起另有 E3／F1）跑在一次性真 PG 17 集群上，逐条记录 stub vs 真 PG 差异。**未取得的部分**：media /
   社区投稿 / 异步 AI 作业（识别 / OCR / 转写 / 作业）在 real 模式下 fail-closed（对象存储、真实供应商、
-  真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 R29 时点 168 条里的 35 条；现表 203 条，见下节 R111 读数），⛔ 不拿
+  真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 R29 时点 168 条里的 35 条；现表 207 条，见下节 R111 读数），⛔ 不拿
   「不存在」当「越权 404」的假同形。
 
   订正（2026-10-31，基线 `7ada259e`）：上面这条 R34 追加只写了「已接真 PG 臂」，容易被读成「CI 上已经在跑」。
@@ -208,7 +208,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 ## 真实 PG 臂（`run-real.mjs`）· stub vs 真 PG 差异结论
 
 本臂把矩阵 world 的内存 store 换成真 PG store（`execution_mode=real` + 真 `pool`），在**一次性
-PostgreSQL 17.11 集群**上实跑权限面 **203** 条（C1 37 + C2 24 + C3 36 + C4 36 + C10 23 + C11 39 + E3 2 + F1 6）；R29 时点读数是 168 条（C3 27 + C4 18），差额 12 条 = C3 的 9 条作业过滤腿（`C3-28`…`C3-36`）+ C4 的 3 条「注销后旧会话读 个人资料／目录／资料库」（`C4-19`/`C4-20`/`C4-21`）。180 → 203 的 23 条是 R111 的增量：C4 族 21 → 36（15 条）+ E3 2 条 + F1 6 条。
+PostgreSQL 17.11 集群**上实跑权限面 **207** 条（C1 37 + C2 24 + C3 40 + C4 36 + C10 23 + C11 39 + E3 2 + F1 6）；R29 时点读数是 168 条（C3 27 + C4 18），差额 12 条 = C3 的 9 条作业过滤腿（`C3-28`…`C3-36`）+ C4 的 3 条「注销后旧会话读 个人资料／目录／资料库」（`C4-19`/`C4-20`/`C4-21`）。180 → 203 的 23 条是 R111 的增量：C4 族 21 → 36（15 条）+ E3 2 条 + F1 6 条；203 → 207 的 4 条是 R112 的增量：C3 族 36 → 40（`C3-37`…`C3-40` 伪造角色／篡改 claim）。
 逐条比 `status`+`code`（stub 期望 vs 真 PG 实际）并校验 `meta.execution_mode === 'real'`。
 
 实测读数（本机 PG 17.11，基线 `d4a47206`，**当时口径 168 条**）：**168 条 = same 114 / different 19 / not-runnable 35**；这组读数**没有**随现表 180 条重跑（真库臂要 `GY_PG_BIN`，沙箱内跑不了），别把 114/19/35 当成 180 条的分母。
@@ -257,9 +257,16 @@ not-runnable 8**，族分布 `C1` 36/1/0、`C2` 18/3/3、`C3` 31/5/0、`C4` 14/2
   `Array.isArray(entity.revisions) ? length : 1` 数出来是 **0** 条，三份草稿会被判「head 修订为 0」而一条也没播成
   （首跑读数 `E3 same 0 / not-runnable 2`）。首条修订的编号只认 `appendRevision` 的返回值（`.revision`）。
 
+**R112 读数（2026-11-16，基线 `359a04b4`，本机 PG 17.11）**：**207 条 = same 207 / different 0 / not-runnable 0**，
+族分布 `C1` 37/0/0、`C2` 24/0/0、**`C3` 40**/0/0、`C4` 36/0/0、`C10` 23/0/0、`C11` 39/0/0、`E3` 2/0/0、`F1` 6/0/0
+（耗时 18.1 s；判据强度 `sameWithCheck 33` / `sameWithShape 30`）。增量 4 条 = `C3-37`…`C3-40`（伪造角色／篡改 claim）：
+伪造不透明令牌、以及「真令牌加尾字符」在真 PG 下同样 `401 SESSION_EXPIRED`（⛔ 不是 403、更不是 200）；
+自称权限的请求头（`x-admin-scopes` / `x-scopes` / `x-role`）既不改变 `sources:read` 会话对 `/admin/accounts`
+的 `403 SCOPE_DENIED`，也不改变它对 `/admin/sources` 的 `200`（`C3-40` 是这条的正控制）。
+
 **同源保障**：本臂的用例表**直接复用 `cases.mjs`**（不另写一套），只换 world（真 PG store）+ 判定口径
 （`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
-「权限面覆盖范围 = 203 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`，`C3-28`…`C3-36`）**R73 起真跑**：
+「权限面覆盖范围 = 207 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`，`C3-28`…`C3-36`）**R73 起真跑**：
 真库侧的作业读面是 `createPostgresAdminJobPort`（`services/api/src/app.ts:1380-1382`：real + 有池时装配），
 读四张域内作业表（`public.ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns`）⇒ **裸 SQL 就能播种**，
 原来那句「real + 真库没有作业读权威可播种」**已不成立**，分腿判定也随之从「`app === 'jobs'` 一刀切跳过」改成
@@ -289,7 +296,7 @@ not-runnable 8**，族分布 `C1` 36/1/0、`C2` 18/3/3、`C3` 31/5/0、`C4` 14/2
    「三档计数之和 `same + different + not_runnable` === 总条数」，并顺带核 `rows.length === 总条数`、
    `execution_mode === 'real'` —— 「打完成绩也退 0」「产物被清空」这两类回归都在这里红。
    ⛔ **不断言 `different === 0`**：差异正是这条臂的产品，全 `same` 反而应该先怀疑用例没换代；
-   ⛔ **不断言总条数恰好 203**：`203` 是**今天**用例表的口径，硬钉等于把「加一条用例」变成假红。
+   ⛔ **不断言总条数恰好 207**：`207` 是**今天**用例表的口径，硬钉等于把「加一条用例」变成假红。
    （同源口径本身由 `tests/unit/gy-i22-failmatrix-real.test.mjs` 钉住，不放这里；CI 只判「三档之和 === 总条数」。）
 3. **`not_runnable` 回归**（PR `#1049` 起）：CI 调用带 `--require-no-not-runnable`。**仅当带这个旗标时**
    脚本才在 `not_runnable > 0` 时向 **stderr** 打印 `FAIL：--require-no-not-runnable 下有 N 条 not_runnable（…）`
@@ -299,8 +306,8 @@ not-runnable 8**，族分布 `C1` 36/1/0、`C2` 18/3/3、`C3` 31/5/0、`C4` 14/2
    `#22` 那次被重开的直接成因就是它（13 条静默退回而 CI 仍绿）。
 
 **读数口径要对齐的两个数字**：`168 条 = same 114 / different 19 / not-runnable 35` 是基线 `d4a47206` 上**本机
-PG 17.11** 手跑的读数（当时权限面 `C3` 27 条 + `C4` 18 条）；当前用例表是 **203 条**（`C4` 36 ／ `E3` 2 ／ `F1` 6，
-由 `tests/unit/gy-i22-failmatrix-real.test.mjs` 的「同源 = 203 条」断言锁着）。203 条口径的真读数见上节 R111 读数。
+PG 17.11** 手跑的读数（当时权限面 `C3` 27 条 + `C4` 18 条）；当前用例表是 **207 条**（`C3` 40 ／ `C4` 36 ／ `E3` 2 ／ `F1` 6，
+由 `tests/unit/gy-i22-failmatrix-real.test.mjs` 的「同源 = 207 条」断言锁着）。207 条口径的真读数见上节 R112 读数。
 
 ### 首个真读数（2026-10-31，运行 `41137232998` / job `124342580280`，head `439970c2`）
 
@@ -381,7 +388,7 @@ DETAIL:  Failing row contains (d9151d10-…, fedfae4f-…, …, user, 1, 2026-10
 
 ## 与 `#22` 的关系
 
-`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 269 条真读数用例 + 27 条负控制**，
+`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 273 条真读数用例 + 29 条负控制**，
 并把「在 main 上一跑就绿」与「哪些还没取得」分开记账。后续批次直接在 `cases.mjs` 追加族
 `C8+`/`E3+`、在 `seams.mjs` 追加 `D5+`，并在 `mutations.mjs` 追加对应负控制；
 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` / `FAMILY_COUNTS` / `BATCH_COUNTS` 随之抬高——

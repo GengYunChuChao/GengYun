@@ -284,4 +284,37 @@ export const MUTATIONS = [
     watch: [],
     unitWatch: [{ file: 'tests/unit/privacy-policy-read.test.mjs', pattern: '路由已装配' }],
   },
+  // ——— R112 追加：C3「伪造角色／篡改 claim」（`cases.mjs` 的 `C3-37`…`C3-40`）此前只有用例、没有负控制。 ———
+  // 这两条各改**鉴权层的一处放宽**，正好分别打掉「凭据按整串比对」与「scope 只认服务端台账」两条不变量：
+  // 各自只放宽一处，对应 watch 用例必须变红；恢复原字节后必须复绿（执行器会逐字节核对 sha256）。
+  {
+    id: 'NC-26',
+    title: 'auth：会话令牌改成「去掉尾字符再查」——篡改后的令牌仍算命中',
+    file: 'services/api/src/auth/middleware.ts',
+    find: '  const session = await context.store.findSession(hashToken(token), audience);',
+    replace: "  const session = (await context.store.findSession(hashToken(token), audience)) ?? (token.length > 1 ? await context.store.findSession(hashToken(token.slice(0, -1)), audience) : null); // 负控制：尾字符被忽略，末尾多写一个字符的令牌也算同一条会话",
+    watch: ['C3-38'],
+  },
+  {
+    id: 'NC-27',
+    title: 'auth：scope 改成「请求头能自称」——x-admin-scopes 同时覆盖路由门与服务层身份',
+    // 为什么是**两处**一起改：这条不变量是双层把关的 —— 路由 preHandler 的 `guards.requireScope`
+    // （`auth/middleware.ts`）先拦一次，服务层的 `requireAdminScope` 再读 `callerOf` 装出来的
+    // `identity.scopes`（`admin/identity.ts:68-71`）拦第二次。只放宽其中一层，C3-39 仍是 403
+    // （实测：只改 middleware 那一层，本条用例照样 PASS）——所以负控制必须把两层都改成「信请求头」，
+    // 这也正是「纵深防御真实存在」的证据，而不是把一处守卫删掉就算数。
+    edits: [
+      {
+        file: 'services/api/src/auth/middleware.ts',
+        find: '  const scopes = request.authScopes ?? [];\n  if (!scopes.includes(scope)) {',
+        replace: "  const claimed = String(request.headers['x-admin-scopes'] ?? '');\n  const scopes = claimed === '' ? (request.authScopes ?? []) : claimed.split(',').map((part) => part.trim()); // 负控制：第一层（路由门）把请求头当权限来源\n  if (!scopes.includes(scope)) {",
+      },
+      {
+        file: 'services/api/src/routes/admin.ts',
+        find: '      scopes: identity.scopes,',
+        replace: "      scopes: String(rawHeader(request, 'x-admin-scopes') ?? '').trim() === '' ? identity.scopes : String(rawHeader(request, 'x-admin-scopes')).split(',').map((part) => part.trim()), // 负控制：第二层（服务层身份）也把请求头当权限来源",
+      },
+    ],
+    watch: ['C3-39'],
+  },
 ];

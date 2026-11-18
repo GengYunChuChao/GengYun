@@ -1,4 +1,4 @@
-# 失败矩阵现行口径页（#22 · 269 条用例 + 27 条负控制）
+# 失败矩阵现行口径页（#22 · 273 条用例 + 29 条负控制）
 
 **本页是「一次真跑的机读对账」，不是 #22 的收尾声明。** `#22` 的验收形态、剩余能力缺口与监工裁决
 仍以 issue 与验收索引页为准；本页只回答四件事：用例表现在有多少条、每一条的读数是什么、负控制是否
@@ -8,9 +8,9 @@
 
 | 项 | 口径 |
 | --- | --- |
-| 用例条数 | `tests/failmatrix/run.mjs --json=<out>` 的 `rows.length`；269 = `cases.mjs` 249 + `seams.mjs` 20 |
-| 分组 | 族（C1–C7、E1、E2、E3、C10、C11、F1、D1–D4）与批次（B1–B7），两者各自求和都必须等于 269 |
-| 负控制 | `tools/i22-failmatrix-negative-control.mjs --json=<out>` 的 `MUTATIONS.length` = 27 |
+| 用例条数 | `tests/failmatrix/run.mjs --json=<out>` 的 `rows.length`；273 = `cases.mjs` 253 + `seams.mjs` 20 |
+| 分组 | 族（C1–C7、E1、E2、E3、C10、C11、F1、D1–D4）与批次（B1–B7），两者各自求和都必须等于 273 |
+| 负控制 | `tools/i22-failmatrix-negative-control.mjs --json=<out>` 的 `MUTATIONS.length` = 29 |
 | 写页 | `node tools/i22-failmatrix-evidence-table.mjs --write --page=docs/verification/gy-i22-failmatrix-current-20261111.md` |
 | 只读对账 | `node tools/i22-failmatrix-evidence-table.mjs`（不写盘；对账不过 exit 1） |
 
@@ -25,7 +25,7 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 ## 2 矩阵读数
 
 <!-- BEGIN:MATRIX-TABLE -->
-一次真跑：2026-11-11T11:42:41.524Z · node v24.19.0 · 基线 e6421b8301 · 传输方式 `app.inject+trusted-seam`。
+一次真跑：2026-11-16T11:09:39.334Z · node v24.19.0 · 基线 de3f4ff648 · 传输方式 `app.inject+trusted-seam`。
 
 | 用例 id | 族 | 期望 | 实际读数（status · code · cache · etag） | #22 acceptance（自评） | 判定 |
 | --- | --- | --- | --- | --- | --- |
@@ -66,30 +66,30 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `C1-35` | C1 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01 | PASS |
 | `C1-36` | C1 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01 | PASS |
 | `C1-37` | C1 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01 | PASS |
-| `C2-01` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-02` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-03` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-04` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-05` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-06` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-07` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-08` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-09` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-10` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-11` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-12` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-13` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-14` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-15` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-16` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-17` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-18` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-19` | C2 | 200 | 200 · — · no-store · "1" | AC01/AC02 | PASS |
-| `C2-20` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-21` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC02 | PASS |
-| `C2-22` | C2 | 200 | 200 · — · no-store · — | AC01/AC02 | PASS |
-| `C2-23` | C2 | 200 | 200 · — · no-store · — | AC01/AC02 | PASS |
-| `C2-24` | C2 | 200 | 200 · — · no-store · — | AC01/AC02 | PASS |
+| `C2-01` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-02` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-03` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-04` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-05` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-06` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-07` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-08` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-09` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-10` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-11` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-12` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-13` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-14` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-15` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-16` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-17` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-18` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-19` | C2 | 200 | 200 · — · no-store · "1" | AC01/AC09 | PASS |
+| `C2-20` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-21` | C2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC01/AC09 | PASS |
+| `C2-22` | C2 | 200 | 200 · — · no-store · — | AC01/AC09 | PASS |
+| `C2-23` | C2 | 200 | 200 · — · no-store · — | AC01/AC09 | PASS |
+| `C2-24` | C2 | 200 | 200 · — · no-store · — | AC01/AC09 | PASS |
 | `C3-01` | C3 | 403 SCOPE_DENIED | 403 · SCOPE_DENIED · no-store · — | AC02/AC07 | PASS |
 | `C3-02` | C3 | 403 SCOPE_DENIED | 403 · SCOPE_DENIED · no-store · — | AC02/AC07 | PASS |
 | `C3-03` | C3 | 403 SCOPE_DENIED | 403 · SCOPE_DENIED · no-store · — | AC02/AC07 | PASS |
@@ -126,42 +126,42 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `C3-34` | C3 | 200 | 200 · — · no-store · — | AC02/AC07 | PASS |
 | `C3-35` | C3 | 200 | 200 · — · no-store · — | AC02/AC07 | PASS |
 | `C3-36` | C3 | 200 | 200 · — · no-store · — | AC02/AC07 | PASS |
-| `C4-01` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-02` | C4 | 200 | 200 · — · no-store · — | AC08/AC09 | PASS |
-| `C4-03` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-04` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-05` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-06` | C4 | 403 ACCOUNT_INACTIVE | 403 · ACCOUNT_INACTIVE · no-store · — | AC08/AC09 | PASS |
-| `C4-07` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-08` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-09` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-10` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09 | PASS |
-| `C4-11` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-12` | C4 | 200 | 200 · — · no-store · "2" | AC08/AC09 | PASS |
-| `C4-13` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-14` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-15` | C4 | 202 | 202 · — · no-store · "2" | AC08/AC09 | PASS |
-| `C4-16` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-17` | C4 | 200 | 200 · — · no-store · "2" | AC08/AC09 | PASS |
-| `C4-18` | C4 | 200 | 200 · — · no-store · — | AC08/AC09 | PASS |
-| `C4-19` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-20` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-21` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-22` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-23` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-24` | C4 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC08/AC09 | PASS |
-| `C4-25` | C4 | 200 | 200 · — · no-store · "3" | AC08/AC09 | PASS |
-| `C4-26` | C4 | 409 OBJECT_UNAVAILABLE | 409 · OBJECT_UNAVAILABLE · no-store · — | AC08/AC09 | PASS |
-| `C4-27` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-28` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-29` | C4 | 428 REVISION_REQUIRED | 428 · REVISION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-30` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09 | PASS |
-| `C4-31` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09 | PASS |
-| `C4-32` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-33` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09 | PASS |
-| `C4-34` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09 | PASS |
-| `C4-35` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09 | PASS |
-| `C4-36` | C4 | 503 PROVIDER_UNAVAILABLE | 503 · PROVIDER_UNAVAILABLE · no-store · — | AC08/AC09 | PASS |
+| `C4-01` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-02` | C4 | 200 | 200 · — · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-03` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-04` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-05` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-06` | C4 | 403 ACCOUNT_INACTIVE | 403 · ACCOUNT_INACTIVE · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-07` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-08` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-09` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-10` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-11` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-12` | C4 | 200 | 200 · — · no-store · "2" | AC08/AC09/AC23 | PASS |
+| `C4-13` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-14` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-15` | C4 | 202 | 202 · — · no-store · "2" | AC08/AC09/AC23 | PASS |
+| `C4-16` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-17` | C4 | 200 | 200 · — · no-store · "2" | AC08/AC09/AC23 | PASS |
+| `C4-18` | C4 | 200 | 200 · — · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-19` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-20` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-21` | C4 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-22` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-23` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-24` | C4 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-25` | C4 | 200 | 200 · — · no-store · "3" | AC08/AC09/AC23 | PASS |
+| `C4-26` | C4 | 409 OBJECT_UNAVAILABLE | 409 · OBJECT_UNAVAILABLE · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-27` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-28` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-29` | C4 | 428 REVISION_REQUIRED | 428 · REVISION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-30` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-31` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-32` | C4 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-33` | C4 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-34` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-35` | C4 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC08/AC09/AC23 | PASS |
+| `C4-36` | C4 | 503 PROVIDER_UNAVAILABLE | 503 · PROVIDER_UNAVAILABLE · no-store · — | AC08/AC09/AC23 | PASS |
 | `C5-01` | C5 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC09/AC13 | PASS |
 | `C5-02` | C5 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC09/AC13 | PASS |
 | `C5-03` | C5 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC13 | PASS |
@@ -172,101 +172,101 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `C5-08` | C5 | 200 | 200 · — · no-store · "2" | AC09/AC13 | PASS |
 | `C5-09` | C5 | 200 | 200 · — · no-store · "2" | AC09/AC13 | PASS |
 | `C5-10` | C5 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC09/AC13 | PASS |
-| `C6-01` | C6 | 201 | 201 · — · no-store · "1" | AC16 | PASS |
-| `C6-02` | C6 | 201 | 201 · — · no-store · "1" | AC16 | PASS |
-| `C6-03` | C6 | 409 IDEMPOTENCY_CONFLICT | 409 · IDEMPOTENCY_CONFLICT · no-store · — | AC16 | PASS |
-| `C6-04` | C6 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC16 | PASS |
-| `C6-05` | C6 | 201 | 201 · — · no-store · "1" | AC16 | PASS |
-| `C6-06` | C6 | 201 | 201 · — · no-store · "1" | AC16 | PASS |
-| `C6-07` | C6 | 409 IDEMPOTENCY_CONFLICT | 409 · IDEMPOTENCY_CONFLICT · no-store · — | AC16 | PASS |
-| `C6-08` | C6 | 201 | 201 · — · no-store · "1" | AC16 | PASS |
-| `C6-09` | C6 | 201 | 201 · — · no-store · "1" | AC16 | PASS |
-| `C6-10` | C6 | 201 |  · — · — · — | AC16 | PASS |
-| `C6-11` | C6 | 428 REVISION_REQUIRED | 428 · REVISION_REQUIRED · no-store · — | AC16 | PASS |
-| `C7-01` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-02` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-03` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-04` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-05` | C7 | 400 INVALID_CURSOR | 400 · INVALID_CURSOR · no-store · — | AC19 | PASS |
-| `C7-06` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-07` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-08` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-09` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-10` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-11` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-12` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-13` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-14` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-15` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
-| `C7-16` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC19 | PASS |
+| `C6-01` | C6 | 201 | 201 · — · no-store · "1" | AC07/AC16 | PASS |
+| `C6-02` | C6 | 201 | 201 · — · no-store · "1" | AC07/AC16 | PASS |
+| `C6-03` | C6 | 409 IDEMPOTENCY_CONFLICT | 409 · IDEMPOTENCY_CONFLICT · no-store · — | AC07/AC16 | PASS |
+| `C6-04` | C6 | 400 IDEMPOTENCY_KEY_REQUIRED | 400 · IDEMPOTENCY_KEY_REQUIRED · no-store · — | AC07/AC16 | PASS |
+| `C6-05` | C6 | 201 | 201 · — · no-store · "1" | AC07/AC16 | PASS |
+| `C6-06` | C6 | 201 | 201 · — · no-store · "1" | AC07/AC16 | PASS |
+| `C6-07` | C6 | 409 IDEMPOTENCY_CONFLICT | 409 · IDEMPOTENCY_CONFLICT · no-store · — | AC07/AC16 | PASS |
+| `C6-08` | C6 | 201 | 201 · — · no-store · "1" | AC07/AC16 | PASS |
+| `C6-09` | C6 | 201 | 201 · — · no-store · "1" | AC07/AC16 | PASS |
+| `C6-10` | C6 | 201 |  · — · — · — | AC07/AC16 | PASS |
+| `C6-11` | C6 | 428 REVISION_REQUIRED | 428 · REVISION_REQUIRED · no-store · — | AC07/AC16 | PASS |
+| `C7-01` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-02` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-03` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-04` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-05` | C7 | 400 INVALID_CURSOR | 400 · INVALID_CURSOR · no-store · — | AC07/AC19 | PASS |
+| `C7-06` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-07` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-08` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-09` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-10` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-11` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-12` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-13` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-14` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-15` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
+| `C7-16` | C7 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC07/AC19 | PASS |
 | `E1-01` | E1 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC21（F08 提示注入只作数据） | PASS |
 | `E1-02` | E1 | 400 INVALID_REQUEST | 400 · INVALID_REQUEST · no-store · — | AC21（F08 提示注入只作数据） | PASS |
 | `E1-03` | E1 | 201 | 201 · — · no-store · "1" | AC21（F08 提示注入只作数据） | PASS |
 | `E2-01` | E2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC13/AC22（F20 媒体访问凭据） | PASS |
 | `E2-02` | E2 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC13/AC22（F20 媒体访问凭据） | PASS |
 | `E2-03` | E2 | 200 | 200 · — · no-store · "2" | AC13/AC22（F20 媒体访问凭据） | PASS |
-| `C10-01` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-02` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-03` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-04` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-05` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-06` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-07` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-08` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-09` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-10` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-11` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-12` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-13` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-14` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-15` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-16` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-17` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-18` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-19` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-20` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-21` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-22` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C10-23` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | — | PASS |
-| `C11-01` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-02` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-03` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-04` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-05` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-06` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-07` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-08` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-09` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-10` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-11` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-12` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-13` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-14` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-15` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-16` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-17` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-18` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-19` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-20` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-21` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-22` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-23` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-24` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-25` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-26` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-27` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-28` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-29` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-30` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-31` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-32` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-33` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-34` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | — | PASS |
-| `C11-35` | C11 | 200 | 200 · — · no-store · "3" | — | PASS |
-| `C11-36` | C11 | 200 | 200 · — · no-store · "1" | — | PASS |
-| `C11-37` | C11 | 200 | 200 · — · no-store · "1" | — | PASS |
-| `C11-38` | C11 | 200 | 200 · — · no-store · "1" | — | PASS |
-| `C11-39` | C11 | 200 | 200 · — · no-store · "1" | — | PASS |
+| `C10-01` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-02` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-03` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-04` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-05` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-06` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-07` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-08` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-09` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-10` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-11` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-12` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-13` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-14` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-15` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-16` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-17` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-18` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-19` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-20` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-21` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-22` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C10-23` | C10 | 401 SESSION_REQUIRED | 401 · SESSION_REQUIRED · no-store · — | AC01/AC29（异步 AI 游客面） | PASS |
+| `C11-01` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-02` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-03` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-04` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-05` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-06` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-07` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-08` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-09` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-10` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-11` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-12` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-13` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-14` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-15` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-16` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-17` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-18` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-19` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-20` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-21` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-22` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-23` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-24` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-25` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-26` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-27` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-28` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-29` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-30` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-31` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-32` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-33` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-34` | C11 | 404 NOT_FOUND | 404 · NOT_FOUND · no-store · — | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-35` | C11 | 200 | 200 · — · no-store · "3" | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-36` | C11 | 200 | 200 · — · no-store · "1" | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-37` | C11 | 200 | 200 · — · no-store · "1" | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-38` | C11 | 200 | 200 · — · no-store · "1" | AC09/AC29（异步 AI 归属面） | PASS |
+| `C11-39` | C11 | 200 | 200 · — · no-store · "1" | AC09/AC29（异步 AI 归属面） | PASS |
 | `F1-01` | F1 | 200 | 200 · — · no-store · — | AC22（下架 ⇒ 消息引用跳转 unavailable，同形不泄露存在性） | PASS |
 | `F1-02` | F1 | 200 | 200 · — · no-store · — | AC22（下架 ⇒ 消息引用跳转 unavailable，同形不泄露存在性） | PASS |
 | `F1-03` | F1 | 200 | 200 · — · no-store · — | AC22（下架 ⇒ 消息引用跳转 unavailable，同形不泄露存在性） | PASS |
@@ -275,24 +275,28 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `F1-06` | F1 | 200 | 200 · — · no-store · — | AC22（下架 ⇒ 消息引用跳转 unavailable，同形不泄露存在性） | PASS |
 | `C5-11` | C5 | 415 MEDIA_TYPE_UNSUPPORTED | 415 · MEDIA_TYPE_UNSUPPORTED · no-store · — | AC09/AC13 | PASS |
 | `C5-12` | C5 | 413 MEDIA_TOO_LARGE | 413 · MEDIA_TOO_LARGE · no-store · — | AC09/AC13 | PASS |
-| `C6-12` | C6 | 422 INPUT_UNCERTAIN | 422 · INPUT_UNCERTAIN · no-store · — | AC16 | PASS |
-| `E3-01` | E3 | 409 REVISION_CONFLICT | 409 · REVISION_CONFLICT · no-store · — | — | PASS |
-| `E3-02` | E3 | 422 SOURCE_CONFLICT | 422 · SOURCE_CONFLICT · no-store · — | — | PASS |
-| `D1-01` | D1 | undefined CALLBACK_REPLAY |  · CALLBACK_REPLAY · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-02` | D1 | undefined CALLBACK_JOB_TERMINAL |  · CALLBACK_JOB_TERMINAL · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-03` | D1 | undefined CALLBACK_TARGET_WITHDRAWN |  · CALLBACK_TARGET_WITHDRAWN · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-04` | D1 | undefined CALLBACK_JOB_REVISION_STALE |  · CALLBACK_JOB_REVISION_STALE · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-05` | D1 | undefined CALLBACK_LEASE_MISMATCH |  · CALLBACK_LEASE_MISMATCH · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-06` | D1 | undefined CALLBACK_INPUT_DIGEST_MISMATCH |  · CALLBACK_INPUT_DIGEST_MISMATCH · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-07` | D1 | undefined CALLBACK_EXPIRED |  · CALLBACK_EXPIRED · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-08` | D1 | undefined CALLBACK_SIGNATURE_INVALID |  · CALLBACK_SIGNATURE_INVALID · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-09` | D1 | undefined CALLBACK_CONTROL_FIELD_FORBIDDEN |  · CALLBACK_CONTROL_FIELD_FORBIDDEN · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-10` | D1 | undefined CALLBACK_EPOCH_REVOKED |  · CALLBACK_EPOCH_REVOKED · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D1-11` | D1 | undefined OK |  · OK · — · — | AC23（F13 任务状态机：旧回调不复活） | PASS |
-| `D2-01` | D2 | undefined PROVIDER_OUTCOME_UNKNOWN |  · PROVIDER_OUTCOME_UNKNOWN · — · — | AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
-| `D2-02` | D2 | undefined PROVIDER_TIMEOUT |  · PROVIDER_TIMEOUT · — · — | AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
-| `D2-03` | D2 | undefined PROVIDER_OUTCOME_UNKNOWN |  · PROVIDER_OUTCOME_UNKNOWN · — · — | AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
-| `D2-04` | D2 | undefined REJECTED_BY_RULES |  · REJECTED_BY_RULES · — · — | AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
+| `C6-12` | C6 | 422 INPUT_UNCERTAIN | 422 · INPUT_UNCERTAIN · no-store · — | AC07/AC16 | PASS |
+| `E3-01` | E3 | 409 REVISION_CONFLICT | 409 · REVISION_CONFLICT · no-store · — | AC19/AC22（后台内容写的版本与引用门槛） | PASS |
+| `E3-02` | E3 | 422 SOURCE_CONFLICT | 422 · SOURCE_CONFLICT · no-store · — | AC19/AC22（后台内容写的版本与引用门槛） | PASS |
+| `C3-37` | C3 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC02/AC07 | PASS |
+| `C3-38` | C3 | 401 SESSION_EXPIRED | 401 · SESSION_EXPIRED · no-store · — | AC02/AC07 | PASS |
+| `C3-39` | C3 | 403 SCOPE_DENIED | 403 · SCOPE_DENIED · no-store · — | AC02/AC07 | PASS |
+| `C3-40` | C3 | 200 | 200 · — · no-store · — | AC02/AC07 | PASS |
+| `D1-01` | D1 | undefined CALLBACK_REPLAY |  · CALLBACK_REPLAY · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-02` | D1 | undefined CALLBACK_JOB_TERMINAL |  · CALLBACK_JOB_TERMINAL · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-03` | D1 | undefined CALLBACK_TARGET_WITHDRAWN |  · CALLBACK_TARGET_WITHDRAWN · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-04` | D1 | undefined CALLBACK_JOB_REVISION_STALE |  · CALLBACK_JOB_REVISION_STALE · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-05` | D1 | undefined CALLBACK_LEASE_MISMATCH |  · CALLBACK_LEASE_MISMATCH · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-06` | D1 | undefined CALLBACK_INPUT_DIGEST_MISMATCH |  · CALLBACK_INPUT_DIGEST_MISMATCH · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-07` | D1 | undefined CALLBACK_EXPIRED |  · CALLBACK_EXPIRED · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-08` | D1 | undefined CALLBACK_SIGNATURE_INVALID |  · CALLBACK_SIGNATURE_INVALID · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-09` | D1 | undefined CALLBACK_CONTROL_FIELD_FORBIDDEN |  · CALLBACK_CONTROL_FIELD_FORBIDDEN · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-10` | D1 | undefined CALLBACK_EPOCH_REVOKED |  · CALLBACK_EPOCH_REVOKED · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D1-11` | D1 | undefined OK |  · OK · — · — | AC07/AC23（F13 任务状态机：旧回调不复活） | PASS |
+| `D2-01` | D2 | undefined PROVIDER_OUTCOME_UNKNOWN |  · PROVIDER_OUTCOME_UNKNOWN · — · — | AC19/AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
+| `D2-02` | D2 | undefined PROVIDER_TIMEOUT |  · PROVIDER_TIMEOUT · — · — | AC19/AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
+| `D2-03` | D2 | undefined PROVIDER_OUTCOME_UNKNOWN |  · PROVIDER_OUTCOME_UNKNOWN · — · — | AC19/AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
+| `D2-04` | D2 | undefined REJECTED_BY_RULES |  · REJECTED_BY_RULES · — · — | AC19/AC21/AC23（F13/F20 AI 失败不得发布） | PASS |
 | `D3-01` | D3 | undefined WITHDRAWN_CACHE_INVALIDATED |  · WITHDRAWN_CACHE_INVALIDATED · — · — | AC22（G4 下架 ⇒ 缓存失效） | PASS |
 | `D3-02` | D3 | undefined WITHDRAWN_IDEMPOTENT |  · WITHDRAWN_IDEMPOTENT · — · — | AC22（G4 下架 ⇒ 缓存失效） | PASS |
 | `D4-01` | D4 | undefined NOT_SCREENED_NEW_REVISION |  · NOT_SCREENED_NEW_REVISION · — · — | AC22/AC29（内容版本变更 ⇒ 旧结论不复用） | PASS |
@@ -303,7 +307,7 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 ## 3 负控制读数
 
 <!-- BEGIN:NEGATIVE-CONTROL-TABLE -->
-一次真跑：2026-11-11T11:44:25.408Z · node v24.19.0 · **合计 27 条：PASS 27 / FAIL 0**。
+一次真跑：2026-11-16T11:14:29.658Z · node v24.19.0 · **合计 29 条：PASS 29 / FAIL 0**。
 
 | 负控制 | 真改的那一处 | watch（必须真红） | sha256 改前（前 16 位） | 恢复后一致 | 判定 |
 | --- | --- | --- | --- | --- | --- |
@@ -334,13 +338,15 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 | `NC-23` public/home：删掉语句超时单独分级（504 PROVIDER_TIMEOUT 退化成 503） | `services/api/src/db/catalog.ts` |  | catalog.ts=3fd779cc9be18f7b… | true | PASS |
 | `NC-24` registrations/verify：非 matched 不再 fail-closed 成 4xx（登记校验结论退化成 500） | `services/api/src/knowledge/applicability-screen.ts` |  | applicability-screen.ts=45cad9090813c2f2… | true | PASS |
 | `NC-25` consents：删掉隐私政策读面的 requireUser（游客也能读 /me/privacy-policy） | `services/api/src/routes/consents.ts` |  | consents.ts=a11a50ff6c46616d… | true | PASS |
+| `NC-26` auth：会话令牌改成「去掉尾字符再查」——篡改后的令牌仍算命中 | `services/api/src/auth/middleware.ts` | C3-38 | middleware.ts=7d27f11e9cc3bde7… | true | PASS |
+| `NC-27` auth：scope 改成「请求头能自称」——x-admin-scopes 同时覆盖路由门与服务层身份 | `services/api/src/auth/middleware.ts` + `services/api/src/routes/admin.ts` | C3-39 | middleware.ts=7d27f11e9cc3bde7…；admin.ts=eaa41d6355c7cf91… | true | PASS |
 <!-- END:NEGATIVE-CONTROL-TABLE -->
 
 ## 4 本页能证明什么
 
-- 269 条用例在**一次真跑**里全部 PASS，且每条都有真实读数（status / code / cache / etag 至少一项是
+- 273 条用例在**一次真跑**里全部 PASS，且每条都有真实读数（status / code / cache / etag 至少一项是
   服务端真实返回值，不是期望值回填）。
-- 27 条负控制全部按设计**真红**：每条都改一处代码、跑一次、看到 watch 命中，再恢复并核对 sha256 一致。
+- 29 条负控制全部按设计**真红**：每条都改一处代码、跑一次、看到 watch 命中，再恢复并核对 sha256 一致。
   也就是说这些 PASS 不是「断言写松了」写出来的。
 - 条数与工具内 `EXPECTED` 逐族、逐批次、正反两个方向都对得上；`unit-tests` 里有测试把它钉住，
   所以「删用例让矩阵变绿」这条路会红。
@@ -349,7 +355,7 @@ R29 的归档快照 `gy-i22-failmatrix-20261022.md`（表格 168 行 / 负控制
 
 本页只覆盖失败矩阵这一层。以下按能力列出**仍未取得**的部分，任何一条都不因本页而闭合：
 
-1. **真库臂只跑权限面六族**（C1–C4、C10、C11 共 180 条）。C5/C6/C7/E1/E2/E3/F1 与 D 族共约 89 条
+1. **真库臂只跑权限面八族**（C1–C4、C10、C11 与 E3、F1 共 207 条）。C5/C6/C7/E1/E2 与 D 族共 66 条
    只在合成装配下跑过，没有在真实 PostgreSQL 上逐条验过。
 2. **注销冷静期到期后的真实清理执行面**（在线 7 日 / 备份 30 日）只覆盖到「申请 → 回执 → 冷静期内
    原会话仍可用」，到期后的清理动作本身没有端到端读数。
