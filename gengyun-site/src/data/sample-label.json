@@ -1,0 +1,135 @@
+{
+  "capturedAt": "2026-11-20",
+  "mode": "local demo stack · tencent-generalaccurateocr-2018-11-19",
+  "note": "真实运行记录回放：公开站点不连接识别服务，以下读数来自本项目一次真实的标签识别。",
+  "state": "succeeded",
+  "stateTitle": "识别完成",
+  "record": {
+    "readRows": [
+      {
+        "label": "登记证号",
+        "value": "（未读出）"
+      },
+      {
+        "label": "药名",
+        "value": "苯甲·丙环唑"
+      },
+      {
+        "label": "剂型",
+        "value": "乳油"
+      },
+      {
+        "label": "有效成分",
+        "value": "苯醚甲环唑 150克/升；丙环唑 150克/升"
+      }
+    ],
+    "correctedRows": [
+      {
+        "label": "登记证号",
+        "value": "（未读出）"
+      },
+      {
+        "label": "药名",
+        "value": "苯甲·丙环唑"
+      },
+      {
+        "label": "剂型",
+        "value": "乳油"
+      },
+      {
+        "label": "有效成分",
+        "value": "苯醚甲环唑 150克/升；丙环唑 150克/升"
+      }
+    ],
+    "diffRows": [
+      {
+        "label": "登记证号",
+        "raw": "（未读出）",
+        "corrected": "（未读出）",
+        "changed": false
+      },
+      {
+        "label": "药名",
+        "raw": "苯甲·丙环唑",
+        "corrected": "苯甲·丙环唑",
+        "changed": false
+      },
+      {
+        "label": "剂型",
+        "raw": "乳油",
+        "corrected": "乳油",
+        "changed": false
+      },
+      {
+        "label": "有效成分",
+        "raw": "苯醚甲环唑 150克/升；丙环唑 150克/升",
+        "corrected": "苯醚甲环唑 150克/升；丙环唑 150克/升",
+        "changed": false
+      }
+    ],
+    "missingReadLabels": "登记证号",
+    "missingDiffLabels": "登记证号",
+    "correctedDiffers": false,
+    "analysis": {
+      "title": "苯甲·丙环唑 · 乳油",
+      "basisLabel": "机器读数",
+      "summary": "药名「苯甲·丙环唑」，剂型为乳油，有效成分为 苯醚甲环唑、丙环唑。",
+      "rows": [
+        {
+          "label": "有效成分",
+          "value": "苯醚甲环唑 150 克/升；丙环唑 150 克/升"
+        },
+        {
+          "label": "作用类别",
+          "value": "三唑类杀菌剂"
+        },
+        {
+          "label": "用途",
+          "value": "用于防治作物真菌性病害（如纹枯病、稻曲病、白粉病等）；具体适用作物与防治对象以包装标签和登记为准。"
+        },
+        {
+          "label": "对田地的好处",
+          "value": "兼具保护与治疗作用，内吸传导较好；两种成分混配有助于延缓抗药性。"
+        },
+        {
+          "label": "需要注意的影响",
+          "value": "用量过高或频繁使用可能抑制作物生长；长期单一使用有抗药性风险，排水进入水体也可能影响非靶标生物。"
+        }
+      ],
+      "boundaryNote": "演示内置说明，不构成用药建议；具体以包装标签和官方登记为准。"
+    },
+    "fields": {
+      "registration_number": null,
+      "name": "苯甲·丙环唑",
+      "dosage_form": "乳油",
+      "ingredients": [
+        {
+          "name": "苯醚甲环唑",
+          "content_text": "150",
+          "unit_text": "克/升"
+        },
+        {
+          "name": "丙环唑",
+          "content_text": "150",
+          "unit_text": "克/升"
+        }
+      ]
+    },
+    "canCorrect": true,
+    "needsExplicitReview": false,
+    "matchState": "unavailable",
+    "matchLabel": "本次未完成",
+    "conflictLabels": [],
+    "missingFields": [
+      "registration_number"
+    ],
+    "doseCardCount": 0,
+    "doseBlocked": true,
+    "doseBlockReason": "本页不显示用量与配比；请以包装标签、官方登记和当地农技指导为准。",
+    "authorityNote": "标签识别是机器读数，不是权威判读：请与农药包装实物逐项核对；登记信息以官方登记为准。",
+    "readOnlyNote": "下面是机器读到的原始内容，只读保留，方便随时对照；人工修改只写进你自己的核对结果，不会覆盖原始读数。",
+    "correctionNote": "只改读错的字和数字：对照包装照录，不要猜。修改只代表本次核对，不代表机器识别准确，也不构成用药依据。",
+    "doseNote": "本页不显示用量与配比；请以包装标签、官方登记和当地农技指导为准。",
+    "sourceVersion": "tencent-generalaccurateocr-2018-11-19"
+  }
+}
