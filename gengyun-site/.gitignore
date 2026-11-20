@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.shots/
+.shots*
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo
